@@ -1,0 +1,16 @@
+telethon>=1.36,<2.0
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+python-dotenv>=1.0
+tzdata>=2024.1
+# AES-GCM for secrets at rest (crypto.py); also signs the Google Calendar JWT.
+cryptography>=42
+asyncpg>=0.29
+redis>=5.0
+python-socks[asyncio]>=2.4
+
+# Tests only — not needed to run the assistant.
+pytest>=8.0
+pytest-asyncio>=0.24
+fakeredis>=2.21

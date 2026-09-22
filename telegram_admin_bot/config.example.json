@@ -1,0 +1,66 @@
+{
+  "persona": {
+    "purpose": "",
+    "tone": "",
+    "languages": "",
+    "boundaries": "",
+    "signature_style": ""
+  },
+  "timing": {
+    "min_delay_seconds": 20,
+    "max_delay_seconds": 90,
+    "active_hours_enabled": false,
+    "active_hours_start": "09:00",
+    "active_hours_end": "21:00",
+    "timezone": "UTC"
+  },
+  "behavior": {
+    "auto_send": false,
+    "log_all_messages": true,
+    "global_pause": false
+  },
+  "ai": {
+    "model": "deepseek-chat",
+    "max_tokens": 400,
+    "temperature": 1.0,
+    "max_concurrent_requests": 4
+  },
+  "human": {
+    "adaptive_style": true,
+    "typing_indicator": true,
+    "typing_speed_cps": 12,
+    "typing_max_seconds": 25,
+    "mark_read": true
+  },
+  "presence": {
+    "enabled": true,
+    "go_online_delay_min": 2,
+    "go_online_delay_max": 8,
+    "offline_delay_min": 15,
+    "offline_delay_max": 90
+  },
+  "finetune": {
+    "writing_samples": ""
+  },
+  "context_link": {
+    "enabled": true,
+    "auto_detect": true,
+    "history_limit": 60,
+    "max_sources": 2,
+    "refresh_after_messages": 5
+  },
+  "outreach": {
+    "min_gap_seconds": 90,
+    "max_gap_seconds": 300,
+    "daily_limit": 20,
+    "auto_send": false
+  },
+  "safety": {
+    "daily_send_limit": 150,
+    "daily_peer_limit": 30,
+    "halt_on_peer_flood": true,
+    "known_contacts_only": true,
+    "max_flood_wait_seconds": 300
+  },
+  "contacts": {}
+}

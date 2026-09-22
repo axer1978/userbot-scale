@@ -1,0 +1,15 @@
+# Credentials and per-account state — never commit any of these.
+.env
+instances/
+data/
+*.db
+*.db-shm
+*.db-wal
+*.session
+__pycache__/
+*.py[cod]
+.venv/
+bookings.json
+google-service-account.json
+# Photos/videos loaded into the panel (per account, can be large).
+media/

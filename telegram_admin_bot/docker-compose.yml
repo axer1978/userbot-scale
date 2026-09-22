@@ -1,0 +1,33 @@
+services:
+  assistant:
+    build: .
+    container_name: telegram-assistant
+    restart: unless-stopped
+
+    # Optional: pre-filled credentials. Without it, sign in from the panel
+    # (through the SSH tunnel) and they are saved to ./data/.env instead.
+    # Never baked into the image, never committed.
+    env_file:
+      - path: .env
+        required: false
+
+    environment:
+      DATA_DIR: /app/data
+
+    volumes:
+      # assistant.db and config.json survive rebuilds.
+      - ./data:/app/data
+
+    # Note the 127.0.0.1 prefix. Without it Docker publishes the panel on every
+    # interface, and the panel has no login. Reach it from your laptop with an
+    # SSH tunnel:
+    #     ssh -N -L 8787:127.0.0.1:8787 you@your-server
+    # then open http://127.0.0.1:8787 on the laptop as usual.
+    ports:
+      - "127.0.0.1:8787:8787"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

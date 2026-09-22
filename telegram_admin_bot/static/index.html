@@ -1,0 +1,2111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telegram AI Assistant</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234c8dff'/%3E%3Cpath d='M7 16.5l17-7-6 16-3.5-6z' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0e1116;
+    --bg-raised: #151a21;
+    --bg-hover: #1c232c;
+    --border: #262d38;
+    --text: #e6edf3;
+    --muted: #8b98a8;
+    --accent: #4c8dff;
+    --accent-dim: #1f3557;
+    --in: #1e2530;
+    --out: #21406b;
+    --pending: #4a3a12;
+    --pending-border: #a9821f;
+    --danger: #f2565a;
+    --ok: #46b978;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  button { font: inherit; cursor: pointer; }
+  input, textarea, select {
+    font: inherit; color: var(--text); background: var(--bg); width: 100%;
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; }
+
+  /* ---------- top bar ---------- */
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    background: var(--bg-raised); flex-shrink: 0;
+  }
+  .brand { font-weight: 600; letter-spacing: .2px; }
+  .brand .instance:not(:empty) { margin-left: 6px; padding: 1px 8px; border-radius: 999px;
+    background: var(--accent-dim); color: var(--accent); font-size: 12px; font-weight: 600; }
+  .spacer { flex: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); display: inline-block; }
+  .dot.on { background: var(--ok); }
+  .status { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 7px; }
+  .btn {
+    background: var(--bg-hover); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 13px;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.1); }
+  .btn.warn { color: var(--danger); }
+  .btn.small { padding: 4px 9px; font-size: 12px; border-radius: 6px; }
+  .btn.on { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+  /* ---------- layout ---------- */
+  main { flex: 1; display: flex; min-height: 0; }
+  #sidebar {
+    width: 320px; flex-shrink: 0; border-right: 1px solid var(--border);
+    background: var(--bg-raised); overflow-y: auto;
+  }
+  .conv {
+    display: block; width: 100%; text-align: left; background: none; border: 0;
+    border-bottom: 1px solid var(--border); padding: 11px 14px; color: var(--text);
+  }
+  .conv:hover { background: var(--bg-hover); }
+  .conv.active { background: var(--accent-dim); }
+  .conv-top { display: flex; align-items: center; gap: 7px; }
+  .conv-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-time { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .conv-preview { color: var(--muted); font-size: 12.5px; margin-top: 3px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-meta { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+  .badge {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted);
+  }
+  .badge.bot { border-color: #6b4ea8; color: #b393f0; }
+  .badge.paused { border-color: var(--pending-border); color: #e0b84a; }
+  .badge.link { border-color: #3f7d63; color: #7fd0a4; text-transform: none;
+    letter-spacing: 0; display: inline-flex; align-items: center; gap: 5px; }
+  .badge.link button {
+    background: none; border: 0; color: inherit; cursor: pointer; opacity: .65;
+    font-size: 13px; line-height: 1; padding: 0;
+  }
+  .badge.link button:hover { opacity: 1; }
+  .link-picker {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 6px; font-size: 12px; max-width: 260px;
+  }
+  .unread {
+    background: var(--accent); color: #fff; border-radius: 999px;
+    font-size: 11px; padding: 0 6px; min-width: 18px; text-align: center;
+  }
+
+  #panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #thread-header {
+    display: flex; align-items: center; gap: 10px; padding: 11px 16px;
+    border-bottom: 1px solid var(--border); background: var(--bg-raised); flex-shrink: 0;
+  }
+  #thread { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .empty { margin: auto; color: var(--muted); text-align: center; max-width: 420px; }
+
+  .msg { max-width: 68%; padding: 9px 13px; border-radius: var(--radius); white-space: pre-wrap; word-wrap: break-word; }
+  .msg .label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 3px; }
+  .msg .time { font-size: 10.5px; color: var(--muted); margin-top: 5px; }
+  .msg.in { background: var(--in); align-self: flex-start; border-bottom-left-radius: 3px; }
+  .msg.out { background: var(--out); align-self: flex-end; border-bottom-right-radius: 3px; }
+  .msg.rejected { background: var(--in); align-self: flex-end; opacity: .5; text-decoration: line-through; }
+  .msg.error {
+    align-self: center; max-width: 88%; background: #3a1a1c;
+    border: 1px solid var(--danger); color: #ffd7d8; font-size: 13px;
+  }
+  .msg.note {
+    align-self: center; max-width: 88%; background: var(--bg-raised);
+    border: 1px dashed var(--border); color: var(--muted); font-size: 13px;
+  }
+  .draft {
+    align-self: flex-end; max-width: 68%; background: var(--pending);
+    border: 1px solid var(--pending-border); border-radius: var(--radius); padding: 11px 13px;
+  }
+  .draft .label { color: #f0cf72; }
+  .draft-actions { display: flex; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
+  .draft textarea { margin-top: 8px; background: #241d09; }
+  .typing { align-self: flex-end; color: var(--muted); font-size: 12px; font-style: italic; }
+
+  #composer { display: flex; gap: 9px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-raised); }
+  #composer textarea { min-height: 42px; max-height: 160px; }
+
+  /* ---------- settings ---------- */
+  #settings {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+    align-items: flex-start; justify-content: center; overflow-y: auto; padding: 40px 16px;
+  }
+  #settings.open { display: flex; }
+
+  /* ---------- outreach ---------- */
+  #outreach {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+    align-items: flex-start; justify-content: center; overflow-y: auto; padding: 40px 16px;
+  }
+  #outreach.open { display: flex; }
+
+  /* ---------- style & fine-tuning ---------- */
+  #style {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+    align-items: flex-start; justify-content: center; overflow-y: auto; padding: 40px 16px;
+  }
+  #style.open { display: flex; }
+  .muted { color: var(--muted); font-weight: normal; }
+  .sub { margin: 22px 0 10px; font-size: 14px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .8px; }
+  .picker {
+    margin-top: 8px; max-height: 240px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+  }
+  .picker .row-item {
+    display: flex; align-items: center; gap: 9px; padding: 7px 11px;
+    border-bottom: 1px solid var(--border); cursor: pointer;
+  }
+  .picker .row-item:last-child { border-bottom: 0; }
+  .picker .row-item:hover { background: var(--bg-hover); }
+  .picker input { width: auto; }
+  .picker .handle { color: var(--muted); font-size: 12px; }
+  .picker-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .queue { border: 1px solid var(--border); border-radius: 8px; max-height: 220px; overflow-y: auto; }
+  .queue .q {
+    display: flex; align-items: center; gap: 10px; padding: 8px 11px;
+    border-bottom: 1px solid var(--border); font-size: 13px;
+  }
+  .queue .q:last-child { border-bottom: 0; }
+  .queue .q .who { font-weight: 600; min-width: 130px; }
+  .queue .q .txt { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag { font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .tag.queued { border-color: var(--accent); color: var(--accent); }
+  .tag.drafted { border-color: var(--pending-border); color: #e0b84a; }
+  .tag.sent { border-color: var(--ok); color: var(--ok); }
+  .tag.failed { border-color: var(--danger); color: var(--danger); }
+  .tag.cancelled { opacity: .6; }
+  .sheet { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 14px;
+    width: 100%; max-width: 720px; padding: 24px; }
+  .sheet h2 { margin: 0 0 4px; font-size: 18px; }
+  .sheet .hint { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+  fieldset { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px 18px; margin: 0 0 16px; }
+  legend { padding: 0 6px; color: var(--accent); font-size: 12px; text-transform: uppercase; letter-spacing: .8px; }
+  .field { margin-bottom: 13px; }
+  .field:last-child { margin-bottom: 0; }
+  .field label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 5px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > .field { flex: 1; min-width: 150px; }
+  .check { display: flex; align-items: center; gap: 9px; }
+  .check input { width: auto; }
+  .check label { margin: 0; color: var(--text); font-size: 14px; }
+  .sheet-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
+
+  /* ---------- media library ---------- */
+  #media {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+    align-items: flex-start; justify-content: center; overflow-y: auto; padding: 40px 16px;
+  }
+  #media.open { display: flex; }
+  #media .sheet { max-width: 860px; }
+  .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .media-card { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 10px; display: flex; flex-direction: column; gap: 7px; }
+  .media-card .preview { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 7px; background: #000; display: block; }
+  .media-card .meta { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .media-card textarea { min-height: 54px; font-size: 13px; }
+  .media-card .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .drop { border: 1px dashed var(--border); border-radius: 10px; padding: 18px; text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .drop.over { border-color: var(--accent); color: var(--text); }
+  .drop input { display: none; }
+  .attachments { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+  .attachments img, .attachments video { max-width: 220px; max-height: 180px; border-radius: 8px; display: block; }
+  .attachments .chip { font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; }
+
+  /* ---------- sign-in ---------- */
+  #login {
+    position: fixed; inset: 0; background: var(--bg); display: none; z-index: 40;
+    align-items: center; justify-content: center; overflow-y: auto; padding: 40px 16px;
+  }
+  #login.open { display: flex; }
+  #login .sheet { max-width: 440px; }
+  #login .logo { width: 44px; height: 44px; border-radius: 11px; background: var(--accent);
+    display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+  #login .step { display: none; }
+  #login .step.on { display: block; }
+  #login .notice { background: #3a1a1c; border: 1px solid var(--danger); color: #ffd7d8;
+    padding: 9px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+  #login .notice.info { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
+  #login .code-input { font-size: 26px; letter-spacing: 8px; text-align: center; font-variant-numeric: tabular-nums; }
+  #login .where { background: var(--accent-dim); border: 1px solid var(--accent);
+    border-radius: 8px; padding: 12px 14px; font-size: 13px; line-height: 1.55; margin: 0 0 18px; }
+  #login .where b { display: block; margin-bottom: 4px; font-size: 13.5px; }
+  #login .links { display: flex; gap: 14px; margin-top: 14px; font-size: 13px; flex-wrap: wrap; }
+  #login .links button { background: none; border: none; color: var(--accent); padding: 0; }
+  #login .links button:hover { text-decoration: underline; }
+  #login a { color: var(--accent); }
+  #login .sheet-actions { margin-top: 10px; }
+  #login .btn.primary { min-width: 130px; }
+  #login .btn:disabled { opacity: .6; cursor: default; }
+  body.signed-out header .needs-login { display: none; }
+  #logout { display: none; }
+  body.signed-in #logout { display: inline-block; }
+
+  /* clear of the composer so toasts never cover the Send button */
+  #toasts { position: fixed; right: 16px; bottom: 84px; display: flex; flex-direction: column; gap: 8px; z-index: 50; align-items: flex-end; }
+  .toast {
+    background: #3a1a1c; border: 1px solid var(--danger); color: #ffd7d8;
+    padding: 10px 14px; border-radius: 9px; max-width: 380px; font-size: 13px;
+  }
+  .toast.info { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="brand">Telegram AI Assistant <span id="brand-instance" class="instance"></span></span>
+  <span class="status"><span id="conn-dot" class="dot"></span><span id="conn-text">connecting…</span></span>
+  <span class="spacer"></span>
+  <span id="mode" class="status"></span>
+  <button id="global-pause" class="btn needs-login">Pause all</button>
+  <button id="open-outreach" class="btn needs-login">Outreach</button>
+  <button id="open-media" class="btn">Media</button>
+  <button id="open-style" class="btn">Style</button>
+  <button id="open-settings" class="btn">Settings</button>
+  <button id="logout" class="btn">Log out</button>
+</header>
+
+<div id="login">
+  <div class="sheet">
+    <div class="logo">
+      <svg width="24" height="24" viewBox="0 0 32 32"><path d="M7 16.5l17-7-6 16-3.5-6z" fill="#fff"/></svg>
+    </div>
+    <div id="l-notice" class="notice" hidden></div>
+
+    <!-- step 1: credentials -->
+    <form id="l-credentials" class="step on" autocomplete="off">
+      <h2>Sign in to Telegram</h2>
+      <p class="hint">The assistant runs on your own account. Credentials are saved to <code>.env</code> on this
+        machine, so you only do this once.</p>
+      <div class="row">
+        <div class="field"><label for="l-api-id">API ID</label>
+          <input id="l-api-id" type="text" inputmode="numeric" placeholder="1234567" required></div>
+        <div class="field"><label for="l-api-hash">API hash</label>
+          <input id="l-api-hash" type="password" placeholder="32-character hex string" autocomplete="off"></div>
+      </div>
+      <p class="hint" style="margin-top:-6px">Both come from <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a> → API development tools.</p>
+      <div class="field"><label for="l-phone">Phone number</label>
+        <input id="l-phone" type="tel" placeholder="+34600123456 — international format" required></div>
+      <div class="field"><label for="l-deepseek">DeepSeek API key</label>
+        <input id="l-deepseek" type="password" placeholder="sk-…" autocomplete="off"></div>
+      <p class="hint" style="margin-top:-6px">From <a href="https://platform.deepseek.com" target="_blank" rel="noopener">platform.deepseek.com</a>. Used to write the replies.</p>
+      <div class="sheet-actions">
+        <button type="submit" class="btn primary">Send code</button>
+      </div>
+    </form>
+
+    <!-- step 2: login code -->
+    <form id="l-code-form" class="step" autocomplete="off">
+      <h2>Enter the code</h2>
+      <div id="l-delivery" class="where"></div>
+      <div class="field">
+        <input id="l-code" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="•••••">
+      </div>
+      <div class="sheet-actions">
+        <button type="submit" class="btn primary">Sign in</button>
+      </div>
+      <div class="links">
+        <button type="button" id="l-resend" hidden></button>
+        <button type="button" id="l-restart">Start over</button>
+      </div>
+    </form>
+
+    <!-- step 3: two-step verification -->
+    <form id="l-password-form" class="step" autocomplete="off">
+      <h2>Two-step verification</h2>
+      <p class="hint">This account has a cloud password set in Telegram. Enter it to finish signing in.
+        It is used once and never stored.</p>
+      <div class="field"><label for="l-password">Password</label>
+        <input id="l-password" type="password" autocomplete="current-password"></div>
+      <div class="sheet-actions">
+        <button type="submit" class="btn primary">Sign in</button>
+      </div>
+      <div class="links">
+        <button type="button" id="l-restart-2">Start over</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<main>
+  <aside id="sidebar"></aside>
+  <section id="panel">
+    <div id="thread-header"><span style="color:var(--muted)">No conversation selected</span></div>
+    <div id="thread"><div class="empty">Incoming DMs appear here as they arrive.</div></div>
+  </section>
+</main>
+
+<div id="settings">
+  <div class="sheet">
+    <h2>Settings</h2>
+    <p class="hint">Saved straight to <code>config.json</code> — no restart needed. Persona fields start blank;
+      fill them in before expecting useful replies.</p>
+    <form id="settings-form">
+      <fieldset>
+        <legend>Persona</legend>
+        <div class="field"><label for="p-purpose">Purpose — what is this assistant for?</label>
+          <textarea id="p-purpose" rows="3"></textarea></div>
+        <div class="field"><label for="p-tone">Tone &amp; style</label>
+          <textarea id="p-tone" rows="3"></textarea></div>
+        <div class="field"><label for="p-languages">Languages</label>
+          <textarea id="p-languages" rows="2"></textarea></div>
+        <div class="field"><label for="p-boundaries">Boundaries — hard rules it must never break</label>
+          <textarea id="p-boundaries" rows="3"></textarea></div>
+        <div class="field"><label for="p-signature">Sign-off behaviour</label>
+          <textarea id="p-signature" rows="2"></textarea></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Timing</legend>
+        <div class="row">
+          <div class="field"><label for="t-min">Min delay (seconds)</label>
+            <input id="t-min" type="number" min="0" step="1"></div>
+          <div class="field"><label for="t-max">Max delay (seconds)</label>
+            <input id="t-max" type="number" min="0" step="1"></div>
+        </div>
+        <div class="field check">
+          <input id="t-hours-on" type="checkbox">
+          <label for="t-hours-on">Only draft replies during active hours</label>
+        </div>
+        <div class="row">
+          <div class="field"><label for="t-start">Active from</label><input id="t-start" type="time"></div>
+          <div class="field"><label for="t-end">Active until</label><input id="t-end" type="time"></div>
+          <div class="field"><label for="t-tz">Timezone (IANA, e.g. Europe/Berlin)</label>
+            <input id="t-tz" type="text" placeholder="UTC"></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Behaviour</legend>
+        <div class="field check">
+          <input id="b-auto" type="checkbox">
+          <label for="b-auto">Auto-send AI replies without my approval</label>
+        </div>
+        <div class="field check">
+          <input id="b-log" type="checkbox">
+          <label for="b-log">Log all messages to the database</label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Sounding human</legend>
+        <div class="field check">
+          <input id="h-adaptive" type="checkbox">
+          <label for="h-adaptive">Match how each person writes (length, emoji, formality, language)</label>
+        </div>
+        <div class="field check">
+          <input id="h-typing" type="checkbox">
+          <label for="h-typing">Show “typing…” before sending</label>
+        </div>
+        <div class="field check">
+          <input id="h-read" type="checkbox">
+          <label for="h-read">Mark their message read, so they get the second tick</label>
+        </div>
+        <div class="row">
+          <div class="field"><label for="h-cps">Typing speed (characters/second)</label>
+            <input id="h-cps" type="number" min="1" max="100" step="1"></div>
+          <div class="field"><label for="h-tmax">Longest it will ever type (s)</label>
+            <input id="h-tmax" type="number" min="1" max="300" step="1"></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Presence</legend>
+        <div class="field check">
+          <input id="pr-on" type="checkbox">
+          <label for="pr-on">Go offline between conversations, online only around replying</label>
+        </div>
+        <p class="hint" style="margin:4px 0 12px">Coming online happens some time before it opens the
+          chat, and going offline again happens some time after sending — never at the exact moment
+          a message is sent.</p>
+        <div class="row">
+          <div class="field"><label for="pr-on-min">Delay before coming online (s, min)</label>
+            <input id="pr-on-min" type="number" min="0" max="120" step="1"></div>
+          <div class="field"><label for="pr-on-max">…max</label>
+            <input id="pr-on-max" type="number" min="0" max="120" step="1"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="pr-off-min">Delay before going offline again (s, min)</label>
+            <input id="pr-off-min" type="number" min="0" max="3600" step="1"></div>
+          <div class="field"><label for="pr-off-max">…max</label>
+            <input id="pr-off-max" type="number" min="0" max="3600" step="1"></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Context between chats</legend>
+        <div class="field check">
+          <input id="cl-on" type="checkbox">
+          <label for="cl-on">Let a chat answer with what a linked chat already knows</label>
+        </div>
+        <div class="field check">
+          <input id="cl-auto" type="checkbox">
+          <label for="cl-auto">Link chats automatically when they are clearly the same
+            person (same @username, or the same full name)</label>
+        </div>
+        <div class="row">
+          <div class="field"><label for="cl-sources">Linked chats used per reply</label>
+            <input id="cl-sources" type="number" min="1" max="5" step="1"></div>
+          <div class="field"><label for="cl-history">Messages summarised from each</label>
+            <input id="cl-history" type="number" min="5" max="300" step="5"></div>
+          <div class="field"><label for="cl-refresh">Rebuild after this many new messages</label>
+            <input id="cl-refresh" type="number" min="1" max="200" step="1"></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>AI</legend>
+        <div class="row">
+          <div class="field"><label for="a-model">Model</label><input id="a-model" type="text"></div>
+          <div class="field"><label for="a-tokens">Max tokens</label>
+            <input id="a-tokens" type="number" min="1" max="8192" step="1"></div>
+          <div class="field"><label for="a-temp">Temperature</label>
+            <input id="a-temp" type="number" min="0" max="2" step="0.1"></div>
+          <div class="field"><label for="a-concurrency">Parallel replies</label>
+            <input id="a-concurrency" type="number" min="1" max="32" step="1"
+                   title="How many chats may be drafted at the same time. Higher answers a busy inbox faster; too high can trip the API rate limit."></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Bookings</legend>
+        <p class="hint">When a client settles on a date and time in chat, the request
+          is sent to the provider's Telegram account, who replies <b>YES</b> or
+          <b>NO</b>; the client is then told in the usual reply flow. Times are read
+          in the timezone set under Timing.</p>
+        <div class="row">
+          <label class="check"><input id="bk-on" type="checkbox">
+            Detect appointments and ask the provider to confirm</label>
+        </div>
+        <div class="row">
+          <div class="field"><label for="bk-provider">Provider account</label>
+            <input id="bk-provider" type="text" placeholder="@username or numeric id"
+                   title="The Telegram account (a person or a bot) that confirms or declines. The AI never replies to this account."></div>
+          <div class="field"><label for="bk-duration">Default length (min)</label>
+            <input id="bk-duration" type="number" min="5" max="1440" step="5"></div>
+          <div class="field"><label for="bk-scan">Messages checked</label>
+            <input id="bk-scan" type="number" min="2" max="100" step="1"
+                   title="How many recent messages are read when looking for an agreed time."></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="bk-remind">Check in this long before (min)</label>
+            <input id="bk-remind" type="number" min="0" max="10080" step="15"
+                   title="Before a confirmed appointment the client is asked whether they are still coming. 0 = off."></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="bk-arrival">Arrival instructions</label>
+            <textarea id="bk-arrival" rows="3"
+              placeholder="Sent word for word when the client says they have arrived: address, floor, door code, how to get in."></textarea></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="bk-calendar">Google Calendar ID (optional)</label>
+            <input id="bk-calendar" type="text" placeholder="e.g. abc123@group.calendar.google.com"
+                   title="Requests appear as tentative events; YES confirms, NO removes. Needs GOOGLE_SERVICE_ACCOUNT_FILE in .env — see google_calendar.py."></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Account safety</legend>
+        <p class="hint">Limits that protect the Telegram account itself. Telegram
+          does not publish its thresholds — these are deliberately low. Raising
+          them raises the chance of the number being limited or banned.</p>
+        <div class="row">
+          <div class="field"><label for="s-daily">Messages per day</label>
+            <input id="s-daily" type="number" min="1" max="10000" step="1"
+                   title="Total messages sent per day, replies included."></div>
+          <div class="field"><label for="s-peers">People per day</label>
+            <input id="s-peers" type="number" min="1" max="10000" step="1"
+                   title="How many different people may be written to in a day. Breadth looks like spam much faster than depth."></div>
+          <div class="field"><label for="s-flood">Max wait (s)</label>
+            <input id="s-flood" type="number" min="0" max="86400" step="1"
+                   title="A Telegram rate limit longer than this stops the account instead of being slept through."></div>
+        </div>
+        <div class="row">
+          <label class="check"><input id="s-halt" type="checkbox">
+            Stop everything if Telegram flags this account as spammy</label>
+        </div>
+        <div class="row">
+          <label class="check"><input id="s-known" type="checkbox">
+            Only message people in contacts or who wrote first</label>
+        </div>
+      </fieldset>
+
+      <div class="sheet-actions">
+        <button type="button" id="close-settings" class="btn">Cancel</button>
+        <button type="submit" class="btn primary">Save settings</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="outreach">
+  <div class="sheet">
+    <h2>Message my contacts</h2>
+    <p class="hint">Pick people from your Telegram contacts and say what the message should
+      achieve — each one gets its own message written for them. Sends are spaced out and
+      capped per day, because Telegram penalises bursts of new conversations.</p>
+
+    <div class="field">
+      <label for="o-goal">What should the message do?</label>
+      <textarea id="o-goal" rows="3"
+        placeholder="e.g. let them know I'm away next week and to reach me by email"></textarea>
+    </div>
+
+    <div class="field">
+      <label>Contacts <span id="o-count" class="muted"></span></label>
+      <input id="o-filter" type="text" placeholder="Filter by name or @username…">
+      <div id="o-contacts" class="picker">Loading contacts…</div>
+      <div class="picker-actions">
+        <button type="button" id="o-all" class="btn small">Select all shown</button>
+        <button type="button" id="o-none" class="btn small">Clear selection</button>
+      </div>
+    </div>
+
+    <div class="field check">
+      <input id="o-auto" type="checkbox">
+      <label for="o-auto">Send without asking me (otherwise each one waits for approval)</label>
+    </div>
+
+    <div class="row">
+      <div class="field"><label for="o-min">Min gap between sends (s)</label>
+        <input id="o-min" type="number" min="5" step="5"></div>
+      <div class="field"><label for="o-max">Max gap (s)</label>
+        <input id="o-max" type="number" min="5" step="5"></div>
+      <div class="field"><label for="o-limit">Max per day</label>
+        <input id="o-limit" type="number" min="1" step="1"></div>
+    </div>
+
+    <div class="sheet-actions">
+      <button type="button" id="o-close" class="btn">Close</button>
+      <button type="button" id="o-cancel" class="btn warn">Cancel queued</button>
+      <button type="button" id="o-queue" class="btn primary">Queue messages</button>
+    </div>
+
+    <h3 class="sub">Queue</h3>
+    <div id="o-status" class="queue">Nothing queued yet.</div>
+  </div>
+</div>
+
+<div id="style">
+  <div class="sheet">
+    <h2>Style &amp; fine-tuning</h2>
+    <p class="hint">Two ways to shape how it writes: samples that apply everywhere, and
+      per-contact overrides for timing, length and tone.</p>
+
+    <fieldset>
+      <legend>General writing samples</legend>
+      <p class="hint" style="margin:0 0 10px">Paste real messages this account has sent
+        before (any format — a chat export, or just pasted lines). Used to learn phrasing
+        and tone for every conversation, alongside the persona in Settings.</p>
+      <div class="field">
+        <textarea id="fs-samples" rows="8" placeholder="e.g.&#10;haha yeah for sure&#10;lmk when you're free&#10;omw, 5 min"></textarea>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" id="fs-save" class="btn primary">Save writing samples</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Per-contact style</legend>
+      <div class="field">
+        <label for="cs-select">Chat <span class="muted">— anyone you've messaged (✓ = already styled)</span></label>
+        <select id="cs-select"><option value="">Loading contacts…</option></select>
+      </div>
+
+      <div id="cs-form" style="display:none">
+        <div class="field"><label for="cs-length">Message length</label>
+          <select id="cs-length">
+            <option value="auto">Auto (match how they write)</option>
+            <option value="short">Short — a few words to one line</option>
+            <option value="medium">Medium — a couple of sentences</option>
+            <option value="long">Long — detailed messages are fine</option>
+          </select>
+        </div>
+        <div class="field"><label for="cs-notes">Style notes for this person</label>
+          <textarea id="cs-notes" rows="3" placeholder="e.g. old friend, very casual, lots of inside jokes, swears a lot"></textarea></div>
+        <div class="field"><label for="cs-extra">Extra persona instructions for this person</label>
+          <textarea id="cs-extra" rows="2" placeholder="e.g. never discuss work with this person"></textarea></div>
+        <div class="field"><label for="cs-samples">Writing samples with this specific person</label>
+          <textarea id="cs-samples" rows="5" placeholder="Paste real past messages to them, to match this specific voice"></textarea></div>
+
+        <p class="sub" style="margin-top:18px">Timing overrides <span class="muted">— blank uses the global Settings value</span></p>
+        <div class="row">
+          <div class="field"><label for="cs-min">Reply delay min (s)</label><input id="cs-min" type="number" min="0" step="1"></div>
+          <div class="field"><label for="cs-max">Reply delay max (s)</label><input id="cs-max" type="number" min="0" step="1"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="cs-cps">Typing speed (chars/s)</label><input id="cs-cps" type="number" min="1" max="100" step="1"></div>
+          <div class="field"><label for="cs-tmax">Longest typing (s)</label><input id="cs-tmax" type="number" min="1" max="300" step="1"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="cs-on-min">Online delay min (s)</label><input id="cs-on-min" type="number" min="0" max="120" step="1"></div>
+          <div class="field"><label for="cs-on-max">Online delay max (s)</label><input id="cs-on-max" type="number" min="0" max="120" step="1"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label for="cs-off-min">Offline delay min (s)</label><input id="cs-off-min" type="number" min="0" max="3600" step="1"></div>
+          <div class="field"><label for="cs-off-max">Offline delay max (s)</label><input id="cs-off-max" type="number" min="0" max="3600" step="1"></div>
+        </div>
+
+        <div class="sheet-actions">
+          <button type="button" id="cs-reset" class="btn warn">Reset to global</button>
+          <button type="button" id="cs-save" class="btn primary">Save this contact's style</button>
+        </div>
+      </div>
+    </fieldset>
+
+    <div class="sheet-actions">
+      <button type="button" id="st-close" class="btn">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="media">
+  <div class="sheet">
+    <h2>Photos &amp; videos</h2>
+    <p class="hint">Files the assistant may send when someone asks for a photo or video.
+      Give each one a short description — that is how it picks the right one ("the one from
+      the beach"). Files can also be dropped straight into the <code>media/</code> folder.</p>
+
+    <div id="m-drop" class="drop">
+      <label for="m-files" style="cursor:pointer">Drop photos or videos here, or <u>choose files</u></label>
+      <input id="m-files" type="file" multiple accept="image/*,video/*,.jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.m4v,.mkv,.webm">
+      <div id="m-progress" style="margin-top:6px"></div>
+    </div>
+
+    <div id="m-grid" class="media-grid"></div>
+
+    <fieldset style="margin-top:16px">
+      <legend>Rules</legend>
+      <div class="row">
+        <label class="check"><input id="m-enabled" type="checkbox">
+          Let the AI send these when asked</label>
+      </div>
+      <div class="row">
+        <label class="check"><input id="m-ask-video" type="checkbox">
+          Videos only after asking — the AI first asks whether they want it, and sends it once they say yes</label>
+      </div>
+      <div class="row">
+        <label class="check"><input id="m-video-approve" type="checkbox">
+          A reply with a video always waits for my approval, even with auto-send on</label>
+      </div>
+    </fieldset>
+
+    <div class="sheet-actions">
+      <button type="button" id="m-close" class="btn">Close</button>
+      <button type="button" id="m-save" class="btn primary">Save rules</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+"use strict";
+
+const state = {
+  conversations: [],
+  messages: [],
+  activeChatId: null,
+  config: null,
+  status: null,
+  auth: null,
+  drafting: new Set(),
+  // Chats the open conversation borrows context from, and the picker that
+  // adds one. Both belong to whichever chat is on screen, so they reset with it.
+  links: [],
+  linkOptions: null,
+  // The media library, as the server lists it; refreshed over the socket.
+  media: [],
+};
+
+const $ = (id) => document.getElementById(id);
+
+/* ------------------------------------------------------------------ utils */
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;   // textContent: never inject HTML
+  return node;
+}
+
+function fmtTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " +
+      d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function toast(text, kind) {
+  const node = el("div", "toast" + (kind === "info" ? " info" : ""), text);
+  $("toasts").appendChild(node);
+  setTimeout(() => node.remove(), kind === "info" ? 4000 : 9000);
+}
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch (_) {}
+    throw new Error(detail);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+/* --------------------------------------------------------------- sidebar */
+
+function renderSidebar() {
+  const sidebar = $("sidebar");
+  sidebar.textContent = "";
+
+  if (!state.conversations.length) {
+    const empty = el("div", "empty", "No conversations yet.");
+    empty.style.padding = "24px 16px";
+    sidebar.appendChild(empty);
+    return;
+  }
+
+  for (const conv of state.conversations) {
+    const item = el("button", "conv" + (conv.chat_id === state.activeChatId ? " active" : ""));
+
+    const top = el("div", "conv-top");
+    top.appendChild(el("span", "conv-name", conv.display_name || String(conv.chat_id)));
+    top.appendChild(el("span", "conv-time", fmtTime(conv.last_message_at)));
+    item.appendChild(top);
+
+    item.appendChild(el("div", "conv-preview", conv.last_message_preview || "—"));
+
+    const meta = el("div", "conv-meta");
+    if (conv.is_bot) meta.appendChild(el("span", "badge bot", "bot"));
+    if (conv.automation_paused) meta.appendChild(el("span", "badge paused", "paused"));
+    if (conv.unread > 0) meta.appendChild(el("span", "unread", String(conv.unread)));
+
+    const spacer = el("span"); spacer.style.flex = "1";
+    meta.appendChild(spacer);
+
+    const toggle = el("span", "btn small" + (conv.automation_paused ? " on" : ""),
+                      conv.automation_paused ? "Resume" : "Pause");
+    toggle.setAttribute("role", "button");
+    toggle.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      try {
+        await api("POST", `/api/conversations/${conv.chat_id}/pause`,
+                  { paused: !conv.automation_paused });
+      } catch (err) { toast(err.message); }
+    });
+    meta.appendChild(toggle);
+    item.appendChild(meta);
+
+    item.addEventListener("click", () => selectConversation(conv.chat_id));
+    sidebar.appendChild(item);
+  }
+}
+
+/* ---------------------------------------------------------------- thread */
+
+function conversationById(chatId) {
+  return state.conversations.find((c) => c.chat_id === chatId) || null;
+}
+
+function renderThreadHeader() {
+  const header = $("thread-header");
+  header.textContent = "";
+  const conv = conversationById(state.activeChatId);
+  if (!conv) {
+    const span = el("span", null, "No conversation selected");
+    span.style.color = "var(--muted)";
+    header.appendChild(span);
+    return;
+  }
+
+  const name = el("strong", null, conv.display_name || String(conv.chat_id));
+  header.appendChild(name);
+  if (conv.username) {
+    const handle = el("span", null, "@" + conv.username);
+    handle.style.color = "var(--muted)";
+    header.appendChild(handle);
+  }
+  if (conv.is_bot) header.appendChild(el("span", "badge bot", "bot"));
+
+  for (const link of state.links) header.appendChild(linkChip(link));
+
+  const spacer = el("span", "spacer");
+  header.appendChild(spacer);
+
+  header.appendChild(state.linkOptions ? linkPicker(conv) : linkButton(conv));
+
+  const toggle = el("button", "btn small" + (conv.automation_paused ? " on" : ""),
+                    conv.automation_paused ? "Automation paused" : "Pause automation");
+  toggle.addEventListener("click", async () => {
+    try {
+      await api("POST", `/api/conversations/${conv.chat_id}/pause`,
+                { paused: !conv.automation_paused });
+    } catch (err) { toast(err.message); }
+  });
+  header.appendChild(toggle);
+}
+
+/* A chat this conversation draws on. The reason is on the chip's tooltip:
+   a link the app made on its own should never be unexplained. */
+function linkChip(link) {
+  const chip = el("span", "badge link");
+  chip.appendChild(el("span", null, "context: " + link.source_name));
+  chip.title = (link.origin === "auto" ? "Detected: " : "Linked by hand: ") +
+               (link.reason || "same person");
+  const cut = el("button", null, "×");
+  cut.title = "Stop drawing on this chat";
+  cut.addEventListener("click", async () => {
+    try {
+      const res = await api(
+        "DELETE", `/api/conversations/${link.chat_id}/links/${link.source_id}`);
+      state.links = res.links;
+      renderThreadHeader();
+      toast("Unlinked. This chat's replies won't use that one.", "info");
+    } catch (err) { toast(err.message); }
+  });
+  chip.appendChild(cut);
+  return chip;
+}
+
+function linkButton(conv) {
+  const button = el("button", "btn small", "Link chat…");
+  button.title = "Answer this chat with what another chat already knows";
+  button.addEventListener("click", async () => {
+    try {
+      const data = await api("GET", `/api/conversations/${conv.chat_id}/links`);
+      state.links = data.links;
+      state.linkOptions = data.suggestions;
+    } catch (err) { toast(err.message); return; }
+    renderThreadHeader();
+  });
+  return button;
+}
+
+function linkPicker(conv) {
+  const picker = el("select", "link-picker");
+  picker.appendChild(new Option("Draw on which chat?", ""));
+
+  const linked = new Set(state.links.map((l) => l.source_id));
+  // Whatever detection thought was the same person but would not act on by
+  // itself goes to the top — the rest is every conversation, in case it is
+  // someone it had no way of recognising.
+  if (state.linkOptions.length) {
+    const suggested = document.createElement("optgroup");
+    suggested.label = "Looks like the same person";
+    for (const s of state.linkOptions) {
+      suggested.appendChild(new Option(`${contactLabel(s)} — ${s.reason}`, s.chat_id));
+    }
+    picker.appendChild(suggested);
+  }
+  const all = document.createElement("optgroup");
+  all.label = "All conversations";
+  for (const c of state.conversations) {
+    if (c.chat_id === conv.chat_id || linked.has(c.chat_id)) continue;
+    all.appendChild(new Option(contactLabel(c), c.chat_id));
+  }
+  picker.appendChild(all);
+
+  picker.addEventListener("change", async () => {
+    const sourceId = Number(picker.value);
+    state.linkOptions = null;
+    if (sourceId) {
+      try {
+        const res = await api("POST", `/api/conversations/${conv.chat_id}/links`,
+                              { source_id: sourceId });
+        state.links = res.links;
+        toast("Linked. Replies here will draw on that chat.", "info");
+      } catch (err) { toast(err.message); }
+    }
+    renderThreadHeader();
+  });
+  picker.addEventListener("blur", () => {
+    state.linkOptions = null;
+    renderThreadHeader();
+  });
+  setTimeout(() => picker.focus(), 0);
+  return picker;
+}
+
+function renderThread() {
+  const thread = $("thread");
+  const stick = thread.scrollTop + thread.clientHeight >= thread.scrollHeight - 60;
+  thread.textContent = "";
+
+  if (state.activeChatId === null) {
+    thread.appendChild(el("div", "empty", "Incoming DMs appear here as they arrive."));
+    return;
+  }
+
+  for (const msg of state.messages) {
+    thread.appendChild(msg.status === "pending_approval" ? draftNode(msg) : messageNode(msg));
+  }
+
+  if (state.drafting.has(state.activeChatId)) {
+    thread.appendChild(el("div", "typing", "AI is preparing a reply…"));
+  }
+
+  if (stick) thread.scrollTop = thread.scrollHeight;
+}
+
+function messageNode(msg) {
+  if (msg.status === "note") {
+    const node = el("div", "msg note");
+    node.appendChild(el("div", "label", "booking"));
+    node.appendChild(el("div", null, msg.text));
+    node.appendChild(el("div", "time", fmtTime(msg.created_at)));
+    return node;
+  }
+  if (msg.status === "error") {
+    const node = el("div", "msg error");
+    node.appendChild(el("div", "label", "error"));
+    node.appendChild(el("div", null, msg.text));
+    node.appendChild(el("div", "time", fmtTime(msg.created_at)));
+    return node;
+  }
+
+  const isIn = msg.direction === "in";
+  const cls = msg.status === "rejected" ? "msg rejected" : (isIn ? "msg in" : "msg out");
+  const node = el("div", cls);
+  node.appendChild(el("div", "label",
+    isIn ? "them" : (msg.status === "rejected" ? "rejected draft" : "me")));
+  if (msg.text) node.appendChild(el("div", null, msg.text));
+  const files = attachmentsNode(msg);
+  if (files) node.appendChild(files);
+  node.appendChild(el("div", "time", fmtTime(msg.created_at)));
+  return node;
+}
+
+function mediaById(id) {
+  return state.media.find((m) => m.id === id) || null;
+}
+
+function mediaPreview(item, small) {
+  const src = `/api/media/${item.id}/file`;
+  if (item.kind === "video") {
+    const v = el("video");
+    v.src = src; v.controls = true; v.preload = "metadata"; v.muted = true;
+    if (small) v.className = "preview";
+    return v;
+  }
+  const img = el("img");
+  img.src = src; img.alt = item.description || item.file; img.loading = "lazy";
+  if (small) img.className = "preview";
+  return img;
+}
+
+// Thumbnails for the files a row carries: a sent file, or what a draft will
+// send with it. A file gone from the library is named rather than shown.
+function attachmentsNode(msg) {
+  const ids = msg.attachments || [];
+  if (!ids.length) return null;
+  const box = el("div", "attachments");
+  for (const id of ids) {
+    const item = mediaById(id);
+    if (!item) { box.appendChild(el("span", "chip", `file #${id} (removed)`)); continue; }
+    box.appendChild(mediaPreview(item, false));
+  }
+  return box;
+}
+
+// Text of drafts currently being edited, keyed by draft id, so a re-render
+// triggered by an unrelated incoming message doesn't discard my edit.
+const draftEdits = new Map();
+
+function draftNode(msg) {
+  const node = el("div", "draft");
+  node.appendChild(el("div", "label", "AI draft — awaiting approval"));
+
+  const body = el("div", null, msg.text);
+  const box = el("textarea");
+  box.rows = 4;
+  box.value = draftEdits.has(msg.id) ? draftEdits.get(msg.id) : msg.text;
+  box.addEventListener("input", () => draftEdits.set(msg.id, box.value));
+
+  let editing = draftEdits.has(msg.id);
+  node.appendChild(body);
+  node.appendChild(box);
+  const files = attachmentsNode(msg);
+  if (files) {
+    const ids = msg.attachments || [];
+    const kinds = ids.map((id) => (mediaById(id) || {}).kind || "file");
+    node.appendChild(el("div", "label", "will send " + kinds.join(" + ") + " with it"));
+    node.appendChild(files);
+  }
+
+  const actions = el("div", "draft-actions");
+  const approve = el("button", "btn small primary", "Approve & Send");
+  const edit = el("button", "btn small", "Edit then Send");
+  const reject = el("button", "btn small warn", "Reject");
+
+  const showEditor = () => {
+    editing = true;
+    body.style.display = "none";
+    box.style.display = "block";
+    approve.style.display = "none";
+    edit.textContent = "Send edited";
+    edit.classList.add("primary");
+  };
+  const showPreview = () => {
+    editing = false;
+    body.style.display = "";
+    box.style.display = "none";
+  };
+
+  approve.addEventListener("click", () => sendDraft(msg.id, null, approve));
+  edit.addEventListener("click", () => {
+    if (!editing) { showEditor(); box.focus(); return; }
+    sendDraft(msg.id, box.value, edit);
+  });
+  reject.addEventListener("click", async () => {
+    reject.disabled = true;
+    draftEdits.delete(msg.id);
+    try { await api("POST", `/api/drafts/${msg.id}/reject`); }
+    catch (err) { toast(err.message); reject.disabled = false; }
+  });
+
+  actions.appendChild(approve);
+  actions.appendChild(edit);
+  actions.appendChild(reject);
+  node.appendChild(actions);
+  node.appendChild(el("div", "time", fmtTime(msg.created_at)));
+
+  if (editing) showEditor(); else showPreview();
+  return node;
+}
+
+async function sendDraft(draftId, text, button) {
+  button.disabled = true;
+  try {
+    await api("POST", `/api/drafts/${draftId}/approve`, text === null ? {} : { text });
+    draftEdits.delete(draftId);
+  } catch (err) {
+    toast(err.message);
+    button.disabled = false;
+  }
+}
+
+/* ----------------------------------------------------------- composer */
+
+function renderComposer() {
+  let composer = $("composer");
+  if (state.activeChatId === null) {
+    if (composer) composer.remove();
+    return;
+  }
+  if (composer) return;
+
+  composer = el("div");
+  composer.id = "composer";
+  const box = el("textarea");
+  box.placeholder = "Write a message as yourself…";
+  box.rows = 1;
+  const send = el("button", "btn primary", "Send");
+
+  const submit = async () => {
+    const text = box.value.trim();
+    if (!text) return;
+    send.disabled = true;
+    try {
+      await api("POST", `/api/conversations/${state.activeChatId}/send`, { text });
+      box.value = "";
+    } catch (err) { toast(err.message); }
+    send.disabled = false;
+    box.focus();
+  };
+
+  send.addEventListener("click", submit);
+  box.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); submit(); }
+  });
+
+  composer.appendChild(box);
+  composer.appendChild(send);
+  $("panel").appendChild(composer);
+}
+
+/* ------------------------------------------------------------ selection */
+
+async function selectConversation(chatId) {
+  state.activeChatId = chatId;
+  state.links = [];
+  state.linkOptions = null;
+  renderSidebar();
+  renderThreadHeader();
+  renderComposer();
+  try {
+    const data = await api("GET", `/api/conversations/${chatId}/messages`);
+    state.messages = data.messages;
+    state.links = data.links || [];
+    renderThreadHeader();
+    renderThread();
+    const conv = await api("POST", `/api/conversations/${chatId}/read`);
+    upsertConversation(conv);
+  } catch (err) { toast(err.message); }
+}
+
+function upsertConversation(conv) {
+  if (!conv) return;
+  const idx = state.conversations.findIndex((c) => c.chat_id === conv.chat_id);
+  if (idx === -1) state.conversations.unshift(conv);
+  else state.conversations[idx] = conv;
+  state.conversations.sort((a, b) =>
+    String(b.last_message_at || "").localeCompare(String(a.last_message_at || "")));
+  renderSidebar();
+  if (conv.chat_id === state.activeChatId) renderThreadHeader();
+}
+
+function upsertMessage(msg) {
+  if (msg.chat_id !== state.activeChatId) return;
+  const idx = msg.id === null ? -1 : state.messages.findIndex((m) => m.id === msg.id);
+  if (idx === -1) state.messages.push(msg);
+  else state.messages[idx] = msg;
+  renderThread();
+}
+
+/* ------------------------------------------------------------- settings */
+
+function fillSettings(cfg) {
+  $("p-purpose").value = cfg.persona.purpose;
+  $("p-tone").value = cfg.persona.tone;
+  $("p-languages").value = cfg.persona.languages;
+  $("p-boundaries").value = cfg.persona.boundaries;
+  $("p-signature").value = cfg.persona.signature_style;
+
+  $("t-min").value = cfg.timing.min_delay_seconds;
+  $("t-max").value = cfg.timing.max_delay_seconds;
+  $("t-hours-on").checked = cfg.timing.active_hours_enabled;
+  $("t-start").value = cfg.timing.active_hours_start;
+  $("t-end").value = cfg.timing.active_hours_end;
+  $("t-tz").value = cfg.timing.timezone;
+
+  $("b-auto").checked = cfg.behavior.auto_send;
+  $("b-log").checked = cfg.behavior.log_all_messages;
+
+  $("h-adaptive").checked = cfg.human.adaptive_style;
+  $("h-typing").checked = cfg.human.typing_indicator;
+  $("h-read").checked = cfg.human.mark_read;
+  $("h-cps").value = cfg.human.typing_speed_cps;
+  $("h-tmax").value = cfg.human.typing_max_seconds;
+
+  $("pr-on").checked = cfg.presence.enabled;
+  $("pr-on-min").value = cfg.presence.go_online_delay_min;
+  $("pr-on-max").value = cfg.presence.go_online_delay_max;
+  $("pr-off-min").value = cfg.presence.offline_delay_min;
+  $("pr-off-max").value = cfg.presence.offline_delay_max;
+
+  $("cl-on").checked = cfg.context_link.enabled;
+  $("cl-auto").checked = cfg.context_link.auto_detect;
+  $("cl-sources").value = cfg.context_link.max_sources;
+  $("cl-history").value = cfg.context_link.history_limit;
+  $("cl-refresh").value = cfg.context_link.refresh_after_messages;
+
+  $("a-model").value = cfg.ai.model;
+  $("a-tokens").value = cfg.ai.max_tokens;
+  $("a-temp").value = cfg.ai.temperature;
+  $("a-concurrency").value = cfg.ai.max_concurrent_requests;
+
+  $("s-daily").value = cfg.safety.daily_send_limit;
+  $("s-peers").value = cfg.safety.daily_peer_limit;
+  $("s-flood").value = cfg.safety.max_flood_wait_seconds;
+  $("s-halt").checked = cfg.safety.halt_on_peer_flood;
+  $("s-known").checked = cfg.safety.known_contacts_only;
+
+  $("bk-on").checked = cfg.booking.enabled;
+  $("bk-provider").value = cfg.booking.provider;
+  $("bk-duration").value = cfg.booking.default_duration_minutes;
+  $("bk-scan").value = cfg.booking.scan_messages;
+  $("bk-calendar").value = cfg.booking.google_calendar_id;
+  $("bk-remind").value = cfg.booking.reminder_minutes_before;
+  $("bk-arrival").value = cfg.booking.arrival_instructions;
+}
+
+function collectSettings() {
+  return {
+    persona: {
+      purpose: $("p-purpose").value,
+      tone: $("p-tone").value,
+      languages: $("p-languages").value,
+      boundaries: $("p-boundaries").value,
+      signature_style: $("p-signature").value,
+    },
+    timing: {
+      min_delay_seconds: Number($("t-min").value),
+      max_delay_seconds: Number($("t-max").value),
+      active_hours_enabled: $("t-hours-on").checked,
+      active_hours_start: $("t-start").value,
+      active_hours_end: $("t-end").value,
+      timezone: $("t-tz").value,
+    },
+    behavior: {
+      auto_send: $("b-auto").checked,
+      log_all_messages: $("b-log").checked,
+      // Preserved here so saving Settings can't silently clear the global pause.
+      global_pause: state.config ? state.config.behavior.global_pause : false,
+    },
+    human: {
+      adaptive_style: $("h-adaptive").checked,
+      typing_indicator: $("h-typing").checked,
+      mark_read: $("h-read").checked,
+      typing_speed_cps: Number($("h-cps").value),
+      typing_max_seconds: Number($("h-tmax").value),
+    },
+    presence: {
+      enabled: $("pr-on").checked,
+      go_online_delay_min: Number($("pr-on-min").value),
+      go_online_delay_max: Number($("pr-on-max").value),
+      offline_delay_min: Number($("pr-off-min").value),
+      offline_delay_max: Number($("pr-off-max").value),
+    },
+    context_link: {
+      enabled: $("cl-on").checked,
+      auto_detect: $("cl-auto").checked,
+      max_sources: Number($("cl-sources").value),
+      history_limit: Number($("cl-history").value),
+      refresh_after_messages: Number($("cl-refresh").value),
+    },
+    ai: {
+      model: $("a-model").value,
+      max_tokens: Number($("a-tokens").value),
+      temperature: Number($("a-temp").value),
+      max_concurrent_requests: Number($("a-concurrency").value),
+    },
+    safety: {
+      daily_send_limit: Number($("s-daily").value),
+      daily_peer_limit: Number($("s-peers").value),
+      max_flood_wait_seconds: Number($("s-flood").value),
+      halt_on_peer_flood: $("s-halt").checked,
+      known_contacts_only: $("s-known").checked,
+    },
+    booking: {
+      enabled: $("bk-on").checked,
+      provider: $("bk-provider").value.trim(),
+      default_duration_minutes: Number($("bk-duration").value),
+      scan_messages: Number($("bk-scan").value),
+      google_calendar_id: $("bk-calendar").value.trim(),
+      reminder_minutes_before: Number($("bk-remind").value),
+      arrival_instructions: $("bk-arrival").value,
+    },
+    // Outreach, per-contact styles and fine-tune samples are each edited in
+    // their own panel; carry them through untouched so saving Settings can't
+    // quietly reset them to defaults.
+    outreach: state.config ? state.config.outreach : undefined,
+    contacts: state.config ? state.config.contacts : {},
+    finetune: state.config ? state.config.finetune : { writing_samples: "" },
+    media: state.config ? state.config.media : undefined,
+  };
+}
+
+function applyConfig(cfg) {
+  state.config = cfg;
+  const paused = cfg.behavior.global_pause;
+  const button = $("global-pause");
+  button.textContent = paused ? "Automation paused" : "Pause all";
+  button.classList.toggle("on", paused);
+
+  const bits = [];
+  bits.push(cfg.behavior.auto_send ? "auto-send ON" : "approval required");
+  if (cfg.timing.active_hours_enabled) {
+    bits.push(`active ${cfg.timing.active_hours_start}–${cfg.timing.active_hours_end} ${cfg.timing.timezone}`);
+  }
+  $("mode").textContent = bits.join(" · ");
+}
+
+/* ------------------------------------------------------------- outreach */
+
+const outreach = { contacts: [], selected: new Set(), items: [] };
+
+function renderContacts() {
+  const box = $("o-contacts");
+  const term = $("o-filter").value.trim().toLowerCase();
+  const shown = outreach.contacts.filter((c) =>
+    !term || c.display_name.toLowerCase().includes(term) ||
+    (c.username || "").toLowerCase().includes(term));
+
+  box.textContent = "";
+  if (!shown.length) {
+    const empty = el("div", "row-item", outreach.contacts.length
+      ? "No contacts match that filter." : "No contacts found on this account.");
+    box.appendChild(empty);
+  }
+
+  for (const c of shown) {
+    const row = el("label", "row-item");
+    const cb = el("input");
+    cb.type = "checkbox";
+    cb.checked = outreach.selected.has(c.chat_id);
+    cb.addEventListener("change", () => {
+      if (cb.checked) outreach.selected.add(c.chat_id);
+      else outreach.selected.delete(c.chat_id);
+      updateCount();
+    });
+    row.appendChild(cb);
+    row.appendChild(el("span", null, c.display_name));
+    if (c.username) row.appendChild(el("span", "handle", "@" + c.username));
+    if (c.is_bot) row.appendChild(el("span", "badge bot", "bot"));
+    box.appendChild(row);
+  }
+  updateCount();
+}
+
+function updateCount() {
+  $("o-count").textContent =
+    `— ${outreach.selected.size} selected of ${outreach.contacts.length}`;
+}
+
+function renderQueue() {
+  const box = $("o-status");
+  box.textContent = "";
+  if (!outreach.items.length) {
+    box.textContent = "Nothing queued yet.";
+    return;
+  }
+  for (const item of outreach.items.slice().reverse()) {
+    const row = el("div", "q");
+    row.appendChild(el("span", "tag " + item.status, item.status));
+    row.appendChild(el("span", "who", item.display_name || String(item.chat_id)));
+    row.appendChild(el("span", "txt", item.error || item.message || item.goal));
+    box.appendChild(row);
+  }
+}
+
+async function loadContacts() {
+  $("o-contacts").textContent = "Loading contacts…";
+  try {
+    outreach.contacts = await api("GET", "/api/contacts");
+    renderContacts();
+  } catch (err) {
+    $("o-contacts").textContent = "Could not load contacts: " + err.message;
+  }
+}
+
+async function loadQueue() {
+  try {
+    outreach.items = await api("GET", "/api/outreach");
+    renderQueue();
+  } catch (err) { /* the websocket will refresh it */ }
+}
+
+$("open-outreach").addEventListener("click", async () => {
+  $("outreach").classList.add("open");
+  if (state.config) {
+    $("o-auto").checked = state.config.outreach.auto_send;
+    $("o-min").value = state.config.outreach.min_gap_seconds;
+    $("o-max").value = state.config.outreach.max_gap_seconds;
+    $("o-limit").value = state.config.outreach.daily_limit;
+  }
+  await Promise.all([loadContacts(), loadQueue()]);
+});
+
+$("o-close").addEventListener("click", () => $("outreach").classList.remove("open"));
+$("outreach").addEventListener("click", (ev) => {
+  if (ev.target === $("outreach")) $("outreach").classList.remove("open");
+});
+$("o-filter").addEventListener("input", renderContacts);
+
+$("o-all").addEventListener("click", () => {
+  const term = $("o-filter").value.trim().toLowerCase();
+  for (const c of outreach.contacts) {
+    if (!term || c.display_name.toLowerCase().includes(term) ||
+        (c.username || "").toLowerCase().includes(term)) {
+      outreach.selected.add(c.chat_id);
+    }
+  }
+  renderContacts();
+});
+
+$("o-none").addEventListener("click", () => {
+  outreach.selected.clear();
+  renderContacts();
+});
+
+$("o-queue").addEventListener("click", async () => {
+  const goal = $("o-goal").value.trim();
+  if (!goal) { toast("Say what the message should achieve."); return; }
+  if (!outreach.selected.size) { toast("Pick at least one contact."); return; }
+
+  // Pacing and the daily cap live in config, so save them before queueing.
+  try {
+    const cfg = JSON.parse(JSON.stringify(state.config));
+    cfg.outreach.auto_send = $("o-auto").checked;
+    cfg.outreach.min_gap_seconds = Number($("o-min").value);
+    cfg.outreach.max_gap_seconds = Number($("o-max").value);
+    cfg.outreach.daily_limit = Number($("o-limit").value);
+    applyConfig(await api("PUT", "/api/config", cfg));
+  } catch (err) { toast("Could not save outreach settings: " + err.message); return; }
+
+  $("o-queue").disabled = true;
+  try {
+    const res = await api("POST", "/api/outreach",
+                          { chat_ids: [...outreach.selected], goal });
+    const skipped = res.skipped ? `, ${res.skipped} already queued` : "";
+    toast(`Queued ${res.queued} message(s)${skipped}.`, "info");
+    outreach.selected.clear();
+    renderContacts();
+    await loadQueue();
+  } catch (err) { toast(err.message); }
+  $("o-queue").disabled = false;
+});
+
+$("o-cancel").addEventListener("click", async () => {
+  try {
+    const res = await api("POST", "/api/outreach/cancel");
+    toast(`Cancelled ${res.cancelled} queued message(s).`, "info");
+    await loadQueue();
+  } catch (err) { toast(err.message); }
+});
+
+/* ----------------------------------------------------------------- style */
+
+const styleState = { contacts: [], activeChatId: null };
+
+function contactLabel(c) {
+  return c.display_name + (c.username ? ` (@${c.username})` : "");
+}
+
+// Sourced from conversations, not the address book: styling should apply to
+// anyone you actually talk to, whether or not they're a saved contact.
+async function loadStyleContacts() {
+  const select = $("cs-select");
+  select.innerHTML = "";
+  select.appendChild(new Option("Loading…", ""));
+
+  const byId = new Map();
+  for (const c of state.conversations) {
+    byId.set(String(c.chat_id), { chat_id: c.chat_id, display_name: c.display_name, username: c.username });
+  }
+  try {
+    for (const c of await api("GET", "/api/contacts")) {
+      if (!byId.has(String(c.chat_id))) byId.set(String(c.chat_id), c);
+    }
+  } catch (_) { /* address book is a bonus; conversations are enough */ }
+
+  // Anything already styled stays selectable even if the chat has scrolled away.
+  for (const id of Object.keys((state.config && state.config.contacts) || {})) {
+    if (!byId.has(id)) byId.set(id, { chat_id: Number(id), display_name: `Chat ${id}`, username: null });
+  }
+
+  styleState.contacts = [...byId.values()]
+    .sort((a, b) => a.display_name.localeCompare(b.display_name));
+
+  select.innerHTML = "";
+  if (!styleState.contacts.length) {
+    select.appendChild(new Option("No chats yet — message someone first", ""));
+    return;
+  }
+  select.appendChild(new Option("Choose a chat…", ""));
+  const styled = (state.config && state.config.contacts) || {};
+  for (const c of styleState.contacts) {
+    const mark = styled[String(c.chat_id)] ? " ✓" : "";
+    select.appendChild(new Option(contactLabel(c) + mark, String(c.chat_id)));
+  }
+}
+
+function emptyContactStyle() {
+  return {
+    persona_extra: "", style_notes: "", chat_samples: "", message_length: "auto",
+    min_delay_seconds: null, max_delay_seconds: null,
+    typing_speed_cps: null, typing_max_seconds: null,
+    online_delay_min: null, online_delay_max: null,
+    offline_delay_min: null, offline_delay_max: null,
+  };
+}
+
+function fillContactForm(style) {
+  $("cs-length").value = style.message_length || "auto";
+  $("cs-notes").value = style.style_notes || "";
+  $("cs-extra").value = style.persona_extra || "";
+  $("cs-samples").value = style.chat_samples || "";
+  $("cs-min").value = style.min_delay_seconds ?? "";
+  $("cs-max").value = style.max_delay_seconds ?? "";
+  $("cs-cps").value = style.typing_speed_cps ?? "";
+  $("cs-tmax").value = style.typing_max_seconds ?? "";
+  $("cs-on-min").value = style.online_delay_min ?? "";
+  $("cs-on-max").value = style.online_delay_max ?? "";
+  $("cs-off-min").value = style.offline_delay_min ?? "";
+  $("cs-off-max").value = style.offline_delay_max ?? "";
+}
+
+function numOrNull(id) {
+  const v = $(id).value;
+  return v === "" ? null : Number(v);
+}
+
+function collectContactForm() {
+  return {
+    message_length: $("cs-length").value,
+    style_notes: $("cs-notes").value,
+    persona_extra: $("cs-extra").value,
+    chat_samples: $("cs-samples").value,
+    min_delay_seconds: numOrNull("cs-min"),
+    max_delay_seconds: numOrNull("cs-max"),
+    typing_speed_cps: numOrNull("cs-cps"),
+    typing_max_seconds: numOrNull("cs-tmax"),
+    online_delay_min: numOrNull("cs-on-min"),
+    online_delay_max: numOrNull("cs-on-max"),
+    offline_delay_min: numOrNull("cs-off-min"),
+    offline_delay_max: numOrNull("cs-off-max"),
+  };
+}
+
+$("cs-select").addEventListener("change", () => {
+  const id = $("cs-select").value;
+  styleState.activeChatId = id || null;
+  const form = $("cs-form");
+  if (!id) { form.style.display = "none"; return; }
+  form.style.display = "block";
+  const existing = (state.config && state.config.contacts && state.config.contacts[id]) || emptyContactStyle();
+  fillContactForm(existing);
+});
+
+$("cs-save").addEventListener("click", async () => {
+  if (!styleState.activeChatId) { toast("Pick a contact first."); return; }
+  try {
+    const cfg = JSON.parse(JSON.stringify(state.config));
+    cfg.contacts = cfg.contacts || {};
+    cfg.contacts[styleState.activeChatId] = collectContactForm();
+    applyConfig(await api("PUT", "/api/config", cfg));
+    const keep = styleState.activeChatId;
+    await loadStyleContacts();
+    $("cs-select").value = keep;
+    toast("Contact style saved.", "info");
+  } catch (err) { toast(err.message); }
+});
+
+$("cs-reset").addEventListener("click", async () => {
+  if (!styleState.activeChatId) { toast("Pick a contact first."); return; }
+  try {
+    const cfg = JSON.parse(JSON.stringify(state.config));
+    if (cfg.contacts) delete cfg.contacts[styleState.activeChatId];
+    applyConfig(await api("PUT", "/api/config", cfg));
+    fillContactForm(emptyContactStyle());
+    const keep = styleState.activeChatId;
+    await loadStyleContacts();
+    $("cs-select").value = keep;
+    toast("Reset to global settings.", "info");
+  } catch (err) { toast(err.message); }
+});
+
+$("fs-save").addEventListener("click", async () => {
+  try {
+    const cfg = JSON.parse(JSON.stringify(state.config));
+    cfg.finetune = cfg.finetune || { writing_samples: "" };
+    cfg.finetune.writing_samples = $("fs-samples").value;
+    applyConfig(await api("PUT", "/api/config", cfg));
+    toast("Writing samples saved.", "info");
+  } catch (err) { toast(err.message); }
+});
+
+$("open-style").addEventListener("click", async () => {
+  $("style").classList.add("open");
+  $("fs-samples").value = state.config && state.config.finetune ? state.config.finetune.writing_samples : "";
+  $("cs-form").style.display = "none";
+  $("cs-select").value = "";
+  styleState.activeChatId = null;
+  await loadStyleContacts();
+});
+
+$("st-close").addEventListener("click", () => $("style").classList.remove("open"));
+$("style").addEventListener("click", (ev) => {
+  if (ev.target === $("style")) $("style").classList.remove("open");
+});
+
+/* ------------------------------------------------------------ media */
+
+function renderMedia() {
+  const grid = $("m-grid");
+  grid.textContent = "";
+  if (!state.media.length) {
+    grid.appendChild(el("div", "empty", "Nothing loaded yet."));
+    return;
+  }
+  for (const item of state.media) {
+    const card = el("div", "media-card");
+    card.appendChild(mediaPreview(item, true));
+    card.appendChild(el("div", "meta", `${item.kind} #${item.id} · ${item.file}`));
+
+    const desc = el("textarea");
+    desc.placeholder = "What is in it? e.g. me at the beach, blue bikini";
+    desc.value = item.description;
+    card.appendChild(desc);
+
+    const actions = el("div", "actions");
+    const save = el("button", "btn small primary", "Save");
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try { await api("PATCH", `/api/media/${item.id}`, { description: desc.value }); toast("Saved.", "info"); }
+      catch (err) { toast(err.message); }
+      save.disabled = false;
+    });
+    const send = el("button", "btn small", "Send to open chat");
+    send.disabled = state.activeChatId === null;
+    send.title = state.activeChatId === null ? "Open a conversation first" : "Send this file now, as yourself";
+    send.addEventListener("click", async () => {
+      send.disabled = true;
+      try {
+        await api("POST", `/api/conversations/${state.activeChatId}/send-media`, { media_id: item.id });
+        toast("Sent.", "info");
+      } catch (err) { toast(err.message); }
+      send.disabled = false;
+    });
+    const del = el("button", "btn small warn", "Delete");
+    del.addEventListener("click", async () => {
+      if (!confirm(`Delete ${item.file}? The file is removed from the media folder.`)) return;
+      try { await api("DELETE", `/api/media/${item.id}`); }
+      catch (err) { toast(err.message); }
+    });
+    actions.appendChild(save);
+    actions.appendChild(send);
+    actions.appendChild(del);
+    card.appendChild(actions);
+    grid.appendChild(card);
+  }
+}
+
+async function uploadFiles(files) {
+  const progress = $("m-progress");
+  let n = 0;
+  for (const file of files) {
+    n += 1;
+    progress.textContent = `Uploading ${file.name} (${n}/${files.length})…`;
+    try {
+      const res = await fetch(`/api/media/upload?name=${encodeURIComponent(file.name)}`, {
+        method: "PUT", body: file, headers: { "Content-Type": "application/octet-stream" },
+      });
+      if (!res.ok) {
+        let detail = res.statusText;
+        try { detail = (await res.json()).detail || detail; } catch (_) {}
+        toast(`${file.name}: ${detail}`);
+      }
+    } catch (err) { toast(`${file.name}: ${err.message}`); }
+  }
+  progress.textContent = "";
+}
+
+function fillMediaRules() {
+  const m = (state.config && state.config.media) || {};
+  $("m-enabled").checked = m.enabled !== false;
+  $("m-ask-video").checked = m.ask_before_video !== false;
+  $("m-video-approve").checked = m.videos_need_approval !== false;
+}
+
+$("open-media").addEventListener("click", async () => {
+  $("media").classList.add("open");
+  fillMediaRules();
+  renderMedia();
+  try { state.media = await api("GET", "/api/media"); renderMedia(); }
+  catch (err) { toast(err.message); }
+});
+$("m-close").addEventListener("click", () => $("media").classList.remove("open"));
+$("media").addEventListener("click", (ev) => {
+  if (ev.target === $("media")) $("media").classList.remove("open");
+});
+$("m-save").addEventListener("click", async () => {
+  try {
+    const cfg = JSON.parse(JSON.stringify(state.config));
+    cfg.media = {
+      enabled: $("m-enabled").checked,
+      ask_before_video: $("m-ask-video").checked,
+      videos_need_approval: $("m-video-approve").checked,
+    };
+    applyConfig(await api("PUT", "/api/config", cfg));
+    toast("Media rules saved.", "info");
+  } catch (err) { toast(err.message); }
+});
+$("m-files").addEventListener("change", async (ev) => {
+  await uploadFiles(Array.from(ev.target.files || []));
+  ev.target.value = "";
+});
+const drop = $("m-drop");
+drop.addEventListener("dragover", (ev) => { ev.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", async (ev) => {
+  ev.preventDefault();
+  drop.classList.remove("over");
+  await uploadFiles(Array.from(ev.dataTransfer.files || []));
+});
+
+/* ------------------------------------------------------------ websocket */
+
+let socket = null;
+let retryDelay = 1000;
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  socket = new WebSocket(`${proto}://${location.host}/ws`);
+
+  socket.addEventListener("open", () => {
+    retryDelay = 1000;
+    $("conn-dot").classList.add("on");
+    $("conn-text").textContent = "live";
+  });
+
+  socket.addEventListener("close", () => {
+    $("conn-dot").classList.remove("on");
+    $("conn-text").textContent = "reconnecting…";
+    setTimeout(connect, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, 15000);
+  });
+
+  socket.addEventListener("message", (ev) => {
+    let data;
+    try { data = JSON.parse(ev.data); } catch (_) { return; }
+    handleEvent(data);
+  });
+}
+
+function handleEvent(data) {
+  switch (data.type) {
+    case "hello":
+      state.conversations = data.conversations;
+      state.media = data.media || [];
+      if ($("media").classList.contains("open")) renderMedia();
+      applyConfig(data.config);
+      fillSettings(data.config);
+      applyStatus(data.status);
+      applyAuth(data.auth);
+      renderSidebar();
+      break;
+
+    case "auth":
+      applyAuth(data.auth);
+      break;
+
+    case "message":
+      state.drafting.delete(data.message.chat_id);
+      upsertConversation(data.conversation);
+      upsertMessage(data.message);
+      break;
+
+    case "conversation":
+      upsertConversation(data.conversation);
+      break;
+
+    case "media":
+      state.media = data.media || [];
+      if ($("media").classList.contains("open")) renderMedia();
+      renderThread();
+      break;
+
+    case "config":
+      applyConfig(data.config);
+      if (!$("settings").classList.contains("open")) fillSettings(data.config);
+      break;
+
+    case "status":
+      applyStatus(data.status);
+      break;
+
+    case "drafting":
+      state.drafting.add(data.chat_id);
+      if (data.chat_id === state.activeChatId) renderThread();
+      break;
+
+    // A link made itself while I was looking at something else; say so, and
+    // fold it into the header if it belongs to the chat that's open.
+    case "chat_link":
+      toast(`${data.link.source_name} looks like the same person as another ` +
+            `chat (${data.link.reason}) — their context is now shared.`, "info");
+      if (data.link.chat_id === state.activeChatId) {
+        if (!state.links.some((l) => l.source_id === data.link.source_id)) {
+          state.links.push(data.link);
+        }
+        renderThreadHeader();
+      }
+      break;
+
+    case "chat_unlink":
+      if (data.chat_id === state.activeChatId) {
+        state.links = state.links.filter((l) => l.source_id !== data.source_id);
+        renderThreadHeader();
+      }
+      break;
+
+    case "outreach":
+      outreach.items = data.items;
+      renderQueue();
+      break;
+
+    case "outreach_paused":
+      toast(data.reason, "info");
+      break;
+
+    case "booking": {
+      const b = data.booking;
+      const when = new Date(b.start).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+      const what = { pending: "requested — waiting for the provider",
+                     confirmed: "confirmed", declined: "declined",
+                     superseded: "replaced by a newer request" }[b.status] || b.status;
+      toast(`Booking #${b.id} for ${b.client_name} on ${when}: ${what}`, "info");
+      break;
+    }
+
+    case "error":
+      state.drafting.delete(data.chat_id);
+      toast(data.text);
+      if (data.message) upsertMessage(data.message);
+      else if (data.chat_id === state.activeChatId) renderThread();
+      break;
+  }
+}
+
+function applyStatus(status) {
+  if (!status) return;
+  state.status = status;
+  // Several instances can be open in separate tabs; name this one.
+  if (status.instance) {
+    $("brand-instance").textContent = status.instance;
+    document.title = `${status.instance} — Telegram AI Assistant`;
+  }
+  const dot = $("conn-dot");
+  if (status.telegram_connected) {
+    dot.classList.add("on");
+    $("conn-text").textContent = status.me && status.me.name
+      ? `connected as ${status.me.name}` : "connected";
+  } else {
+    dot.classList.remove("on");
+    const signedOut = state.auth && !state.auth.logged_in;
+    $("conn-text").textContent = signedOut ? "not signed in" : "Telegram offline";
+    if (status.telegram_error) toast(status.telegram_error);
+  }
+  if (status.persona_configured === false) {
+    $("mode").textContent = "persona not configured — open Settings";
+  }
+}
+
+/* -------------------------------------------------------------- sign-in */
+
+function applyAuth(auth) {
+  if (!auth) return;
+  state.auth = auth;
+  document.body.classList.toggle("signed-in", auth.logged_in);
+  document.body.classList.toggle("signed-out", !auth.logged_in);
+  $("login").classList.toggle("open", !auth.logged_in);
+  if (auth.logged_in) return;
+
+  $("conn-text").textContent = "not signed in";
+  $("conn-dot").classList.remove("on");
+
+  const notice = $("l-notice");
+  notice.hidden = !auth.notice;
+  notice.textContent = auth.notice || "";
+  notice.className = "notice";
+
+  for (const id of ["l-credentials", "l-code-form", "l-password-form"]) {
+    $(id).classList.remove("on");
+  }
+  const stepForm = { credentials: "l-credentials", code: "l-code-form", password: "l-password-form" }[auth.step]
+    || "l-credentials";
+  $(stepForm).classList.add("on");
+  if (auth.step !== "code") clearInterval(resendTimer);
+
+  if (auth.step === "credentials") {
+    const pre = auth.prefill || {};
+    if (pre.api_id && !$("l-api-id").value) $("l-api-id").value = pre.api_id;
+    $("l-api-hash").placeholder = pre.api_hash_saved
+      ? "saved — leave blank to keep it" : "32-character hex string";
+    $("l-api-hash").required = !pre.api_hash_saved;
+    $("l-deepseek").placeholder = pre.deepseek_saved
+      ? "saved — leave blank to keep it" : "sk-…";
+    $("l-deepseek").required = !pre.deepseek_saved;
+    setTimeout(() => ($("l-api-id").value ? $("l-phone") : $("l-api-id")).focus(), 0);
+  } else if (auth.step === "code") {
+    const where = $("l-delivery");
+    where.textContent = "";
+    where.appendChild(el("b", null, `Telegram sent the code for ${auth.phone || "your number"}:`));
+    where.appendChild(document.createTextNode(auth.delivery || "in the Telegram app itself."));
+    if (auth.code_length) $("l-code").maxLength = auth.code_length;
+    startResendCountdown(auth);
+    setTimeout(() => $("l-code").focus(), 0);
+  } else if (auth.step === "password") {
+    setTimeout(() => $("l-password").focus(), 0);
+  }
+}
+
+// Disable the form while the request runs so a double click can't ask
+// Telegram for two codes.
+async function authStep(form, path, body) {
+  const button = form.querySelector('button[type="submit"]');
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "…";
+  try {
+    applyAuth(await api("POST", path, body));
+    return true;
+  } catch (err) {
+    const notice = $("l-notice");
+    notice.hidden = false;
+    notice.className = "notice";
+    notice.textContent = err.message;
+    return false;
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+$("l-credentials").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const ok = await authStep($("l-credentials"), "/api/auth/start", {
+    api_id: $("l-api-id").value.trim(),
+    api_hash: $("l-api-hash").value.trim(),
+    phone: $("l-phone").value.trim(),
+    deepseek_api_key: $("l-deepseek").value.trim(),
+  });
+  if (ok) {
+    $("l-api-hash").value = "";
+    $("l-deepseek").value = "";
+    $("l-code").value = "";
+  }
+});
+
+$("l-code-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const ok = await authStep($("l-code-form"), "/api/auth/code", { code: $("l-code").value.trim() });
+  if (ok && state.auth && state.auth.logged_in) onSignedIn();
+});
+
+$("l-password-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const ok = await authStep($("l-password-form"), "/api/auth/password",
+                            { password: $("l-password").value });
+  $("l-password").value = "";
+  if (ok && state.auth && state.auth.logged_in) onSignedIn();
+});
+
+// Telegram names the one channel a resend may use, and how long it must be
+// asked to wait. Both come from the server; the button shows them rather than
+// promising an SMS Telegram is not going to send.
+let resendTimer = null;
+
+function startResendCountdown(auth) {
+  clearInterval(resendTimer);
+  const button = $("l-resend");
+  if (!auth.next_label) { button.hidden = true; return; }
+
+  button.hidden = false;
+  let left = auth.resend_in || 0;
+  const tick = () => {
+    if (left > 0) {
+      button.disabled = true;
+      button.textContent = `${auth.next_label} (${left}s)`;
+      left -= 1;
+    } else {
+      button.disabled = false;
+      button.textContent = auth.next_label;
+      clearInterval(resendTimer);
+    }
+  };
+  tick();
+  resendTimer = setInterval(tick, 1000);
+}
+
+$("l-resend").addEventListener("click", async () => {
+  const button = $("l-resend");
+  button.disabled = true;
+  try {
+    const auth = await api("POST", "/api/auth/resend");
+    applyAuth(auth);
+    const notice = $("l-notice");
+    notice.hidden = false;
+    notice.className = "notice info";
+    notice.textContent = "Code sent again.";
+  } catch (err) {
+    button.disabled = false;
+    const notice = $("l-notice");
+    notice.hidden = false;
+    notice.className = "notice";
+    notice.textContent = err.message;
+  }
+});
+
+for (const id of ["l-restart", "l-restart-2"]) {
+  $(id).addEventListener("click", async () => {
+    try { applyAuth(await api("POST", "/api/auth/cancel")); }
+    catch (err) { toast(err.message); }
+  });
+}
+
+async function onSignedIn() {
+  toast("Signed in. Connecting to Telegram…", "info");
+  try {
+    state.conversations = await api("GET", "/api/conversations");
+    renderSidebar();
+  } catch (_) {}
+}
+
+$("logout").addEventListener("click", async () => {
+  if (!confirm("Log this account out of the assistant? You will need the login code again to sign back in.")) return;
+  try {
+    applyAuth(await api("POST", "/api/auth/logout"));
+    toast("Logged out.", "info");
+  } catch (err) { toast(err.message); }
+});
+
+/* ----------------------------------------------------------------- boot */
+
+$("open-settings").addEventListener("click", () => {
+  if (state.config) fillSettings(state.config);
+  $("settings").classList.add("open");
+});
+$("close-settings").addEventListener("click", () => $("settings").classList.remove("open"));
+$("settings").addEventListener("click", (ev) => {
+  if (ev.target === $("settings")) $("settings").classList.remove("open");
+});
+
+$("settings-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  try {
+    const saved = await api("PUT", "/api/config", collectSettings());
+    applyConfig(saved);
+    fillSettings(saved);
+    $("settings").classList.remove("open");
+    toast("Settings saved.", "info");
+  } catch (err) { toast(err.message); }
+});
+
+$("global-pause").addEventListener("click", async () => {
+  const next = !(state.config && state.config.behavior.global_pause);
+  try {
+    await api("POST", "/api/global-pause", { global_pause: next });
+  } catch (err) { toast(err.message); }
+});
+
+(async function boot() {
+  try {
+    state.conversations = await api("GET", "/api/conversations");
+    const cfg = await api("GET", "/api/config");
+    applyConfig(cfg);
+    try { state.media = await api("GET", "/api/media"); } catch (_) { state.media = []; }
+    fillSettings(cfg);
+    applyAuth(await api("GET", "/api/auth"));
+    applyStatus(await api("GET", "/api/status"));
+    renderSidebar();
+  } catch (err) { toast("Could not load admin data: " + err.message); }
+  connect();
+  setInterval(() => {
+    if (socket && socket.readyState === WebSocket.OPEN) socket.send("ping");
+  }, 25000);
+})();
+</script>
+</body>
+</html>
