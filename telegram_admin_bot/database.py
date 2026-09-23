@@ -179,6 +179,11 @@ class SessionRegistry:
                 """
                 INSERT INTO telegram_sessions (session_id, label, api_id, api_hash_enc)
                 VALUES ($1, $2, $3, $4)
+                ON CONFLICT (session_id) DO UPDATE SET
+                    label        = COALESCE(NULLIF(EXCLUDED.label, ''), telegram_sessions.label),
+                    api_id       = COALESCE(EXCLUDED.api_id, telegram_sessions.api_id),
+                    api_hash_enc = COALESCE(EXCLUDED.api_hash_enc, telegram_sessions.api_hash_enc),
+                    updated_at   = now()
                 """,
                 session_id,
                 label,
