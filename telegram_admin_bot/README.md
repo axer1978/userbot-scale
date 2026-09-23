@@ -1,427 +1,460 @@
 # Telegram AI Support Assistant
 
-A Telethon **userbot** that runs on your own Telegram account, drafts replies to
-incoming DMs with the DeepSeek API, and gives you a local web admin panel to
-supervise everything.
+A Telethon **userbot** that runs on your own Telegram accounts, drafts replies
+to incoming private messages with the DeepSeek API, and gives you one
+password-protected web panel to supervise every account. You deploy it on a
+server with Docker Compose. You add and run as many accounts as you need from
+the panel.
 
-Nothing is sent without your approval unless you explicitly turn on auto-send.
+Nothing is sent without your approval unless you turn on auto-send for that
+account.
 
-## What it does
+## How it fits together
 
-- Listens for **private messages only** — group and channel traffic is ignored.
-  Messages from **bot accounts are included**, so conversations that run through
-  a bot's interface are handled like any other DM.
-- Logs every message to SQLite and pushes it to the admin panel live over a
-  WebSocket.
-- For each incoming DM it checks, in order: the per-chat pause flag, the global
-  pause, and the configured active hours. If any of them says stop, no draft is
-  made.
-- Otherwise it builds the last ~30 messages of that chat as OpenAI-style
-  `{"role": "user" | "assistant"}` turns, prepends a system message built from
-  your persona config, waits a randomised human-looking delay, and calls
-  DeepSeek.
-- **Auto-send off (the default):** the draft is saved as `pending_approval` and
-  appears in the panel with *Approve & Send*, *Edit then Send* and *Reject*.
-  Nothing reaches Telegram until you approve it.
-- **Auto-send on:** the reply goes out directly and is logged as sent.
+```
+ browser ──SSH tunnel (or optional HTTPS)──▶ panel ──┐
+                                                     ├──▶ Postgres  (sessions, messages, config, leases)
+                                     manager ────────┤
+                               (worker processes     └──▶ Redis     (command bus + live events)
+                                holding Telegram
+                                clients)
+```
 
-If a newer message arrives in a chat while a draft is still being prepared, the
-in-flight draft is cancelled and restarted, so the reply always answers the
-latest state of the conversation.
+| Service | What it does |
+|---|---|
+| `panel` | The admin UI and API (`panel.py`). Control plane only: it **holds no Telegram connections**. It reads and writes Postgres directly. Anything that needs a live client, like sending a message or approving a draft, goes over Redis to whichever worker runs that account. |
+| `manager` | Starts `WORKER_COUNT` worker processes (`manager.py`). Each one runs up to `SESSIONS_PER_WORKER` accounts, one `SessionRuntime` per account with its own live Telethon client. It restarts a worker that dies. Every ~15 s each worker picks up newly activated accounts that nothing is running yet. |
+| `postgres` | The source of truth: accounts (with credentials encrypted), conversations, messages, per-account settings, outreach queue, and the leases. |
+| `redis` | The command bus (panel → worker) and live-event fan-out (worker → open panel tabs). It stores nothing that outlives a request. |
+| `migrate` | A one-shot job that applies database migrations and exits. `panel` and `manager` wait for it. |
+| `caddy` | Optional. Serves the panel over public HTTPS. Off unless you enable it. See below. |
+
+**Leasing** makes sure only one worker runs a given account at a time. A worker
+has to take a lease on the account's row in Postgres before it connects, and
+it renews the lease every 10 s. If a worker dies, its leases expire after 30 s
+and another worker can take the account over. Two clients on one account
+would answer every chat twice and can get the session revoked. The lease is
+what prevents that.
+
+Secrets at rest (Telegram auth key, API hash, DeepSeek key) are encrypted with
+AES-GCM under `USERBOT_MASTER_KEY` (`crypto.py`). **If you lose that key, every
+stored login becomes unreadable** and each account has to be signed in again.
 
 ## Requirements
 
-- Python 3.11+
-- A Telegram `API_ID` / `API_HASH` from https://my.telegram.org
-- The phone number of the Telegram account the assistant runs on
-- A DeepSeek API key from https://platform.deepseek.com
+- A Linux server with Docker and the Docker Compose plugin (`docker compose`, not `docker-compose`)
+- For each Telegram account: an **API ID** and **API hash** from https://my.telegram.org → *API development tools*, and access to that account to receive the login code
+- A **DeepSeek API key** from https://platform.deepseek.com
 
-## Install
+## Deploy on a server
+
+```bash
+git clone https://github.com/axer1978/userbot.git
+cd userbot/telegram_admin_bot
+```
+
+Create `.env` with freshly generated secrets. The one-liner is safe to paste,
+unlike a heredoc. `umask 077` makes the file readable only by you:
+
+```bash
+umask 077
+python3 -c "import secrets,base64;print('USERBOT_MASTER_KEY='+base64.b64encode(secrets.token_bytes(32)).decode());print('ADMIN_PASSWORD='+secrets.token_urlsafe(18));print('POSTGRES_PASSWORD='+secrets.token_urlsafe(24))" > .env
+```
+
+Before going further:
+
+- **Back up `.env`**, and the master key above all, somewhere off the server. Without it the stored logins cannot be decrypted.
+- **Do not run the one-liner again** on a deployed server. It overwrites `.env`, which replaces the master key and the database password.
+- **`POSTGRES_PASSWORD` is fixed when the database is first created.** Changing it in `.env` later does not change it inside Postgres, and the app then can't connect. To change it you need the old value (to run `ALTER USER` in psql), or you run `docker compose down -v`, which **deletes all data**.
+
+`.env.example` lists every variable the stack reads, including the optional ones.
+
+Start everything:
+
+```bash
+docker compose up -d --build
+docker compose ps -a
+```
+
+`userbot-postgres`, `userbot-redis`, `userbot-panel` and `userbot-manager`
+should be `Up` (Postgres and Redis report `healthy`). `userbot-migrate` should
+show `Exited (0)`, because it is a one-shot job. It only appears with `-a`.
+Anything else means a failed migration: check `docker compose logs migrate`.
+
+`restart: unless-stopped` brings the stack back after a crash or a reboot.
+
+## Open the panel
+
+The panel is published on the server's loopback only (`127.0.0.1:8787`), so
+it is not reachable from the internet. Reach it with an SSH tunnel from your
+own machine:
+
+```bash
+ssh -i <key>.pem -L 8787:127.0.0.1:8787 <user>@<server-ip>
+```
+
+Leave that open and browse to **http://localhost:8787**. You only need the
+tunnel while you look at the panel. The accounts keep running without it.
+
+The admin password is the `ADMIN_PASSWORD` from `.env`. To see the value the
+panel is actually using:
+
+```bash
+docker compose exec panel printenv ADMIN_PASSWORD
+```
+
+To change it, edit `ADMIN_PASSWORD` in `.env` and recreate the panel:
+
+```bash
+docker compose up -d --force-recreate panel
+```
+
+Admin logins are held in the panel's memory, so restarting the panel signs
+everyone out. **Log out** in the top bar signs you out of the panel only. It
+does not touch any Telegram session.
+
+## Optional: public HTTPS
+
+The SSH tunnel is the default and needs no extra setup. If you want the panel
+at a public `https://` address instead, the `caddy` service does it. It is
+opt-in through the compose profile `public`. Caddy reverse-proxies to the
+panel and gets and renews a Let's Encrypt certificate automatically.
+
+1. Pick a hostname that resolves to the server: a domain with an **A record**
+   pointing at the server's IP, or a free sslip.io name built from the IP
+   (for server IP `1.2.3.4`, use `1-2-3-4.sslip.io`).
+2. Add it to `.env`:
+   ```
+   PANEL_DOMAIN=1-2-3-4.sslip.io
+   ```
+3. Open **ports 80 and 443** in the server firewall and in the cloud provider's
+   security group. Let's Encrypt needs port 80 to issue the certificate.
+4. Start with the profile:
+   ```bash
+   docker compose --profile public up -d
+   ```
+   Watch `docker compose logs -f caddy` until the certificate is obtained,
+   then open `https://<PANEL_DOMAIN>`.
+
+Once you use the profile, include `--profile public` in every `docker compose
+up`, or add `COMPOSE_PROFILES=public` to `.env` so plain commands include it.
+
+With this on, the panel's only protection is the shared admin password.
+After 5 wrong passwords from one IP within 15 minutes, that IP is refused
+(even with the right password) until the oldest attempt is 15 minutes old;
+panel logins also expire after 12 hours. That slows guessing from one
+address, not from many, so **use a long admin password**, like the
+generated one, not something memorable. The loopback port stays published
+either way, so the SSH tunnel keeps working. Everyone coming through the
+tunnel shares one rate-limit bucket, so 5 typos there lock the tunnel out
+for up to 15 minutes too (restarting the panel clears it).
+
+## Add a Telegram account
+
+Open the account picker at the top left and choose **+ Add account**. With no
+accounts yet, the dialog opens by itself. Fill in:
+
+1. **Name** (optional). This is how the account appears in the picker. It defaults to the phone number.
+2. **API ID** and **API hash** from https://my.telegram.org.
+3. **Phone number** in international format, e.g. `+34600123456`.
+4. **DeepSeek API key.**
+
+Press **Send code**. Telegram usually sends the code **inside the Telegram
+app** (the "Telegram" chat with the blue checkmark on a device where the
+account is logged in), not by SMS. The dialog says where it went. Enter the
+code. If the account has two-step verification, enter its cloud password next.
+The password is used once and never stored.
+
+How accounts are identified:
+
+- **One account per phone number.** The account's id is `tg` plus the digits of the number, e.g. `tg34600123456`.
+- **Signing the same number in again updates that account** and keeps its history and settings. You can leave the DeepSeek key blank to keep the stored one.
+- **A number that is currently running is refused.** Take it out of rotation first (see [Operations](#operations)).
+
+After sign-in, the account is marked active, and a manager worker picks it up
+within about 15 s. To watch it happen:
+
+```bash
+docker compose logs -f manager
+```
+
+Look for `[tg34600123456] Started (picked up while running).` Accounts that
+exist when the manager starts log `Started.` instead. The dot next to the
+account in the picker turns green once it is connected.
+
+Each account signs in and runs with its own **stable device identity**
+(`device_profiles.py`): a real phone or desktop model with a matching OS and
+Telegram app version, picked from the account id and stored in its settings.
+Without this, every account on the server would report Telethon's
+`PC 64bit`. Locale and timezone offset default to Latvian (`lv`,
+Europe/Riga).
+
+## Settings that matter first
+
+Select the account in the picker and open **Settings**. Every account has its
+own settings. They are stored in Postgres and take effect immediately, with no
+restart.
+
+### Persona: fill it in before anything else
+
+**Every persona field starts blank, and a blank persona produces generic
+replies.** Until at least one field is filled in, the account uses a minimal
+neutral system prompt and the top bar shows *"persona not configured"*.
+
+| Field | What to put there |
+|---|---|
+| Purpose | What this account is for and what you want the assistant to do |
+| Tone & style | How it should sound |
+| Languages | e.g. "always reply in the language the person wrote in" |
+| Boundaries | Hard rules: what it must never say, promise, or do |
+| Sign-off behaviour | Whether and how to sign off |
+
+### The rest
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Auto-send AI replies | **off** | Off: every draft waits in the panel for *Approve & Send*, *Edit then Send* or *Reject*. On: replies go out by themselves. |
+| Min / max delay | 20 / 90 s | Random wait before a reply is drafted, so replies don't look instant |
+| Active hours | **off**, 09:00–21:00 UTC | When on, drafting only happens inside the window (it may cross midnight), in the IANA timezone you set |
+| Log all messages | on | Store messages in the database. Turned off, messages still show live but no history is kept, so the AI also gets less context. |
+| Model / max tokens / temperature | `deepseek-chat` / 400 / 1.0 | DeepSeek request parameters |
+| Parallel replies | 4 | How many chats can be drafted at once for this account |
+
+**Account safety** protects the number itself. Telegram does not publish its
+thresholds, so the defaults are deliberately low:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Messages per day | 150 | All messages sent by this account per day, replies included |
+| People per day | 30 | Distinct people written to per day |
+| Max wait | 300 s | If Telegram asks for a longer pause (FloodWait), automation halts instead of waiting it out |
+| Stop everything if Telegram flags the account as spammy | on | Halt on `PeerFloodError` |
+| Only message people in contacts or who wrote first | on | Applies to messages the bot **starts** (outreach). The bot never opens a conversation with a stranger. Replies to people who wrote to you are not affected. |
+
+### Pausing and "Automation halted"
+
+- **Pause / Resume** on a conversation stops AI drafting for that chat, for when you take it over by hand. Any draft in progress is cancelled.
+- **Pause all** in the top bar pauses every chat on the selected account. The button then reads **Automation paused**. Click it again to resume.
+- **Automation halted** means the account paused itself. This happens when Telegram returned `PeerFloodError`, asked for a wait longer than *Max wait*, or rejected the session (banned or revoked). The reason appears as an error in the panel and in `docker compose logs manager` (`HALTING ALL AUTOMATION: ...`). Queued outreach is cancelled. **Resuming is manual on purpose:** find out why before you click *Automation paused* to resume. Sending straight through a flood warning is how numbers get banned.
+
+## What it does with a message
+
+- It handles **private messages only**. Group and channel traffic is ignored. Messages from **bot accounts are included**, so conversations that run through a bot's interface are handled like any other DM.
+- Every message is stored in Postgres and pushed live to any open panel tab.
+- For each incoming text message it checks the global pause, the per-chat pause and the active hours, in that order. If any says stop, no draft is made.
+- Otherwise it waits the random delay, builds the last ~30 messages of the chat into the prompt under your persona, and asks DeepSeek for a reply. With auto-send off, the draft is saved as pending and appears in the panel. With auto-send on, it is sent.
+- **If a newer message arrives while a draft is still being prepared, that draft is cancelled and restarted**, so the reply always answers the latest state of the conversation. Sending a message yourself from the panel also cancels any draft in progress for that chat.
+- Messages you send from your phone or Telegram Desktop also appear in the panel, so the thread stays complete.
+- DeepSeek failures (network, timeout, 429, malformed response) are retried with backoff that honours `Retry-After`, then shown as a red error in the conversation. A bad key (401/403) fails at once. Telegram disconnects are reconnected automatically with backoff.
+
+## Other features
+
+All of these are per account, under the buttons in the top bar.
+
+**Sounding human** (Settings, all on by default). *Adaptive style* profiles
+how each person writes (length, emoji, capitalisation, language) from their
+own messages and tells the model to match it. It needs at least two of their
+messages. *Mark read* marks their message read after the delay. The *typing
+indicator* shows "typing…" for as long as the text would plausibly take:
+length ÷ 12 characters/second, capped at 25 s. Replies you send or approve by
+hand skip the typing wait. *Presence* keeps the account offline between
+conversations and online only around replying.
+
+**Outreach** starts conversations with people in the account's Telegram
+contacts. You say what each message should achieve, and each person gets one
+written for them. The server re-checks that every recipient is a contact.
+Messages wait for approval by default and go out one at a time, 90–300 s
+apart, with at most 20 per day. Someone who already has a queued message is
+skipped. *Cancel queued* and the global pause both stop it. Use it only for
+people who expect to hear from you: Telegram limits or bans accounts that send
+unsolicited DMs.
+
+**Bookings** (Settings → Bookings, off by default). When a client settles on a
+day and time, a request goes to a *provider* account (a person or a bot), who
+replies `YES <n>` or `NO <n>`. The client is then told through the normal
+reply flow. You can set a check-in reminder before the slot (default 120 min).
+The *arrival instructions* (address, door code) are sent word for word, once,
+when the client says they have arrived. Detection costs one short DeepSeek
+call per incoming message while it is on. Bookings are stored in
+`./data/<account-id>/bookings.json`.
+
+*Google Calendar mirror (optional):* create a Google Cloud service account
+with the Calendar API enabled and download its JSON key. Put the key at
+`./data/<account-id>/google-service-account.json`, or put it anywhere under
+`./data` and set `GOOGLE_SERVICE_ACCOUNT_FILE=/app/data/<file>.json` in `.env`.
+That path is the one inside the container. Then recreate with
+`docker compose up -d`. Share the calendar with the service account's email
+address with *Make changes to events*, and paste the calendar ID into
+Settings. Calendar failures are reported in the thread and never stop the
+Telegram side.
+
+**Media.** Upload photos and videos the assistant may send, or copy them into
+`./data/<account-id>/media/`, and give each one a short description. The AI
+uses the description to pick the right file when someone asks. By default a
+video is only offered first and sent once the person says yes, and a reply
+carrying a video always waits for approval, even with auto-send on.
+
+**Style** holds writing samples and per-contact overrides: extra persona
+notes, delays and typing speed for one person.
+
+## Operations
+
+```bash
+docker compose logs -f manager          # what the accounts are doing
+docker compose logs -f panel            # panel / API errors
+docker compose restart manager          # restart all accounts; leases are released, or expire within 30 s
+git pull && docker compose up -d --build  # update; migrate runs before panel/manager start
+```
+
+**Capacity.** One manager runs `WORKER_COUNT × SESSIONS_PER_WORKER` accounts
+(2 × 25 = 50 by default). Accounts beyond that stay idle until a slot frees
+up. Change both in `.env` and run `docker compose up -d`.
+
+**Backups.** Everything that matters is in three places: the Postgres volume,
+`./data` (media, bookings, the last halt reason for each account), and `.env`.
+To dump the database:
+
+```bash
+docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > userbot-$(date +%F).sql
+```
+
+**Taking an account out of rotation.** The panel has no stop button yet. Mark
+the account inactive in the database, then restart the manager:
+
+```bash
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+#   UPDATE telegram_sessions SET is_active = false WHERE session_id = 'tg34600123456';
+#   \q
+docker compose restart manager
+```
+
+To bring the account back, set `is_active = true` again. A worker picks it up
+within ~15 s. Signing the number in again from the panel also re-activates
+it.
+
+## Running the tests
+
+**On the server, inside the stack.** Create the test database once:
+
+```bash
+docker compose exec postgres sh -c 'createdb -U "$POSTGRES_USER" userbot_test'
+```
+
+Then run the suite in a throwaway manager container. It uses the stack's
+Postgres, pointed at the `userbot_test` database:
+
+```bash
+docker compose run --rm --no-deps manager sh -c 'PG_TEST_DSN="${DATABASE_URL%/*}/userbot_test" python -m pytest -q'
+```
+
+**Locally**, with Python 3.11+ and any Postgres you can reach:
 
 ```bash
 cd telegram_admin_bot
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+PG_TEST_DSN=postgresql://user:password@localhost:5432/userbot_test python -m pytest -q
 ```
 
-## Run
+Each Postgres-backed test creates its own throwaway schema, migrates it and
+drops it afterwards, so the target database is left as it was. Without
+`PG_TEST_DSN`, the Postgres tests are skipped (reported as skipped, not
+passed) and the rest still run. Redis is replaced by `fakeredis`, so no Redis
+is needed.
+
+## Troubleshooting
+
+**`Bind for 127.0.0.1:8787 failed: port is already allocated`**: an older
+container still holds the port, usually the legacy single-account
+`telegram-assistant`. Find it with `docker ps`, remove it, and bring the stack
+up again:
 
 ```bash
-python main.py
+docker rm -f <name>
+docker compose up -d --remove-orphans
 ```
 
-On Windows you can also double-click **`start.bat`** — it creates the virtual
-environment on first run and then starts the app.
-
-The panel opens in your browser at **http://127.0.0.1:8787**. The first time,
-it shows a **sign-in screen**:
-
-1. **API ID** and **API hash** — from https://my.telegram.org → *API development tools*
-2. **Phone number** — international format, e.g. `+34600123456`
-3. **DeepSeek API key** — from https://platform.deepseek.com
-4. Telegram sends a **login code** (usually to the Telegram app, not SMS) — type it in
-5. If the account has **two-step verification**, its password is asked once
-
-That is it. Credentials are saved to `.env` next to `main.py`, so the next
-`python main.py` connects straight away. Nothing secret is ever printed to
-the terminal or sent anywhere but Telegram and DeepSeek.
-
-**Log out** in the top bar ends the session on Telegram's side and returns to
-the sign-in screen. If the session is revoked from another device
-(Settings → Devices), the panel notices and asks you to sign in again.
-
-The server binds to `127.0.0.1` only, so it is not reachable from your network.
-There is no password on the panel, which is exactly why it must stay on
-localhost. Set `NO_BROWSER=1` to stop it opening a browser tab.
-
-### Filling in `.env` by hand instead
-
-For a headless server, copy `.env.example` to `.env` and fill it in, or run the
-terminal version of the sign-in:
-
-```bash
-python setup_session.py            # log in from the terminal, writes .env
-python setup_session.py --check    # validate .env without revealing values
-```
-
-Treat the session string like a password — it grants full access to your
-account. If it is ever exposed, revoke it in Telegram under
-Settings → Devices, then sign in again.
-
-## Running more than one account
-
-One instance is one Telegram account. For a second account, start a second
-instance — it gets its own sign-in, conversations, settings and panel port,
-all kept under `instances/NAME/`:
-
-```bash
-python main.py --instance work        # or on Windows:  start.bat work
-python main.py --list                 # what exists, which port, signed in or not
-```
-
-The first run of a new instance opens its own sign-in screen. After that it
-logs straight in, like the default one. The panel shows the instance name in
-the top bar and the tab title so you can tell them apart.
-
-On Windows, **`start.bat all`** opens one window per instance (the default
-plus every folder under `instances\`).
-
-Ports: the default instance stays on 8787; named ones take the next free port
-from 8788 and remember it. Starting an instance that is already running fails
-with a clear message rather than silently running the same account twice,
-which would make it answer every chat twice.
-
-## Fill in your persona first
-
-**`config.json` ships with every persona field blank, and a blank persona
-produces generic replies.** Open **Settings** in the panel and fill in:
-
-| Field | What to put there |
-|---|---|
-| `purpose` | What this account is for and what you want the assistant to do |
-| `tone` | How it should sound |
-| `languages` | e.g. "always reply in the language the person wrote in" |
-| `boundaries` | Hard rules — what it must never say, promise, or do |
-| `signature_style` | Whether and how to sign off |
-
-Until at least one field is filled in, the app falls back to a minimal neutral
-system prompt so it still works, and the panel shows *"persona not configured"*.
-
-Other settings:
-
-| Setting | Default | Meaning |
-|---|---|---|
-| `min_delay_seconds` / `max_delay_seconds` | 20 / 90 | Random wait before drafting, so replies don't look instant |
-| `active_hours_enabled` | `false` | When on, drafting only happens inside the window below |
-| `active_hours_start` / `end` / `timezone` | 09:00 / 21:00 / UTC | Window (may cross midnight), in the given IANA timezone |
-| `auto_send` | `false` | Send AI replies without approval |
-| `log_all_messages` | `true` | Persist messages to SQLite. Turn off and messages still appear live, but no history is kept — which also means the AI gets less context |
-| `model` / `max_tokens` / `temperature` | `deepseek-chat` / 400 / 1.0 | DeepSeek request parameters |
-
-Settings save straight back to `config.json` and take effect immediately — no
-restart.
-
-## Using the panel
-
-- **Left sidebar** — conversations with last message, timestamp, unread count, a
-  `BOT` badge for bot accounts, and a per-chat Pause/Resume button.
-- **Main panel** — the full thread. Incoming, outgoing, pending drafts, rejected
-  drafts and errors are colour-coded and labelled.
-- **Pause automation** (per chat) — stops AI drafting for that conversation when
-  you take it over by hand. Any draft already in flight is cancelled.
-- **Pause all** — global kill switch for every chat.
-- **Message box** — send as yourself at any time, whatever the automation state.
-  Doing so also cancels a pending draft for that chat.
-
-Sending a message from your phone or Telegram Desktop shows up in the panel too,
-so the thread stays complete.
-
-## Running it 24/7
-
-The bot only runs while the machine it is on is powered up and awake. Closing a
-laptop lid stops it. For round-the-clock operation it has to live on a machine
-that stays on — a small VPS (~$4–6/month), a Raspberry Pi, or any always-on box.
-
-**The panel has no login.** Everything below keeps it bound to loopback on the
-server; you reach it through an SSH tunnel, so it is never exposed to the
-internet:
-
-```bash
-ssh -N -L 8787:127.0.0.1:8787 you@your-server
-```
-
-Leave that running and open http://127.0.0.1:8787 on your laptop as usual. The
-tunnel is only needed when you want to look at the panel — the bot keeps
-answering with nobody connected.
-
-### With Docker (simplest)
-
-```bash
-git clone https://github.com/axer1978/userbot.git
-cd userbot/telegram_admin_bot
-docker compose up -d --build
-docker compose logs -f    # watch it start
-```
-
-Then open the SSH tunnel above, go to http://127.0.0.1:8787 and sign in from
-the panel. Credentials land in `./data/.env` on the volume. (A pre-filled
-`.env` next to `docker-compose.yml` is still honoured if you prefer.)
-
-`restart: unless-stopped` brings it back after a crash or a server reboot.
-`assistant.db` and `config.json` live in `./data`, so rebuilding does not lose
-your conversations or settings.
-
-To update: `git pull && docker compose up -d --build`.
-
-### Without Docker (systemd)
-
-```bash
-sudo useradd -r -s /usr/sbin/nologin telegram
-sudo git clone https://github.com/axer1978/userbot.git /opt/userbot
-sudo mv /opt/userbot/telegram_admin_bot /opt/telegram_admin_bot
-cd /opt/telegram_admin_bot
-sudo python3 -m venv .venv && sudo .venv/bin/pip install -r requirements.txt
-sudo chown -R telegram:telegram /opt/telegram_admin_bot   # it writes .env itself
-
-sudo cp deploy/telegram-assistant.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now telegram-assistant
-journalctl -u telegram-assistant -f
-```
-
-### Getting your credentials onto the server
-
-Either sign in from the panel through the SSH tunnel, or copy the `.env` you
-already have from your laptop — that avoids logging in to Telegram a second time:
-
-```bash
-scp telegram_admin_bot/.env you@your-server:/opt/telegram_admin_bot/.env
-```
-
-Or run `python setup_session.py` over SSH for a terminal-only login.
-
-Either way, run **one** instance. Two copies of the same session string both
-answering the same chats will duplicate replies.
-
-### Environment variables for deployment
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `DATA_DIR` | next to `main.py` | Where `assistant.db` and `config.json` live — point it at a volume |
-| `ADMIN_HOST` | `127.0.0.1` | Bind address. Only change it inside a container whose port is published to loopback |
-| `ADMIN_PORT` | `8787` | Panel port |
-
-Binding `ADMIN_HOST` to anything other than loopback logs a warning at startup,
-because it means the panel — which can send messages as you — is reachable with
-no password.
-
-## Sounding like a person
-
-Three things under **Settings → Sounding human**, all on by default:
-
-**Adaptive style.** Before drafting, the assistant profiles how *that person*
-writes — from their own messages only, never from its own past replies — and
-tells the model to match it: message length, emoji use, capitalisation,
-whether they bother with full stops, and the language they are writing in. If
-someone sends three-word lower-case lines, it stops replying in paragraphs.
-Needs at least two of their messages; below that it just uses your persona.
-
-**Typing indicator.** Before an automatic message goes out, the chat shows
-"typing…" for as long as writing that text would plausibly take — length ÷
-`typing_speed_cps` (default 12 characters/second), capped at
-`typing_max_seconds` (default 25). The message is sent while the indicator is
-still up, so it doesn't blink off and leave a gap. Messages you send yourself,
-and drafts you approve by hand, skip this — you are already in control and
-should not wait on it.
-
-**Read receipts.** After the delay and before writing, the incoming message is
-marked read, so the sender gets their second tick. That ordering is the point:
-a pause, then read, then typing, then the reply — the shape of someone picking
-up their phone.
-
-Neither the indicator nor the read receipt can block a message: if Telegram
-refuses either, it is logged and the message still goes out.
-
-## Messaging your contacts first
-
-The **Outreach** button opens a panel for starting conversations rather than
-only replying to them.
-
-Pick people from your Telegram contacts, say what the message should achieve
-("let them know I'm away next week"), and each person gets their own message
-written for them — not a copy-pasted blast.
-
-- **Contacts only.** The recipient list comes from your own Telegram contacts,
-  and the server re-checks membership when you queue. Anyone else is refused.
-- **Approval by default.** Each message appears as a pending draft in that
-  conversation, with the usual Approve / Edit / Reject. Tick *"Send without
-  asking me"* to skip approval.
-- **Paced.** Messages go out one at a time with a random gap (default 90–300
-  seconds) and a daily cap (default 20). Telegram penalises bursts of new
-  conversations, so raising these makes a limit more likely, not less.
-- **One at a time per person.** Someone who already has a queued or unapproved
-  message is skipped rather than given a second one.
-- **Stoppable.** *Cancel queued* drops everything not yet acted on, and the
-  global pause holds outreach too. Hitting the daily cap leaves the rest queued
-  for the next day rather than dropping them.
-
-A word on what this is for: messaging people who already know you and expect to
-hear from you. Telegram limits or bans accounts that send unsolicited DMs, and
-that risk falls on your account.
-
-## Booking appointments
-
-Turn on **Settings → Bookings** and the assistant watches every conversation
-for a client settling on a specific day *and* time ("Tuesday at 3 works").
-When it sees one:
-
-1. The request goes to the **provider** — the Telegram account (a person or a
-   bot) named in the setting — as a message like:
-
-   ```
-   📅 Booking request #3
-   Client: Anna (@anna)
-   When: Tue 23 Sep 2026, 15:00–16:00 (Europe/Madrid)
-   What: haircut
-
-   Reply YES 3 to confirm or NO 3 to decline.
-   ```
-
-2. The provider answers **YES 3** or **NO 3** (a bare *yes*/*no* works when
-   only one request is open, or when sent as a Telegram reply to the request;
-   otherwise the bot asks which one). Anything else the provider writes is
-   answered like any other chat; only YES/NO while a request is open counts
-   as a decision.
-
-3. The client is told in the account's own voice through the normal reply
-   flow — auto-sent or held for approval, whichever `auto_send` says. Until
-   the provider answers, replies to that client are told the slot is *not yet
-   confirmed*, so the assistant cannot promise it prematurely.
-
-4. **Check-in.** *Check in this long before* (default 120 min) — that long
-   before a confirmed slot the client is asked, in your voice, whether they
-   are still coming. `0` turns it off.
-
-5. **Arrival.** From the check-in until half an hour after the slot, the
-   client's messages are watched for "I'm here" / "я на месте" / "at the
-   door". The moment they say so, **Arrival instructions** (address, floor,
-   door code — whatever you put in that box) are sent **word for word**, not
-   through the AI, and only once. The AI is told never to give directions or
-   the address itself, so the code cannot be leaked to someone who has not
-   turned up.
-
-A client who changes the time before the provider answers withdraws the
-earlier request (the provider sees "replaces #3"). Times are read in the
-timezone under **Timing**. Each request shows up as a dashed note in the
-thread, and `GET /api/bookings` / `POST /api/bookings/{id}/confirm|decline`
-let the panel operator answer instead of the provider.
-
-Bookings live in `bookings.json` next to the database until they move into
-SQLite. Detection costs one short DeepSeek call per incoming message while
-the feature is on.
-
-### Mirroring to Google Calendar (optional)
-
-Fill in **Google Calendar ID** and each request appears as a tentative
-`[UNCONFIRMED]` event the moment it is put to the provider; YES makes it a
-confirmed event, NO removes it. It authenticates as a service account so no
-browser sign-in is needed on a server:
-
-1. Google Cloud console → new project → enable the **Google Calendar API**.
-2. IAM → Service accounts → create one → Keys → add a **JSON** key.
-3. Save it as `google-service-account.json` next to `main.py`, or point
-   `GOOGLE_SERVICE_ACCOUNT_FILE` in `.env` at it.
-4. In Google Calendar, share the target calendar with the service account's
-   e‑mail address with **Make changes to events**, and paste the calendar's ID
-   (Settings → *Integrate calendar*) into the panel.
-
-Calendar failures are reported in the thread and never stop the Telegram side.
-
-## Sending photos and videos
-
-Open **Media** in the top bar and drop in the photos and videos the assistant
-is allowed to send (or copy them into the `media/` folder next to `main.py`
-— it is picked up either way). Give each one a short description: *"me at
-the beach, blue bikini"*, *"the new haircut"*. The description is what the
-AI sees, so it is how it picks the right file when someone asks for "the
-beach one".
-
-From then on, when a contact asks for a photo, the reply comes with the
-matching file attached. In the panel a draft shows a preview of what it will
-send; *Approve & Send* sends the text first and the file right after, as a
-real person would. With auto-send on, photos go out by themselves. The AI is
-told never to send anything unprompted, to say so if it has nothing that
-matches, and it can see what it already sent (`[sent photo #3: …]` in the
-thread), so it does not send the same file twice unless asked again.
-
-Videos follow two extra rules, both on by default and switchable in the same
-sheet:
-
-- **Videos only after asking** — the AI never attaches a video the first time
-  it comes up. It asks whether they want it and sends it once they say yes.
-- **A reply with a video always waits for my approval** — even with auto-send
-  on, a reply carrying a video is held in the panel until you approve it.
-
-Each file sent is a message like any other: it counts against the daily
-ceilings and is shown in the thread. The *Send to open chat* button on any
-file sends it by hand, as yourself, into whatever conversation is open.
-
-## Errors
-
-DeepSeek failures (network, timeout, HTTP 429, malformed response) are retried
-with exponential backoff that honours `Retry-After`, then surfaced as a red
-error in the conversation and a toast in the panel. The bot keeps running.
-Authentication failures (401/403) fail fast without burning retries.
-
-Telegram disconnects are reconnected automatically with backoff; the admin
-server stays up throughout, and the header shows the live connection state.
+**Panel log shows `Temporary failure in name resolution` after a clash like
+that**: the panel came up on a broken network attachment. Recreate it:
+`docker compose up -d --force-recreate panel`.
+
+**"Wrong password" at the admin sign-in**: compare
+`docker compose exec panel printenv ADMIN_PASSWORD` with the value in `.env`.
+If they differ, the container is still running with an old value: run
+`docker compose up -d --force-recreate panel`. A variable exported in your
+shell also overrides `.env`. After repeated wrong passwords your IP is locked
+out for a while ("Too many wrong passwords"). Wait and try again.
+
+**Account dot stays grey**: no worker is running the account. Check
+`docker compose logs manager` for that account id:
+
+- `Skipping — needs login`: the account has no usable Telegram login or no DeepSeek key. Sign it in again.
+- `Failed to start` followed by a traceback: the error is in the traceback. The worker retries that account after 5 minutes. `docker compose restart manager` retries it now.
+- Nothing about it at all: all worker slots may be full (see *Capacity*).
+
+**Account dot is red**: a worker holds the account but it isn't connected,
+halted, or needs a new login. The reason is in the manager logs. If the
+session was ended from Telegram (Settings → Devices), the log says so. Run
+`docker compose restart manager` so the worker releases the account, then sign
+the number in again with **+ Add account**. After a halt, the dot can stay red
+even after you resume. `docker compose restart manager` clears it.
+
+**Drafts appear but nothing is sent**: auto-send is off, which is the
+default. Approve drafts by hand, or turn on *Auto-send* in Settings.
+
+**No reply at all**: first check that the account isn't paused (top bar and
+conversation), that you are inside active hours if they are on, and that the
+message was private and had text. Then check `docker compose logs manager` for
+`DeepSeek` errors (bad key, no balance, rate limit) or other errors for that
+account. DeepSeek errors also show up red in the conversation.
+
+**"Automation halted"**: a Telegram flood limit tripped (`PeerFloodError`, or
+a FloodWait longer than *Max wait*) or the session was rejected. Read the
+reason in the panel or the manager logs, wait and work out what caused it,
+then resume by clicking *Automation paused*.
+
+## Legacy files
+
+`main.py`, `start.bat`, `setup_session.py`, `instances.py` and `env_file.py`
+are the old single-account mode: one process per account, SQLite, and
+credentials in `.env`. The fleet stack superseded them (design decision D9),
+and nothing in it imports or runs them. The same goes for
+`deploy/telegram-assistant.service` (a systemd unit that runs `main.py`) and
+`config.example.json` (settings now live in Postgres). They are kept for
+reference only. Don't use them to deploy.
 
 ## Files
 
 ```
-main.py           entrypoint — Telethon client + FastAPI/uvicorn on one asyncio loop
-database.py       SQLite helpers (conversations, messages, outreach, chat links, summaries)
-ai_responder.py   builds the system prompt + message list, calls DeepSeek, returns the draft
-context_link.py   summarises a linked chat so another conversation can borrow its context
-bookings.py       appointment requests, the provider's YES/NO, and the JSON store behind them
-media.py          the photo/video library the AI may attach, and the [send N] tag it uses
-google_calendar.py optional mirror of bookings into a Google Calendar (service account)
-config_store.py   loads/validates/atomically saves config.json
-tests/            pytest suite — run with:  python -m pytest
-env_file.py       tolerant .env reader/writer; rejoins values that got wrapped when pasted
-login_flow.py     the Telegram sign-in state machine behind the panel's login screen
-setup_session.py  terminal alternative to the login screen (--check validates .env)
-instances.py      --instance NAME: separate data folder + port per Telegram account
-start.bat         Windows launcher: start.bat [NAME | all | list]; creates .venv on first run
-config.json       your settings (persona fields blank until you fill them in)
-static/index.html the admin panel — plain HTML/CSS/JS, no build step
-assistant.db      created on first run
-media/            photos and videos loaded through the Media sheet (plus their index)
+docker-compose.yml     the stack: postgres, redis, migrate, panel, manager, optional caddy
+Dockerfile             one image for panel, manager and migrate
+Caddyfile              optional public HTTPS front door (profile "public")
+panel.py               admin panel + API; control plane, no Telegram connections
+manager.py             spawns worker processes, restarts dead ones, adopts new accounts
+session_runtime.py     one Telegram account: client, drafting, sending, safety, outreach, bookings
+login_flow.py          phone -> code -> 2FA sign-in behind "Add account"
+leasing.py             one-worker-per-account leases in Postgres
+commands.py            Redis command bus (panel -> worker) and live events (worker -> panel)
+database.py            Postgres access: SessionRegistry (accounts) and per-account Database
+config_store.py        per-account settings, defaults and validation
+crypto.py              AES-GCM encryption of stored secrets under USERBOT_MASTER_KEY
+device_profiles.py     stable per-account device identity
+pg.py                  connection pool and migration runner
+migrate_entrypoint.py  the one-shot `migrate` service
+migrations/            numbered SQL migrations
+ai_responder.py        builds the prompt, calls DeepSeek
+context_link.py        borrows context from a linked chat of the same person
+bookings.py            appointment requests and the provider's YES/NO
+media.py               the photo/video library the AI may attach
+google_calendar.py     optional Google Calendar mirror for bookings
+static/index.html      the panel UI: plain HTML/CSS/JS, no build step
+tests/                 pytest suite (see "Running the tests")
+data/                  created at runtime: per-account media/ and bookings.json
 ```
 
 ## A note on userbots
 
-Automating a personal account is against Telegram's Terms of Service and can get
-the account limited or banned. Keep the delays human, and prefer approval mode
-over auto-send.
+Automating a personal account is against Telegram's Terms of Service and can
+get the account limited or banned. Keep the delays human, keep the safety
+limits low, and prefer approval mode over auto-send.
