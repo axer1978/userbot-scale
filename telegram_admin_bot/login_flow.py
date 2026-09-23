@@ -1,8 +1,12 @@
 """The Telegram sign-in behind the panel's login screen.
 
 One flow object lives for the whole process. It walks through
-credentials -> code -> (password) and hands back a StringSession on success.
-Nothing here touches .env or the running bot; main.py does that.
+credentials -> code -> (password) and, on success, persists the login into
+`telegram_sessions` via `SessionRegistry` — instead of handing back an
+opaque StringSession string for something else to save into a .env file.
+
+Nothing here touches .env or the running bot; the fleet's session runtime
+(session_runtime.py) is what reads the persisted row back out afterwards.
 """
 
 from __future__ import annotations
@@ -11,8 +15,11 @@ import logging
 import time
 from typing import Any, Optional
 
+import asyncpg
 from telethon import TelegramClient, errors
 from telethon.sessions import StringSession
+
+from database import SessionRegistry
 
 log = logging.getLogger("login")
 
@@ -77,8 +84,11 @@ def mask_phone(phone: Optional[str]) -> Optional[str]:
 
 
 class LoginFlow:
-    def __init__(self) -> None:
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+        self._registry = SessionRegistry(pool)
         self._client: Optional[TelegramClient] = None
+        self.session_id: Optional[str] = None
         self.step = STEP_CREDENTIALS
         self.api_id: Optional[int] = None
         self.api_hash: Optional[str] = None
@@ -97,6 +107,7 @@ class LoginFlow:
     def state(self) -> dict[str, Any]:
         return {
             "step": self.step,
+            "session_id": self.session_id,
             "phone": mask_phone(self.phone),
             "delivery": self.delivery,
             "code_length": self.code_length,
@@ -113,6 +124,7 @@ class LoginFlow:
                 await client.disconnect()
             except Exception:
                 pass
+        self.session_id = None
         self.step = STEP_CREDENTIALS
         self.phone = None
         self.phone_code_hash = None
@@ -137,8 +149,21 @@ class LoginFlow:
 
     # ----------------------------------------------------------------- steps
 
-    async def start(self, api_id: int, api_hash: str, phone: str) -> None:
-        """Send the login code. On return the flow is at the code step."""
+    async def start(
+        self,
+        session_id: str,
+        api_id: int,
+        api_hash: str,
+        phone: str,
+        *,
+        label: str = "",
+    ) -> None:
+        """Send the login code. On return the flow is at the code step.
+
+        Creates (or overwrites the credentials on) the `telegram_sessions`
+        row identified by `session_id` before talking to Telegram, so a
+        completed login always has somewhere to be saved.
+        """
         await self.reset()
 
         phone = "".join(phone.split())
@@ -177,13 +202,22 @@ class LoginFlow:
             await client.disconnect()
             raise LoginError(f"Could not reach Telegram: {type(exc).__name__}: {exc}")
 
+        # The code is on its way — only now do we create/refresh the row, so
+        # a rejected phone number or bad api_id/api_hash never creates one.
+        try:
+            await self._registry.create(session_id, label=label, api_id=api_id, api_hash=api_hash)
+        except Exception as exc:
+            await client.disconnect()
+            raise LoginError(f"Could not save this session's credentials: {exc}")
+
         self._client = client
+        self.session_id = session_id
         self.api_id = api_id
         self.api_hash = api_hash
         self.phone = phone
         self._remember_delivery(sent)
         self.step = STEP_CODE
-        log.info("Login code sent to %s.", mask_phone(phone))
+        log.info("Login code sent to %s for session %r.", mask_phone(phone), session_id)
 
     async def resend(self) -> None:
         """Ask Telegram to send the code again.
@@ -215,8 +249,8 @@ class LoginFlow:
             raise LoginError(f"Could not resend the code: {type(exc).__name__}: {exc}")
         self._remember_delivery(sent)
 
-    async def submit_code(self, code: str) -> Optional[tuple[str, Any]]:
-        """Try the code. Returns (session_string, me) when signed in, or None
+    async def submit_code(self, code: str) -> Optional[tuple[dict[str, Any], Any]]:
+        """Try the code. Returns (session_row, me) when signed in, or None
         when Telegram wants the two-step password next."""
         if self._client is None or self.step != STEP_CODE:
             raise LoginError("Enter your details first.")
@@ -247,7 +281,7 @@ class LoginFlow:
             raise LoginError(f"Sign-in failed: {type(exc).__name__}: {exc}")
         return await self._finish()
 
-    async def submit_password(self, password: str) -> tuple[str, Any]:
+    async def submit_password(self, password: str) -> tuple[dict[str, Any], Any]:
         if self._client is None or self.step != STEP_PASSWORD:
             raise LoginError("Enter the login code first.")
         if not password:
@@ -262,13 +296,44 @@ class LoginFlow:
             raise LoginError(f"Sign-in failed: {type(exc).__name__}: {exc}")
         return await self._finish()
 
-    async def _finish(self) -> tuple[str, Any]:
+    async def _finish(self) -> tuple[dict[str, Any], Any]:
+        """Pull the completed login's session internals off the connected
+        client and persist them via SessionRegistry, instead of handing back
+        an opaque StringSession string.
+
+        `dc_id`, `server_address`, `port` and `auth_key.key` are standard
+        attributes on any Telethon session object (MemorySession and
+        StringSession both expose them the same way — see
+        telethon/sessions/memory.py) — this is exactly the shape
+        session_runtime.py's `_client_from_auth()` reconstructs a client
+        from on the other end.
+        """
         client = self._client
+        session_id = self.session_id
         assert client is not None
-        session_string = client.session.save()
+        assert session_id is not None
+
+        session = client.session
+        dc_id = session.dc_id
+        server_address = session.server_address
+        port = session.port
+        auth_key = session.auth_key.key  # raw bytes
+
         me = await client.get_me()
-        # Hand the session over; main.py opens its own client on it.
+
         self._client = None
         await client.disconnect()
+
+        row = await self._registry.save_login(
+            session_id,
+            dc_id=dc_id,
+            server_address=server_address,
+            port=port,
+            auth_key=auth_key,
+            user_id=me.id if me is not None else None,
+            username=getattr(me, "username", None) if me is not None else None,
+            phone_number=getattr(me, "phone", None) if me is not None else self.phone,
+        )
+
         await self.reset()
-        return session_string, me
+        return row, me

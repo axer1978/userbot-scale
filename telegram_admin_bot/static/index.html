@@ -259,12 +259,46 @@
     padding: 10px 14px; border-radius: 9px; max-width: 380px; font-size: 13px;
   }
   .toast.info { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
+
+  /* ---------- admin sign-in gate ---------- */
+  #admin-gate {
+    position: fixed; inset: 0; background: var(--bg); display: none; z-index: 60;
+    align-items: center; justify-content: center; overflow-y: auto; padding: 40px 16px;
+  }
+  #admin-gate.open { display: flex; }
+  #admin-gate .sheet { max-width: 380px; }
+  #admin-gate .logo { width: 44px; height: 44px; border-radius: 11px; background: var(--accent);
+    display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+
+  /* ---------- session switcher ---------- */
+  .dot.grey { background: var(--muted); }
+  #session-switcher { position: relative; }
+  #session-btn { display: flex; align-items: center; gap: 8px; }
+  #session-menu {
+    position: absolute; top: 100%; left: 0; margin-top: 6px; min-width: 240px;
+    background: var(--bg-raised); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 30; display: none;
+    max-height: 320px; overflow-y: auto;
+  }
+  #session-menu.open { display: block; }
+  #session-menu .s-row { display: flex; align-items: center; gap: 9px; padding: 9px 13px; cursor: pointer; }
+  #session-menu .s-row:hover { background: var(--bg-hover); }
+  #session-menu .s-row.active { background: var(--accent-dim); }
+  #session-menu .s-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #session-menu .s-empty { padding: 11px 13px; color: var(--muted); font-size: 13px; }
 </style>
 </head>
 <body>
 
 <header>
   <span class="brand">Telegram AI Assistant <span id="brand-instance" class="instance"></span></span>
+  <div id="session-switcher">
+    <button id="session-btn" class="btn small" type="button">
+      <span id="session-btn-dot" class="dot grey"></span>
+      <span id="session-btn-label">Loading sessions…</span>
+    </button>
+    <div id="session-menu"></div>
+  </div>
   <span class="status"><span id="conn-dot" class="dot"></span><span id="conn-text">connecting…</span></span>
   <span class="spacer"></span>
   <span id="mode" class="status"></span>
@@ -275,6 +309,24 @@
   <button id="open-settings" class="btn">Settings</button>
   <button id="logout" class="btn">Log out</button>
 </header>
+
+<div id="admin-gate">
+  <div class="sheet">
+    <div class="logo">
+      <svg width="24" height="24" viewBox="0 0 32 32"><path d="M7 16.5l17-7-6 16-3.5-6z" fill="#fff"/></svg>
+    </div>
+    <h2>Admin sign-in</h2>
+    <p class="hint">Enter the shared admin password to manage sessions.</p>
+    <div id="ag-notice" class="notice" hidden></div>
+    <form id="ag-form" autocomplete="off">
+      <div class="field"><label for="ag-password">Password</label>
+        <input id="ag-password" type="password" autocomplete="current-password" required></div>
+      <div class="sheet-actions">
+        <button type="submit" class="btn primary">Sign in</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <div id="login">
   <div class="sheet">
@@ -714,6 +766,8 @@
 "use strict";
 
 const state = {
+  sessionId: null,
+  sessions: [],
   conversations: [],
   messages: [],
   activeChatId: null,
@@ -767,9 +821,23 @@ async function api(method, path, body) {
   if (!res.ok) {
     let detail = res.statusText;
     try { detail = (await res.json()).detail || detail; } catch (_) {}
-    throw new Error(detail);
+    const err = new Error(detail);
+    err.status = res.status;
+    throw err;
   }
   return res.status === 204 ? null : res.json();
+}
+
+// Every per-session route lives under /api/sessions/{session_id}/...; this
+// builds that path from whichever session is currently selected (or an
+// explicit override, used when a request has to outlive a session switch).
+function sPath(subpath, sessionId) {
+  const id = sessionId || state.sessionId;
+  return `/api/sessions/${encodeURIComponent(id)}${subpath}`;
+}
+
+function sApi(method, subpath, body, sessionId) {
+  return api(method, sPath(subpath, sessionId), body);
 }
 
 /* --------------------------------------------------------------- sidebar */
@@ -777,6 +845,13 @@ async function api(method, path, body) {
 function renderSidebar() {
   const sidebar = $("sidebar");
   sidebar.textContent = "";
+
+  if (!state.sessionId) {
+    const empty = el("div", "empty", "Pick a session above to get started.");
+    empty.style.padding = "24px 16px";
+    sidebar.appendChild(empty);
+    return;
+  }
 
   if (!state.conversations.length) {
     const empty = el("div", "empty", "No conversations yet.");
@@ -809,7 +884,7 @@ function renderSidebar() {
     toggle.addEventListener("click", async (ev) => {
       ev.stopPropagation();
       try {
-        await api("POST", `/api/conversations/${conv.chat_id}/pause`,
+        await sApi("POST", `/conversations/${conv.chat_id}/pause`,
                   { paused: !conv.automation_paused });
       } catch (err) { toast(err.message); }
     });
@@ -858,7 +933,7 @@ function renderThreadHeader() {
                     conv.automation_paused ? "Automation paused" : "Pause automation");
   toggle.addEventListener("click", async () => {
     try {
-      await api("POST", `/api/conversations/${conv.chat_id}/pause`,
+      await sApi("POST", `/conversations/${conv.chat_id}/pause`,
                 { paused: !conv.automation_paused });
     } catch (err) { toast(err.message); }
   });
@@ -876,8 +951,8 @@ function linkChip(link) {
   cut.title = "Stop drawing on this chat";
   cut.addEventListener("click", async () => {
     try {
-      const res = await api(
-        "DELETE", `/api/conversations/${link.chat_id}/links/${link.source_id}`);
+      const res = await sApi(
+        "DELETE", `/conversations/${link.chat_id}/links/${link.source_id}`);
       state.links = res.links;
       renderThreadHeader();
       toast("Unlinked. This chat's replies won't use that one.", "info");
@@ -892,7 +967,7 @@ function linkButton(conv) {
   button.title = "Answer this chat with what another chat already knows";
   button.addEventListener("click", async () => {
     try {
-      const data = await api("GET", `/api/conversations/${conv.chat_id}/links`);
+      const data = await sApi("GET", `/conversations/${conv.chat_id}/links`);
       state.links = data.links;
       state.linkOptions = data.suggestions;
     } catch (err) { toast(err.message); return; }
@@ -930,7 +1005,7 @@ function linkPicker(conv) {
     state.linkOptions = null;
     if (sourceId) {
       try {
-        const res = await api("POST", `/api/conversations/${conv.chat_id}/links`,
+        const res = await sApi("POST", `/conversations/${conv.chat_id}/links`,
                               { source_id: sourceId });
         state.links = res.links;
         toast("Linked. Replies here will draw on that chat.", "info");
@@ -1000,7 +1075,7 @@ function mediaById(id) {
 }
 
 function mediaPreview(item, small) {
-  const src = `/api/media/${item.id}/file`;
+  const src = sPath(`/media/${item.id}/file`);
   if (item.kind === "video") {
     const v = el("video");
     v.src = src; v.controls = true; v.preload = "metadata"; v.muted = true;
@@ -1079,7 +1154,7 @@ function draftNode(msg) {
   reject.addEventListener("click", async () => {
     reject.disabled = true;
     draftEdits.delete(msg.id);
-    try { await api("POST", `/api/drafts/${msg.id}/reject`); }
+    try { await sApi("POST", `/drafts/${msg.id}/reject`); }
     catch (err) { toast(err.message); reject.disabled = false; }
   });
 
@@ -1096,7 +1171,7 @@ function draftNode(msg) {
 async function sendDraft(draftId, text, button) {
   button.disabled = true;
   try {
-    await api("POST", `/api/drafts/${draftId}/approve`, text === null ? {} : { text });
+    await sApi("POST", `/drafts/${draftId}/approve`, text === null ? {} : { text });
     draftEdits.delete(draftId);
   } catch (err) {
     toast(err.message);
@@ -1126,7 +1201,7 @@ function renderComposer() {
     if (!text) return;
     send.disabled = true;
     try {
-      await api("POST", `/api/conversations/${state.activeChatId}/send`, { text });
+      await sApi("POST", `/conversations/${state.activeChatId}/send`, { text });
       box.value = "";
     } catch (err) { toast(err.message); }
     send.disabled = false;
@@ -1153,12 +1228,12 @@ async function selectConversation(chatId) {
   renderThreadHeader();
   renderComposer();
   try {
-    const data = await api("GET", `/api/conversations/${chatId}/messages`);
+    const data = await sApi("GET", `/conversations/${chatId}/messages`);
     state.messages = data.messages;
     state.links = data.links || [];
     renderThreadHeader();
     renderThread();
-    const conv = await api("POST", `/api/conversations/${chatId}/read`);
+    const conv = await sApi("POST", `/conversations/${chatId}/read`);
     upsertConversation(conv);
   } catch (err) { toast(err.message); }
 }
@@ -1391,7 +1466,7 @@ function renderQueue() {
 async function loadContacts() {
   $("o-contacts").textContent = "Loading contacts…";
   try {
-    outreach.contacts = await api("GET", "/api/contacts");
+    outreach.contacts = await sApi("GET", "/contacts");
     renderContacts();
   } catch (err) {
     $("o-contacts").textContent = "Could not load contacts: " + err.message;
@@ -1400,7 +1475,7 @@ async function loadContacts() {
 
 async function loadQueue() {
   try {
-    outreach.items = await api("GET", "/api/outreach");
+    outreach.items = await sApi("GET", "/outreach");
     renderQueue();
   } catch (err) { /* the websocket will refresh it */ }
 }
@@ -1450,12 +1525,12 @@ $("o-queue").addEventListener("click", async () => {
     cfg.outreach.min_gap_seconds = Number($("o-min").value);
     cfg.outreach.max_gap_seconds = Number($("o-max").value);
     cfg.outreach.daily_limit = Number($("o-limit").value);
-    applyConfig(await api("PUT", "/api/config", cfg));
+    applyConfig(await sApi("PUT", "/config", cfg));
   } catch (err) { toast("Could not save outreach settings: " + err.message); return; }
 
   $("o-queue").disabled = true;
   try {
-    const res = await api("POST", "/api/outreach",
+    const res = await sApi("POST", "/outreach",
                           { chat_ids: [...outreach.selected], goal });
     const skipped = res.skipped ? `, ${res.skipped} already queued` : "";
     toast(`Queued ${res.queued} message(s)${skipped}.`, "info");
@@ -1468,7 +1543,7 @@ $("o-queue").addEventListener("click", async () => {
 
 $("o-cancel").addEventListener("click", async () => {
   try {
-    const res = await api("POST", "/api/outreach/cancel");
+    const res = await sApi("POST", "/outreach/cancel");
     toast(`Cancelled ${res.cancelled} queued message(s).`, "info");
     await loadQueue();
   } catch (err) { toast(err.message); }
@@ -1494,7 +1569,7 @@ async function loadStyleContacts() {
     byId.set(String(c.chat_id), { chat_id: c.chat_id, display_name: c.display_name, username: c.username });
   }
   try {
-    for (const c of await api("GET", "/api/contacts")) {
+    for (const c of await sApi("GET", "/contacts")) {
       if (!byId.has(String(c.chat_id))) byId.set(String(c.chat_id), c);
     }
   } catch (_) { /* address book is a bonus; conversations are enough */ }
@@ -1583,7 +1658,7 @@ $("cs-save").addEventListener("click", async () => {
     const cfg = JSON.parse(JSON.stringify(state.config));
     cfg.contacts = cfg.contacts || {};
     cfg.contacts[styleState.activeChatId] = collectContactForm();
-    applyConfig(await api("PUT", "/api/config", cfg));
+    applyConfig(await sApi("PUT", "/config", cfg));
     const keep = styleState.activeChatId;
     await loadStyleContacts();
     $("cs-select").value = keep;
@@ -1596,7 +1671,7 @@ $("cs-reset").addEventListener("click", async () => {
   try {
     const cfg = JSON.parse(JSON.stringify(state.config));
     if (cfg.contacts) delete cfg.contacts[styleState.activeChatId];
-    applyConfig(await api("PUT", "/api/config", cfg));
+    applyConfig(await sApi("PUT", "/config", cfg));
     fillContactForm(emptyContactStyle());
     const keep = styleState.activeChatId;
     await loadStyleContacts();
@@ -1610,7 +1685,7 @@ $("fs-save").addEventListener("click", async () => {
     const cfg = JSON.parse(JSON.stringify(state.config));
     cfg.finetune = cfg.finetune || { writing_samples: "" };
     cfg.finetune.writing_samples = $("fs-samples").value;
-    applyConfig(await api("PUT", "/api/config", cfg));
+    applyConfig(await sApi("PUT", "/config", cfg));
     toast("Writing samples saved.", "info");
   } catch (err) { toast(err.message); }
 });
@@ -1652,7 +1727,7 @@ function renderMedia() {
     const save = el("button", "btn small primary", "Save");
     save.addEventListener("click", async () => {
       save.disabled = true;
-      try { await api("PATCH", `/api/media/${item.id}`, { description: desc.value }); toast("Saved.", "info"); }
+      try { await sApi("PATCH", `/media/${item.id}`, { description: desc.value }); toast("Saved.", "info"); }
       catch (err) { toast(err.message); }
       save.disabled = false;
     });
@@ -1662,7 +1737,7 @@ function renderMedia() {
     send.addEventListener("click", async () => {
       send.disabled = true;
       try {
-        await api("POST", `/api/conversations/${state.activeChatId}/send-media`, { media_id: item.id });
+        await sApi("POST", `/conversations/${state.activeChatId}/send-media`, { media_id: item.id });
         toast("Sent.", "info");
       } catch (err) { toast(err.message); }
       send.disabled = false;
@@ -1670,7 +1745,7 @@ function renderMedia() {
     const del = el("button", "btn small warn", "Delete");
     del.addEventListener("click", async () => {
       if (!confirm(`Delete ${item.file}? The file is removed from the media folder.`)) return;
-      try { await api("DELETE", `/api/media/${item.id}`); }
+      try { await sApi("DELETE", `/media/${item.id}`); }
       catch (err) { toast(err.message); }
     });
     actions.appendChild(save);
@@ -1688,7 +1763,7 @@ async function uploadFiles(files) {
     n += 1;
     progress.textContent = `Uploading ${file.name} (${n}/${files.length})…`;
     try {
-      const res = await fetch(`/api/media/upload?name=${encodeURIComponent(file.name)}`, {
+      const res = await fetch(`${sPath("/media/upload")}?name=${encodeURIComponent(file.name)}`, {
         method: "PUT", body: file, headers: { "Content-Type": "application/octet-stream" },
       });
       if (!res.ok) {
@@ -1712,7 +1787,7 @@ $("open-media").addEventListener("click", async () => {
   $("media").classList.add("open");
   fillMediaRules();
   renderMedia();
-  try { state.media = await api("GET", "/api/media"); renderMedia(); }
+  try { state.media = await sApi("GET", "/media"); renderMedia(); }
   catch (err) { toast(err.message); }
 });
 $("m-close").addEventListener("click", () => $("media").classList.remove("open"));
@@ -1727,7 +1802,7 @@ $("m-save").addEventListener("click", async () => {
       ask_before_video: $("m-ask-video").checked,
       videos_need_approval: $("m-video-approve").checked,
     };
-    applyConfig(await api("PUT", "/api/config", cfg));
+    applyConfig(await sApi("PUT", "/config", cfg));
     toast("Media rules saved.", "info");
   } catch (err) { toast(err.message); }
 });
@@ -1748,25 +1823,44 @@ drop.addEventListener("drop", async (ev) => {
 
 let socket = null;
 let retryDelay = 1000;
+let reconnectTimer = null;
 
-function connect() {
+// Closes whatever socket is open (if any) and stops it from reconnecting.
+// Called right before switching to a different session_id, so the old
+// session's socket never delivers events into the newly selected session.
+function teardownSocket() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  retryDelay = 1000;
+  if (socket) {
+    const old = socket;
+    socket = null;
+    old.close();
+  }
+}
+
+function connectSocket(sessionId) {
+  if (!sessionId) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  socket = new WebSocket(`${proto}://${location.host}/ws`);
+  const ws = new WebSocket(`${proto}://${location.host}/ws/${encodeURIComponent(sessionId)}`);
+  socket = ws;
 
-  socket.addEventListener("open", () => {
+  ws.addEventListener("open", () => {
+    if (socket !== ws) return; // superseded by a later session switch
     retryDelay = 1000;
     $("conn-dot").classList.add("on");
     $("conn-text").textContent = "live";
   });
 
-  socket.addEventListener("close", () => {
+  ws.addEventListener("close", () => {
+    if (socket !== ws) return;
     $("conn-dot").classList.remove("on");
     $("conn-text").textContent = "reconnecting…";
-    setTimeout(connect, retryDelay);
+    reconnectTimer = setTimeout(() => connectSocket(sessionId), retryDelay);
     retryDelay = Math.min(retryDelay * 2, 15000);
   });
 
-  socket.addEventListener("message", (ev) => {
+  ws.addEventListener("message", (ev) => {
+    if (socket !== ws) return;
     let data;
     try { data = JSON.parse(ev.data); } catch (_) { return; }
     handleEvent(data);
@@ -1782,7 +1876,6 @@ function handleEvent(data) {
       applyConfig(data.config);
       fillSettings(data.config);
       applyStatus(data.status);
-      applyAuth(data.auth);
       renderSidebar();
       break;
 
@@ -2054,11 +2147,181 @@ async function onSignedIn() {
 }
 
 $("logout").addEventListener("click", async () => {
-  if (!confirm("Log this account out of the assistant? You will need the login code again to sign back in.")) return;
+  if (!confirm("Sign out of the admin panel?")) return;
+  teardownSocket();
+  try { await api("POST", "/api/logout"); } catch (err) { toast(err.message); }
+  state.sessionId = null;
+  state.sessions = [];
+  showGate();
+});
+
+/* -------------------------------------------------------- session picker */
+
+function sessionLabel(s) {
+  return s.label && s.label.trim() ? s.label : s.session_id;
+}
+
+// grey = not running in this panel process, red = running but Telegram is
+// not connected, green = running and connected — per the plan's item 12/13.
+function sessionDotClass(s) {
+  if (!s.running_here) return "dot grey";
+  if (s.status && s.status.telegram_connected) return "dot on";
+  return "dot";
+}
+
+function renderSessionSwitcher() {
+  const current = state.sessions.find((s) => s.session_id === state.sessionId);
+  $("session-btn-label").textContent = current
+    ? sessionLabel(current)
+    : (state.sessions.length ? "Select session…" : "No sessions");
+  $("session-btn-dot").className = current ? sessionDotClass(current) : "dot grey";
+
+  const menu = $("session-menu");
+  menu.textContent = "";
+  if (!state.sessions.length) {
+    menu.appendChild(el("div", "s-empty", "No sessions found."));
+    return;
+  }
+  for (const s of state.sessions) {
+    const row = el("div", "s-row" + (s.session_id === state.sessionId ? " active" : ""));
+    row.appendChild(el("span", sessionDotClass(s)));
+    row.appendChild(el("span", "s-name", sessionLabel(s)));
+    row.addEventListener("click", () => {
+      menu.classList.remove("open");
+      selectSession(s.session_id);
+    });
+    menu.appendChild(row);
+  }
+}
+
+$("session-btn").addEventListener("click", (ev) => {
+  ev.stopPropagation();
+  $("session-menu").classList.toggle("open");
+});
+document.addEventListener("click", (ev) => {
+  if (!$("session-switcher").contains(ev.target)) $("session-menu").classList.remove("open");
+});
+
+async function fetchSessions() {
+  const sessions = await api("GET", "/api/sessions");
+  state.sessions = sessions;
+  renderSessionSwitcher();
+  return sessions;
+}
+
+// Pulls this session's conversations/config/media over plain REST for a fast
+// first paint; the websocket's own "hello" message repeats the same data
+// moments later, which is harmless. Guards against a session switch landing
+// mid-flight by bailing out if the user has since picked a different one.
+async function loadSessionData(sessionId) {
+  let conversations = [];
+  try { conversations = await sApi("GET", "/conversations", undefined, sessionId); }
+  catch (err) { toast("Could not load conversations: " + err.message); }
+  if (sessionId !== state.sessionId) return;
+  state.conversations = conversations;
+
   try {
-    applyAuth(await api("POST", "/api/auth/logout"));
-    toast("Logged out.", "info");
-  } catch (err) { toast(err.message); }
+    const cfg = await sApi("GET", "/config", undefined, sessionId);
+    if (sessionId !== state.sessionId) return;
+    applyConfig(cfg);
+    fillSettings(cfg);
+  } catch (err) { toast("Could not load config: " + err.message); }
+
+  try {
+    const mediaList = await sApi("GET", "/media", undefined, sessionId);
+    if (sessionId !== state.sessionId) return;
+    state.media = mediaList;
+  } catch (_) { state.media = []; }
+
+  renderSidebar();
+}
+
+// Tears down the previous session's socket, resets every piece of UI state
+// that belongs to "whichever session is open", and reconnects fresh.
+async function selectSession(sessionId) {
+  if (!sessionId || sessionId === state.sessionId) return;
+  teardownSocket();
+  state.sessionId = sessionId;
+  try { localStorage.setItem("panelSessionId", sessionId); } catch (_) {}
+
+  state.conversations = [];
+  state.messages = [];
+  state.activeChatId = null;
+  state.config = null;
+  state.status = null;
+  state.drafting = new Set();
+  state.links = [];
+  state.linkOptions = null;
+  state.media = [];
+  outreach.contacts = [];
+  outreach.selected.clear();
+  outreach.items = [];
+  draftEdits.clear();
+
+  renderSessionSwitcher();
+  renderSidebar();
+  renderThreadHeader();
+  renderComposer();
+  renderThread();
+  $("conn-dot").classList.remove("on");
+  $("conn-text").textContent = "connecting…";
+  $("brand-instance").textContent = "";
+
+  await loadSessionData(sessionId);
+  if (sessionId !== state.sessionId) return; // switched again while loading
+  connectSocket(sessionId);
+}
+
+/* --------------------------------------------------------------- gate */
+
+function showGate(message) {
+  const notice = $("ag-notice");
+  if (message) { notice.hidden = false; notice.textContent = message; }
+  else { notice.hidden = true; notice.textContent = ""; }
+  $("admin-gate").classList.add("open");
+  setTimeout(() => $("ag-password").focus(), 0);
+}
+
+function hideGate() {
+  $("admin-gate").classList.remove("open");
+}
+
+async function afterAuth(sessions) {
+  let preferred = null;
+  try { preferred = localStorage.getItem("panelSessionId"); } catch (_) {}
+  const wanted = sessions.find((s) => s.session_id === preferred) || sessions[0];
+  if (wanted) {
+    await selectSession(wanted.session_id);
+  } else {
+    renderSessionSwitcher();
+    toast("No sessions configured yet.", "info");
+  }
+  // Keeps the picker's dots current (running/connected can change from
+  // outside this tab) without needing its own websocket.
+  setInterval(async () => {
+    if ($("admin-gate").classList.contains("open")) return;
+    try { await fetchSessions(); } catch (_) {}
+  }, 20000);
+}
+
+$("ag-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const button = $("ag-form").querySelector('button[type="submit"]');
+  const password = $("ag-password").value;
+  button.disabled = true;
+  try {
+    await api("POST", "/api/login", { password });
+    $("ag-password").value = "";
+    hideGate();
+    const sessions = await fetchSessions();
+    await afterAuth(sessions);
+  } catch (err) {
+    const notice = $("ag-notice");
+    notice.hidden = false;
+    notice.textContent = err.message || "Wrong password";
+  } finally {
+    button.disabled = false;
+  }
 });
 
 /* ----------------------------------------------------------------- boot */
@@ -2075,7 +2338,7 @@ $("settings").addEventListener("click", (ev) => {
 $("settings-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   try {
-    const saved = await api("PUT", "/api/config", collectSettings());
+    const saved = await sApi("PUT", "/config", collectSettings());
     applyConfig(saved);
     fillSettings(saved);
     $("settings").classList.remove("open");
@@ -2086,22 +2349,22 @@ $("settings-form").addEventListener("submit", async (ev) => {
 $("global-pause").addEventListener("click", async () => {
   const next = !(state.config && state.config.behavior.global_pause);
   try {
-    await api("POST", "/api/global-pause", { global_pause: next });
+    await sApi("POST", "/global-pause", { global_pause: next });
   } catch (err) { toast(err.message); }
 });
 
 (async function boot() {
   try {
-    state.conversations = await api("GET", "/api/conversations");
-    const cfg = await api("GET", "/api/config");
-    applyConfig(cfg);
-    try { state.media = await api("GET", "/api/media"); } catch (_) { state.media = []; }
-    fillSettings(cfg);
-    applyAuth(await api("GET", "/api/auth"));
-    applyStatus(await api("GET", "/api/status"));
-    renderSidebar();
-  } catch (err) { toast("Could not load admin data: " + err.message); }
-  connect();
+    const sessions = await fetchSessions();
+    hideGate();
+    await afterAuth(sessions);
+  } catch (err) {
+    if (err && err.status === 401) {
+      showGate();
+    } else {
+      showGate("Could not reach the admin API: " + (err && err.message ? err.message : "unknown error"));
+    }
+  }
   setInterval(() => {
     if (socket && socket.readyState === WebSocket.OPEN) socket.send("ping");
   }, 25000);
