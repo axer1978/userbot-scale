@@ -16,6 +16,7 @@ import pytest
 
 import ai_responder
 import bookings
+import session_runtime
 from database import DIR_SYSTEM, STATUS_NOTE, STATUS_PENDING
 
 TZ = "Europe/Madrid"
@@ -182,13 +183,13 @@ def flow(app, db, monkeypatch, tmp_path):
     monkeypatch.setattr(app, "go_online_for", no_sleep)
     monkeypatch.setattr(app, "mark_read", no_sleep)
     monkeypatch.setattr(app, "schedule_go_offline", lambda _: None)
-    monkeypatch.setattr(app.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(session_runtime.asyncio, "sleep", no_sleep)
     monkeypatch.setattr(ai_responder, "extract_booking", fake_extract)
     monkeypatch.setattr(ai_responder, "generate_reply", fake_reply)
     app.config["booking"]["enabled"] = True
     app.config["booking"]["provider"] = "@provider"
     app.config["timing"]["timezone"] = TZ
-    app.env = type("E", (), {"deepseek_key": "k"})()
+    app.deepseek_key = "k"
     return app, sent, script
 
 

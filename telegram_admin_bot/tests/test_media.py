@@ -12,6 +12,7 @@ import pytest
 
 import ai_responder
 import media
+import session_runtime
 from database import DIR_IN, DIR_OUT, STATUS_PENDING, STATUS_RECEIVED, STATUS_SENT
 
 
@@ -243,13 +244,13 @@ def drafting(app, monkeypatch, library):
     async def no_context(chat_id):
         return ""
 
-    monkeypatch.setattr(app.asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(app.ai_responder, "generate_reply", fake_generate_reply)
+    monkeypatch.setattr(session_runtime.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(ai_responder, "generate_reply", fake_generate_reply)
     monkeypatch.setattr(app, "go_online_for", nothing)
     monkeypatch.setattr(app, "mark_read", nothing)
     monkeypatch.setattr(app, "borrowed_context", no_context)
     monkeypatch.setattr(app, "schedule_go_offline", lambda chat_id: None)
-    monkeypatch.setattr(app, "env", type("E", (), {"deepseek_key": "k"})())
+    monkeypatch.setattr(app, "deepseek_key", "k")
     return script
 
 

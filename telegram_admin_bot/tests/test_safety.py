@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 from telethon import errors
 
+import session_runtime
 from database import DIR_OUT, STATUS_SENT
 
 
@@ -32,7 +33,7 @@ async def test_quota_allows_sending_on_a_quiet_day(app, db):
 async def test_total_send_limit_blocks_further_messages(app, db):
     app.config["safety"]["daily_send_limit"] = 3
     await _sent(db, 1, 3)
-    with pytest.raises(app.SendBlocked, match="Daily send limit"):
+    with pytest.raises(session_runtime.SendBlocked, match="Daily send limit"):
         await app.check_daily_quota()
 
 
@@ -41,7 +42,7 @@ async def test_send_limit_counts_replies_not_just_outreach(app, db):
     """Telegram counts all outbound volume, so the ceiling must too."""
     app.config["safety"]["daily_send_limit"] = 2
     await _sent(db, 42, 2)  # ordinary replies, no outreach rows at all
-    with pytest.raises(app.SendBlocked):
+    with pytest.raises(session_runtime.SendBlocked):
         await app.check_daily_quota()
 
 
@@ -52,7 +53,7 @@ async def test_distinct_people_capped_separately_from_volume(app, db):
     app.config["safety"]["daily_peer_limit"] = 2
     for i, chat in enumerate((10, 11, 12)):
         await _sent(db, chat, 1, start=100 * (i + 1))
-    with pytest.raises(app.SendBlocked, match="distinct people"):
+    with pytest.raises(session_runtime.SendBlocked, match="distinct people"):
         await app.check_daily_quota()
 
 
@@ -69,7 +70,7 @@ async def test_many_messages_to_one_person_do_not_trip_the_peer_cap(app, db):
 
 @pytest.mark.asyncio
 async def test_stranger_is_refused(app, db):
-    with pytest.raises(app.SendBlocked, match="stranger"):
+    with pytest.raises(session_runtime.SendBlocked, match="stranger"):
         await app.may_message(999_999)
 
 
@@ -114,7 +115,7 @@ async def test_short_flood_wait_is_slept_not_halted(app, db, monkeypatch):
     async def fake_sleep(s):
         slept.append(s)
 
-    monkeypatch.setattr(app.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(session_runtime.asyncio, "sleep", fake_sleep)
     halted = []
     monkeypatch.setattr(app, "halt_everything", lambda r: halted.append(r) or _noop())
 
@@ -140,7 +141,7 @@ async def test_long_flood_wait_halts_instead_of_blocking(app, db, monkeypatch):
     async def fake_sleep(s):
         slept.append(s)
 
-    monkeypatch.setattr(app.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(session_runtime.asyncio, "sleep", fake_sleep)
 
     exc = errors.FloodWaitError(None)
     exc.seconds = 86_400

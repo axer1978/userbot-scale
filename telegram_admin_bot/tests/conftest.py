@@ -77,10 +77,12 @@ async def pg_pool():
     finally:
         await admin.close()
 
-    async def _init(conn: "asyncpg.Connection") -> None:
-        await conn.execute(f'SET search_path TO "{schema}"')
-
-    pool = await asyncpg.create_pool(PG_TEST_DSN, min_size=1, max_size=4, init=_init)
+    # A startup parameter, not `SET` in an init hook: the pool runs
+    # `RESET ALL` on every release, which would put search_path back to
+    # public after the first query and point every test at shared tables.
+    pool = await asyncpg.create_pool(
+        PG_TEST_DSN, min_size=1, max_size=4, server_settings={"search_path": schema}
+    )
     try:
         await pg_module.apply_migrations(pool)
         yield pool

@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 import ai_responder
+import session_runtime
 from database import DIR_OUT, STATUS_PENDING, STATUS_SENT
 
 
@@ -166,7 +167,7 @@ async def test_the_daily_limit_stops_a_burst_partway(app, db, outbox):
     app.config["safety"]["daily_send_limit"] = 2
     await db.upsert_conversation(7, "J", None, False, 1)
 
-    with pytest.raises(app.SendBlocked):
+    with pytest.raises(session_runtime.SendBlocked):
         await app.send_burst(7, ["a", "b", "c"])
 
     # Stopped at the limit rather than sending all three.
