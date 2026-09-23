@@ -59,6 +59,13 @@ SESSIONS_PER_WORKER = int(os.getenv("SESSIONS_PER_WORKER") or 25)
 
 # How often the parent polls worker liveness / reassigns after a death.
 POLL_INTERVAL_SECONDS = 5.0
+# How often each worker looks for active sessions nobody is running yet —
+# an account signed in from the panel after the manager started. Workers
+# race for them; the lease decides, and the losers just skip.
+ADOPT_INTERVAL_SECONDS = 15.0
+# A session that failed to start is not retried by the same worker for this
+# long, so a broken one doesn't churn its lease every ADOPT_INTERVAL.
+START_RETRY_SECONDS = 300.0
 # Grace period given to a worker after being asked to shut down cleanly
 # before the parent gives up waiting and just moves on.
 SHUTDOWN_JOIN_SECONDS = 15.0
@@ -113,7 +120,9 @@ async def _worker_async_main(
         await pg.assert_version(pool, pg.latest_version())
 
         runtimes: dict[str, SessionRuntime] = {}
-        for session_id in session_ids:
+        retry_after: dict[str, float] = {}
+
+        async def start_one(session_id: str, *, adopted: bool = False) -> None:
             runtime = SessionRuntime(
                 pool, session_id, data_dir=DATA_DIR, redis_url=REDIS_URL, worker_id=worker_id
             )
@@ -121,15 +130,20 @@ async def _worker_async_main(
                 await runtime.start()
             except NeedsLogin as exc:
                 wlog.warning("[%s] Skipping — needs login: %s", session_id, exc)
-                continue
             except leasing.LeaseLost as exc:
-                wlog.warning("[%s] Skipping — lease already held: %s", session_id, exc)
-                continue
+                if not adopted:  # another worker winning an adoption race is routine
+                    wlog.warning("[%s] Skipping — lease already held: %s", session_id, exc)
+                return
             except Exception:
                 wlog.exception("[%s] Failed to start", session_id)
-                continue
-            runtimes[session_id] = runtime
-            wlog.info("[%s] Started.", session_id)
+            else:
+                runtimes[session_id] = runtime
+                wlog.info("[%s] Started%s.", session_id, " (picked up while running)" if adopted else "")
+                return
+            retry_after[session_id] = time.monotonic() + START_RETRY_SECONDS
+
+        for session_id in session_ids:
+            await start_one(session_id)
 
         wlog.info(
             "Worker %s running %d/%d assigned session(s).",
@@ -137,12 +151,30 @@ async def _worker_async_main(
         )
 
         # Each SessionRuntime keeps itself alive (and its own lease fresh)
-        # via its own background tasks/LeaseKeeper. All this loop does is
-        # wait for a stop request, polling so it stays responsive without
-        # needing an asyncio-native cross-process signal.
+        # via its own background tasks/LeaseKeeper. This loop waits for a
+        # stop request, polling so it stays responsive without needing an
+        # asyncio-native cross-process signal, and now and then adopts
+        # sessions that became claimable after startup.
+        registry = SessionRegistry(pool)
         loop = asyncio.get_running_loop()
+        next_adopt = time.monotonic() + ADOPT_INTERVAL_SECONDS
         while not stop_event.is_set():
             await loop.run_in_executor(None, stop_event.wait, 1.0)
+            if stop_event.is_set() or time.monotonic() < next_adopt:
+                continue
+            next_adopt = time.monotonic() + ADOPT_INTERVAL_SECONDS
+            try:
+                claimable = await registry.claimable()
+            except Exception:
+                wlog.exception("Could not list claimable sessions; will retry.")
+                continue
+            now = time.monotonic()
+            for session_id in claimable:
+                if len(runtimes) >= SESSIONS_PER_WORKER or stop_event.is_set():
+                    break
+                if session_id in runtimes or retry_after.get(session_id, 0.0) > now:
+                    continue
+                await start_one(session_id, adopted=True)
 
         wlog.info("Worker %s stopping %d session(s)...", worker_id, len(runtimes))
         for session_id, runtime in list(runtimes.items()):
