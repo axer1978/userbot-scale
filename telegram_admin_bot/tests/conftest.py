@@ -125,3 +125,45 @@ async def app(pg_pool, db, tmp_path):
     )
     runtime.hub = FakeHub()  # handle_send_failure and friends reach for it by attribute
     yield runtime
+
+
+TEST_ADMIN_PASSWORD = "test-admin"
+
+
+@pytest_asyncio.fixture
+async def panel_client(pg_pool, tmp_path, monkeypatch):
+    """An httpx client for panel.py's FastAPI app, already past the admin
+    password, with the module's pool/registry/login flow bound to this
+    test's schema and its command bus on fakeredis. The app's startup hook
+    is not run (it would connect to the real DATABASE_URL/REDIS_URL).
+    """
+    import fakeredis
+    import httpx
+
+    # panel reads these at import time.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("REDIS_URL", "redis://unused")
+    monkeypatch.setenv("ADMIN_PASSWORD", TEST_ADMIN_PASSWORD)
+    import commands
+    import panel
+    from database import SessionRegistry
+    from login_flow import LoginFlow
+
+    bus = commands.CommandBus(fakeredis.FakeAsyncRedis(decode_responses=True))
+    monkeypatch.setattr(panel, "ADMIN_PASSWORD", TEST_ADMIN_PASSWORD)
+    monkeypatch.setattr(panel, "pool", pg_pool)
+    monkeypatch.setattr(panel, "registry", SessionRegistry(pg_pool))
+    monkeypatch.setattr(panel, "login_flow", LoginFlow(pg_pool))
+    monkeypatch.setattr(panel, "bus", bus)
+    monkeypatch.setattr(panel, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(panel, "_valid_tokens", set())
+    monkeypatch.setattr(panel, "_pending_deepseek_key", "")
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=panel.app), base_url="http://test")
+    try:
+        (await client.post("/api/login", json={"password": TEST_ADMIN_PASSWORD})).raise_for_status()
+        yield client
+    finally:
+        await client.aclose()
+        await panel.login_flow.reset()
+        await bus.close()

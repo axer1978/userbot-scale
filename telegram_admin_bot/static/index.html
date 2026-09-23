@@ -248,9 +248,7 @@
   #login .sheet-actions { margin-top: 10px; }
   #login .btn.primary { min-width: 130px; }
   #login .btn:disabled { opacity: .6; cursor: default; }
-  body.signed-out header .needs-login { display: none; }
-  #logout { display: none; }
-  body.signed-in #logout { display: inline-block; }
+  #session-menu .s-add { color: var(--accent); border-top: 1px solid var(--border); }
 
   /* clear of the composer so toasts never cover the Send button */
   #toasts { position: fixed; right: 16px; bottom: 84px; display: flex; flex-direction: column; gap: 8px; z-index: 50; align-items: flex-end; }
@@ -337,9 +335,11 @@
 
     <!-- step 1: credentials -->
     <form id="l-credentials" class="step on" autocomplete="off">
-      <h2>Sign in to Telegram</h2>
-      <p class="hint">The assistant runs on your own account. Credentials are saved to <code>.env</code> on this
-        machine, so you only do this once.</p>
+      <h2>Add a Telegram account</h2>
+      <p class="hint">The assistant runs on the server, not in this browser, so it keeps answering while this
+        computer is off. Credentials are stored encrypted on the server; you do this once per account.</p>
+      <div class="field"><label for="l-label">Name <span style="color:var(--muted)">(optional)</span></label>
+        <input id="l-label" type="text" placeholder="Shown in the account picker — defaults to the phone number"></div>
       <div class="row">
         <div class="field"><label for="l-api-id">API ID</label>
           <input id="l-api-id" type="text" inputmode="numeric" placeholder="1234567" required></div>
@@ -353,6 +353,7 @@
         <input id="l-deepseek" type="password" placeholder="sk-…" autocomplete="off"></div>
       <p class="hint" style="margin-top:-6px">From <a href="https://platform.deepseek.com" target="_blank" rel="noopener">platform.deepseek.com</a>. Used to write the replies.</p>
       <div class="sheet-actions">
+        <button type="button" id="l-close" class="btn">Cancel</button>
         <button type="submit" class="btn primary">Send code</button>
       </div>
     </form>
@@ -1879,10 +1880,6 @@ function handleEvent(data) {
       renderSidebar();
       break;
 
-    case "auth":
-      applyAuth(data.auth);
-      break;
-
     case "message":
       state.drafting.delete(data.message.chat_id);
       upsertConversation(data.conversation);
@@ -1976,8 +1973,7 @@ function applyStatus(status) {
       ? `connected as ${status.me.name}` : "connected";
   } else {
     dot.classList.remove("on");
-    const signedOut = state.auth && !state.auth.logged_in;
-    $("conn-text").textContent = signedOut ? "not signed in" : "Telegram offline";
+    $("conn-text").textContent = "Telegram offline";
     if (status.telegram_error) toast(status.telegram_error);
   }
   if (status.persona_configured === false) {
@@ -1987,16 +1983,35 @@ function applyStatus(status) {
 
 /* -------------------------------------------------------------- sign-in */
 
+// The "Add account" dialog. The server holds one sign-in in progress at a
+// time; opening the dialog picks it up at whatever step it is on.
+async function openAddAccount() {
+  $("session-menu").classList.remove("open");
+  try { applyAuth(await api("GET", "/api/auth")); }
+  catch (err) { toast(err.message); return; }
+  $("login").classList.add("open");
+}
+
+async function closeAddAccount() {
+  clearInterval(resendTimer);
+  $("login").classList.remove("open");
+  try { await api("POST", "/api/auth/cancel"); } catch (_) {}
+}
+
+$("l-close").addEventListener("click", closeAddAccount);
+
+async function onAccountAdded(sessionId) {
+  $("login").classList.remove("open");
+  for (const id of ["l-label", "l-phone", "l-code"]) $(id).value = "";
+  toast("Signed in. The server starts it within about 15 seconds. Replies wait for your approval " +
+        "until you turn on auto-send in Settings.", "info");
+  try { await fetchSessions(); } catch (_) {}
+  await selectSession(sessionId);
+}
+
 function applyAuth(auth) {
   if (!auth) return;
   state.auth = auth;
-  document.body.classList.toggle("signed-in", auth.logged_in);
-  document.body.classList.toggle("signed-out", !auth.logged_in);
-  $("login").classList.toggle("open", !auth.logged_in);
-  if (auth.logged_in) return;
-
-  $("conn-text").textContent = "not signed in";
-  $("conn-dot").classList.remove("on");
 
   const notice = $("l-notice");
   notice.hidden = !auth.notice;
@@ -2012,14 +2027,9 @@ function applyAuth(auth) {
   if (auth.step !== "code") clearInterval(resendTimer);
 
   if (auth.step === "credentials") {
-    const pre = auth.prefill || {};
-    if (pre.api_id && !$("l-api-id").value) $("l-api-id").value = pre.api_id;
-    $("l-api-hash").placeholder = pre.api_hash_saved
-      ? "saved — leave blank to keep it" : "32-character hex string";
-    $("l-api-hash").required = !pre.api_hash_saved;
-    $("l-deepseek").placeholder = pre.deepseek_saved
-      ? "saved — leave blank to keep it" : "sk-…";
-    $("l-deepseek").required = !pre.deepseek_saved;
+    $("l-api-hash").required = true;
+    // Blank is accepted when re-signing-in a number that already has a key.
+    $("l-deepseek").placeholder = "sk-…";
     setTimeout(() => ($("l-api-id").value ? $("l-phone") : $("l-api-id")).focus(), 0);
   } else if (auth.step === "code") {
     const where = $("l-delivery");
@@ -2045,6 +2055,8 @@ async function authStep(form, path, body) {
     applyAuth(await api("POST", path, body));
     return true;
   } catch (err) {
+    // Some failures (an expired code) send the flow back to the start.
+    try { applyAuth(await api("GET", "/api/auth")); } catch (_) {}
     const notice = $("l-notice");
     notice.hidden = false;
     notice.className = "notice";
@@ -2063,6 +2075,7 @@ $("l-credentials").addEventListener("submit", async (ev) => {
     api_hash: $("l-api-hash").value.trim(),
     phone: $("l-phone").value.trim(),
     deepseek_api_key: $("l-deepseek").value.trim(),
+    label: $("l-label").value.trim(),
   });
   if (ok) {
     $("l-api-hash").value = "";
@@ -2074,7 +2087,7 @@ $("l-credentials").addEventListener("submit", async (ev) => {
 $("l-code-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const ok = await authStep($("l-code-form"), "/api/auth/code", { code: $("l-code").value.trim() });
-  if (ok && state.auth && state.auth.logged_in) onSignedIn();
+  if (ok && state.auth.step === "done") onAccountAdded(state.auth.session_id);
 });
 
 $("l-password-form").addEventListener("submit", async (ev) => {
@@ -2082,7 +2095,7 @@ $("l-password-form").addEventListener("submit", async (ev) => {
   const ok = await authStep($("l-password-form"), "/api/auth/password",
                             { password: $("l-password").value });
   $("l-password").value = "";
-  if (ok && state.auth && state.auth.logged_in) onSignedIn();
+  if (ok && state.auth.step === "done") onAccountAdded(state.auth.session_id);
 });
 
 // Telegram names the one channel a resend may use, and how long it must be
@@ -2138,14 +2151,6 @@ for (const id of ["l-restart", "l-restart-2"]) {
   });
 }
 
-async function onSignedIn() {
-  toast("Signed in. Connecting to Telegram…", "info");
-  try {
-    state.conversations = await api("GET", "/api/conversations");
-    renderSidebar();
-  } catch (_) {}
-}
-
 $("logout").addEventListener("click", async () => {
   if (!confirm("Sign out of the admin panel?")) return;
   teardownSocket();
@@ -2179,8 +2184,7 @@ function renderSessionSwitcher() {
   const menu = $("session-menu");
   menu.textContent = "";
   if (!state.sessions.length) {
-    menu.appendChild(el("div", "s-empty", "No sessions found."));
-    return;
+    menu.appendChild(el("div", "s-empty", "No accounts yet."));
   }
   for (const s of state.sessions) {
     const row = el("div", "s-row" + (s.session_id === state.sessionId ? " active" : ""));
@@ -2192,6 +2196,10 @@ function renderSessionSwitcher() {
     });
     menu.appendChild(row);
   }
+  const add = el("div", "s-row s-add");
+  add.appendChild(el("span", "s-name", "+ Add account"));
+  add.addEventListener("click", openAddAccount);
+  menu.appendChild(add);
 }
 
 $("session-btn").addEventListener("click", (ev) => {
@@ -2294,7 +2302,7 @@ async function afterAuth(sessions) {
     await selectSession(wanted.session_id);
   } else {
     renderSessionSwitcher();
-    toast("No sessions configured yet.", "info");
+    await openAddAccount();
   }
   // Keeps the picker's dots current (running/connected can change from
   // outside this tab) without needing its own websocket.

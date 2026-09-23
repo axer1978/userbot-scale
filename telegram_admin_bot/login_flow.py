@@ -19,6 +19,7 @@ import asyncpg
 from telethon import TelegramClient, errors
 from telethon.sessions import StringSession
 
+import device_profiles
 from database import SessionRegistry
 
 log = logging.getLogger("login")
@@ -170,7 +171,20 @@ class LoginFlow:
         if not phone.startswith("+"):
             phone = "+" + phone
 
-        client = TelegramClient(StringSession(), api_id, api_hash)
+        # Sign in as the same device the runtime will later present with this
+        # auth key (session_runtime._resolve_identity falls back to the same
+        # deterministic derive()), not Telethon's default "PC 64bit".
+        identity = device_profiles.derive(session_id)
+        client = TelegramClient(
+            StringSession(),
+            api_id,
+            api_hash,
+            device_model=identity["device_model"],
+            system_version=identity["system_version"],
+            app_version=identity["app_version"],
+            lang_code=identity["lang_code"],
+            system_lang_code=identity["system_lang_code"],
+        )
         try:
             await client.connect()
             sent = await client.send_code_request(phone)

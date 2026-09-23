@@ -70,6 +70,7 @@ from database import (
     Database,
     SessionRegistry,
 )
+from login_flow import LoginError, LoginFlow
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -217,6 +218,149 @@ async def api_sessions() -> list[dict[str, Any]]:
             } if live else None,
         })
     return out
+
+
+# ---------------------------------------------------------------------------
+# Adding a Telegram account — login_flow.LoginFlow behind the panel's
+# sign-in screen. One flow per panel process (one operator). A completed
+# login is saved, given its DeepSeek key and marked active; manager.py's
+# workers pick up active, unleased sessions on their own, so nothing here
+# starts a runtime.
+# ---------------------------------------------------------------------------
+
+
+class AuthStartBody(BaseModel):
+    api_id: str = ""
+    api_hash: str = ""
+    phone: str = ""
+    deepseek_api_key: str = ""
+    label: str = ""
+
+
+class AuthCodeBody(BaseModel):
+    code: str = ""
+
+
+class AuthPasswordBody(BaseModel):
+    password: str = ""
+
+
+login_flow: Optional[LoginFlow] = None
+# Held until the login completes, so an abandoned sign-in never stores a key.
+_pending_deepseek_key = ""
+
+
+def session_id_for_phone(phone: str) -> str:
+    """One row per phone number: signing the same number in again updates
+    that session instead of creating a second one for the same account."""
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    if not digits:
+        raise HTTPException(status_code=400, detail="Phone number is required.")
+    return f"tg{digits}"
+
+
+def auth_state(signed_in: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    state = login_flow.state()
+    if signed_in is not None:
+        state["step"] = "done"
+        state["session_id"] = signed_in["session_id"]
+    return state
+
+
+async def finish_login(row: dict[str, Any], me: Any) -> dict[str, Any]:
+    global _pending_deepseek_key
+    session_id = row["session_id"]
+    if _pending_deepseek_key:
+        await registry.set_deepseek_key(session_id, _pending_deepseek_key)
+    _pending_deepseek_key = ""
+    await registry.set_active(session_id, True)
+    log.info(
+        "[%s] Signed in as user %s; marked active for the manager to pick up.",
+        session_id, getattr(me, "id", "?"),
+    )
+    return auth_state(signed_in=row)
+
+
+@app.get("/api/auth", dependencies=[Depends(require_auth)])
+async def api_auth() -> dict[str, Any]:
+    return auth_state()
+
+
+@app.post("/api/auth/start", dependencies=[Depends(require_auth)])
+async def api_auth_start(body: AuthStartBody) -> dict[str, Any]:
+    global _pending_deepseek_key
+    api_id_raw = body.api_id.strip()
+    api_hash = body.api_hash.strip()
+    phone = body.phone.strip()
+    deepseek_key = body.deepseek_api_key.strip()
+
+    if not api_id_raw.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="API ID must be the number from my.telegram.org (7-8 digits).",
+        )
+    if not api_hash:
+        raise HTTPException(status_code=400, detail="API hash is required.")
+    session_id = session_id_for_phone(phone)
+
+    existing = await registry.get(session_id)
+    if existing is not None and _lease_is_live(existing):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{phone} is already signed in and running ({session_id}). "
+                   "Stop it before signing it in again.",
+        )
+    if not deepseek_key and not (existing and await registry.load_deepseek_key(session_id)):
+        raise HTTPException(
+            status_code=400,
+            detail="DeepSeek API key is required (from platform.deepseek.com).",
+        )
+
+    try:
+        await login_flow.start(
+            session_id, int(api_id_raw), api_hash, phone, label=body.label.strip() or phone,
+        )
+    except LoginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _pending_deepseek_key = deepseek_key
+    return auth_state()
+
+
+@app.post("/api/auth/code", dependencies=[Depends(require_auth)])
+async def api_auth_code(body: AuthCodeBody) -> dict[str, Any]:
+    try:
+        result = await login_flow.submit_code(body.code)
+    except LoginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:  # two-step verification password next
+        return auth_state()
+    return await finish_login(*result)
+
+
+@app.post("/api/auth/password", dependencies=[Depends(require_auth)])
+async def api_auth_password(body: AuthPasswordBody) -> dict[str, Any]:
+    try:
+        result = await login_flow.submit_password(body.password)
+    except LoginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await finish_login(*result)
+
+
+@app.post("/api/auth/resend", dependencies=[Depends(require_auth)])
+async def api_auth_resend() -> dict[str, Any]:
+    try:
+        await login_flow.resend()
+    except LoginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return auth_state()
+
+
+@app.post("/api/auth/cancel", dependencies=[Depends(require_auth)])
+async def api_auth_cancel() -> dict[str, Any]:
+    global _pending_deepseek_key
+    _pending_deepseek_key = ""
+    await login_flow.reset()
+    return auth_state()
 
 
 # ---------------------------------------------------------------------------
@@ -715,10 +859,11 @@ app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    global pool, registry, bus
+    global pool, registry, bus, login_flow
     pool = await pg.create_pool(DATABASE_URL)
     await pg.assert_version(pool, pg.latest_version())
     registry = SessionRegistry(pool)
+    login_flow = LoginFlow(pool)
     bus = await commands.CommandBus.connect(REDIS_URL)
 
     if HOST not in LOOPBACK:
@@ -737,6 +882,8 @@ async def on_startup() -> None:
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
+    if login_flow is not None:
+        await login_flow.reset()  # drop a half-finished sign-in's connection
     if bus is not None:
         await bus.close()
     if pool is not None:
