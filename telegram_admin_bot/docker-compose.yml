@@ -1,33 +1,162 @@
+x-app-image: &app-image
+  build: .
+  # Shared by panel/manager/migrate: same code, same deps, same secrets. Only
+  # `command` (and, for the panel, the published port) differs between them.
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+  env_file:
+    # Optional: DATABASE_URL / USERBOT_MASTER_KEY / ADMIN_PASSWORD etc. can
+    # live here instead of your shell environment. Never baked into the
+    # image, never committed — see the SECURITY-SENSITIVE env vars called out
+    # below.
+    - path: .env
+      required: false
+  environment:
+    DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
+    DATA_DIR: /app/data
+    # SECURITY-SENSITIVE: base64 32-byte key that crypto.py uses to encrypt
+    # session strings and other secrets at rest in Postgres. There is no
+    # default — crypto.py refuses to boot without one. Generate one with
+    # `python -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"`
+    # and supply it via .env or your orchestrator's secret store, never by
+    # editing this file.
+    USERBOT_MASTER_KEY: ${USERBOT_MASTER_KEY:?USERBOT_MASTER_KEY must be set — see comment above}
+  volumes:
+    # Per-worker session files and other DATA_DIR scratch state survive
+    # rebuilds. The database of record is Postgres, not this volume.
+    - ./data:/app/data
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
-  assistant:
-    build: .
-    container_name: telegram-assistant
+  # Shared state store for the whole fleet: every panel/manager/worker talks
+  # to this one Postgres instead of each account having its own SQLite file.
+  postgres:
+    image: postgres:16
+    container_name: userbot-postgres
     restart: unless-stopped
-
-    # Optional: pre-filled credentials. Without it, sign in from the panel
-    # (through the SSH tunnel) and they are saved to ./data/.env instead.
-    # Never baked into the image, never committed.
-    env_file:
-      - path: .env
-        required: false
-
     environment:
-      DATA_DIR: /app/data
-
+      # SECURITY-SENSITIVE: these three defaults are fine for a laptop, not
+      # for production. Override POSTGRES_PASSWORD (and ideally the user/db
+      # names too) via .env or your orchestrator's secret store before
+      # deploying anywhere reachable by anyone but you.
+      POSTGRES_DB: ${POSTGRES_DB:-userbot}
+      POSTGRES_USER: ${POSTGRES_USER:-userbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme-in-prod}
     volumes:
-      # assistant.db and config.json survive rebuilds.
-      - ./data:/app/data
+      - pgdata:/var/lib/postgresql/data
+    # Postgres accepts TCP connections before it has finished recovery/init
+    # on a fresh volume, which is exactly when a naive `depends_on` (without
+    # a condition) would let migrate/panel/manager race it and fail their
+    # first connection. pg_isready blocks until it's actually ready to serve.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-userbot} -d ${POSTGRES_DB:-userbot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not published to the host at all: nothing outside this compose network
+    # needs to reach Postgres directly, and every port opened is one more
+    # thing to secure. Use `docker compose exec postgres psql ...` to poke
+    # at it manually.
 
-    # Note the 127.0.0.1 prefix. Without it Docker publishes the panel on every
-    # interface, and the panel has no login. Reach it from your laptop with an
-    # SSH tunnel:
+  # Command bus + live-event fan-out between the panel (which holds no live
+  # Telegram connections at all) and whichever manager worker actually holds
+  # a given session's lease — see commands.py. Holds no data that outlives a
+  # single command's round trip or a websocket's lifetime; Postgres remains
+  # the only thing anything here is actually persisted to.
+  redis:
+    image: redis:7-alpine
+    container_name: userbot-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Not published to the host, same reasoning as postgres above.
+
+  # One-shot: applies pending migrations (pg.apply_migrations) and exits.
+  # Per pg.py's own docstring, only this step (and the test harness) is
+  # supposed to call apply_migrations — panel.py and manager.py both call
+  # assert_version and refuse to boot on a schema mismatch instead of
+  # migrating themselves, so a half-upgraded fleet can never run two schema
+  # versions at once. Splitting this into its own service (rather than
+  # having manager.py migrate on startup) means restarting/scaling the
+  # manager never re-triggers a migration race, and the panel doesn't need
+  # migration permissions at all.
+  migrate:
+    <<: *app-image
+    container_name: userbot-migrate
+    command: ["python", "migrate_entrypoint.py"]
+    # Overrides the shared depends_on: migrate only needs Postgres to be up,
+    # not itself (that would be circular) or a healthcheck (it has none —
+    # it's not a long-running service).
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # The unified admin panel: one process, one login, manages every Telegram
+  # account in the fleet instead of one panel per account. Holds no live
+  # Telegram connections itself — it reads/writes Postgres and this
+  # session's local files directly, and reaches a session's actual live
+  # client (held by whichever manager worker leased it) over the redis
+  # command bus. See panel.py's module docstring for why it's built this
+  # way instead of running its own SessionRuntimes.
+  panel:
+    <<: *app-image
+    container_name: userbot-panel
+    command: ["python", "panel.py"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /app/data
+      USERBOT_MASTER_KEY: ${USERBOT_MASTER_KEY:?USERBOT_MASTER_KEY must be set — see comment above}
+      # SECURITY-SENSITIVE: no default on purpose. panel.py requires this
+      # and there is no "safe" placeholder — set a real password via .env or
+      # your orchestrator's secret store.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set — the panel refuses to boot without it}
+    # Note the 127.0.0.1 prefix. Without it Docker publishes the panel on
+    # every interface, and the panel is the one service in this file meant
+    # for a human to reach. Get to it from your laptop with an SSH tunnel:
     #     ssh -N -L 8787:127.0.0.1:8787 you@your-server
     # then open http://127.0.0.1:8787 on the laptop as usual.
     ports:
       - "127.0.0.1:8787:8787"
 
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+  # The fleet manager: leases sessions from Postgres and runs a
+  # SessionRuntime worker per leased session, WORKER_COUNT/SESSIONS_PER_WORKER
+  # at a time. Kept as its own service (not folded into the panel process)
+  # because it has a completely different failure/scaling story — it holds
+  # live Telegram connections and you may eventually want more than one
+  # replica of it, while the panel is a single admin UI that should stay a
+  # singleton.
+  manager:
+    <<: *app-image
+    container_name: userbot-manager
+    command: ["python", "manager.py"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /app/data
+      USERBOT_MASTER_KEY: ${USERBOT_MASTER_KEY:?USERBOT_MASTER_KEY must be set — see comment above}
+      # How many SessionRuntime workers this manager replica runs, and how
+      # many leased sessions each worker handles. Defaults match the fleet
+      # plan's decided ratio (2 workers x 25 sessions); tune to the box's
+      # CPU/RAM if that changes.
+      WORKER_COUNT: ${WORKER_COUNT:-2}
+      SESSIONS_PER_WORKER: ${SESSIONS_PER_WORKER:-25}
+
+volumes:
+  # Postgres's data directory. Named (not bind-mounted) so its ownership/
+  # permissions are managed by Docker instead of the host filesystem.
+  pgdata:
