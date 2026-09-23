@@ -7,15 +7,10 @@ test_leasing.py, ...) request the `pg_pool` fixture, which spins up a
 throwaway schema per test against `PG_TEST_DSN` and is skipped — loudly, via
 `pytest.skip`, not silently — when that env var isn't set.
 
-`main.py` (and therefore the `app` fixture below, and every test that
-requests it — test_safety.py / test_concurrency.py / test_burst.py /
-test_ai_responder.py / test_bookings.py / test_context_link.py /
-test_media.py) is mid-rewrite: it still expects the old synchronous,
-file-per-instance `Database`/`config_store` API and will only work again
-once main.py's logic is ported into session_runtime.py (Task 6) and this
-fixture is rebuilt around a `SessionRuntime`, per the design in the fleet
-rewrite. Until then those tests are expected to fail at fixture setup, not
-because of a bug introduced here.
+Task 6 (session_runtime.py) has landed, so the `app` fixture below builds a
+real `SessionRuntime` instead of monkeypatching `main`'s old module-level
+globals — `main.py` itself stays untouched and superseded, per design
+decision D9; it is not patched back into working order.
 """
 
 from __future__ import annotations
@@ -37,6 +32,7 @@ import config_store  # noqa: E402
 import crypto  # noqa: E402
 import pg as pg_module  # noqa: E402
 from database import Database  # noqa: E402
+from session_runtime import SessionRuntime  # noqa: E402
 
 PG_TEST_DSN = os.environ.get("PG_TEST_DSN")
 TEST_MASTER_KEY = "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI="  # base64(32 bytes), fixed, test-only
@@ -113,35 +109,17 @@ async def db(pg_pool):
 
 
 @pytest_asyncio.fixture
-async def app(monkeypatch, db, tmp_path):
-    """`main` with its globals pointed at throwaway state.
+async def app(pg_pool, db, tmp_path):
+    """A `SessionRuntime` for session "test", built but never started.
 
-    BROKEN until Task 6 (session_runtime.py) lands: main.py still builds its
-    own `Database(DB_PATH)` / `config_store.load()` at import time using the
-    old file-based signatures, which no longer exist. Left in place,
-    unmodified, so the diff for this rewrite stays visible; do not patch
-    main.py's globals here to paper over it — that is exactly the kind of
-    shim the rewrite is meant to remove (see design decision D9).
+    Config-only tests (settings routes, halt_everything, global pause) only
+    touch `runtime.config` / `save_config()`, neither of which needs a
+    lease, Redis, or a Telegram connection — `start()` would need all
+    three and this session has none of them. Skipping `start()` means
+    there is nothing to `stop()` in teardown either.
     """
-    import main
-
-    hub = FakeHub()
-    monkeypatch.setattr(main, "db", db)
-    monkeypatch.setattr(main, "hub", hub)
-    monkeypatch.setattr(main, "config", config_store.normalize({}))
-    # Never write the real config.json from a test.
-    monkeypatch.setattr(
-        main.config_store, "save", lambda cfg, path=None: config_store.normalize(cfg)
+    runtime = SessionRuntime(
+        pg_pool, db.session_id, data_dir=tmp_path, redis_url="redis://unused"
     )
-    # Presence and draft state are module-level; start every test from clean.
-    monkeypatch.setattr(main, "active_chats", set())
-    monkeypatch.setattr(main, "sending_chats", set())
-    monkeypatch.setattr(main, "draft_tasks", {})
-    monkeypatch.setattr(main, "in_flight_sends", {})
-    monkeypatch.setattr(main, "presence_online", False)
-    monkeypatch.setattr(main, "offline_timer", None)
-    monkeypatch.setattr(main, "_ai_gate", None)
-    monkeypatch.setattr(main, "_ai_gate_size", 0)
-
-    main.hub = hub  # handle_send_failure reaches for it by attribute
-    yield main
+    runtime.hub = FakeHub()  # handle_send_failure and friends reach for it by attribute
+    yield runtime
