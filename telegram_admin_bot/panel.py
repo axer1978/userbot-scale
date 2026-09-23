@@ -500,7 +500,12 @@ async def api_get_config(session_id: str) -> dict[str, Any]:
 
 @app.put("/api/sessions/{session_id}/config", dependencies=[Depends(require_auth)])
 async def api_put_config(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    before = (await config_store.load(pool, session_id)).get("booking") or {}
+    stored = await config_store.load(pool, session_id)
+    before = stored.get("booking") or {}
+    # The device identity is assigned by the runtime, not edited here, and the
+    # Settings form doesn't send it; without this a save would blank it.
+    if "identity" not in payload:
+        payload = {**payload, "identity": stored["identity"]}
     try:
         new_config = await config_store.save(pool, session_id, payload)
     except (ValueError, OSError) as exc:
