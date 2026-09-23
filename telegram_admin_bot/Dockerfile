@@ -14,7 +14,9 @@ COPY . .
 
 # The panel has a login (ADMIN_PASSWORD), but no TLS of its own. Binding
 # 0.0.0.0 here is safe ONLY because docker-compose.yml publishes the panel's
-# port to the host's loopback, never to a public interface.
+# port to the host's loopback, never to a public interface. Public HTTPS,
+# when wanted, goes through the optional `caddy` service instead, which
+# reaches the panel over the compose network.
 ENV ADMIN_HOST=0.0.0.0 \
     PYTHONUNBUFFERED=1
 

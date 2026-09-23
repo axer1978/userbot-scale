@@ -129,9 +129,64 @@ services:
     # every interface, and the panel is the one service in this file meant
     # for a human to reach. Get to it from your laptop with an SSH tunnel:
     #     ssh -N -L 8787:127.0.0.1:8787 you@your-server
-    # then open http://127.0.0.1:8787 on the laptop as usual.
+    # then open http://127.0.0.1:8787 on the laptop as usual. For a public
+    # HTTPS address instead (or as well), see the optional `caddy` service
+    # below — it reaches the panel over the compose network, so this
+    # loopback-only publish stays exactly as it is either way.
     ports:
       - "127.0.0.1:8787:8787"
+
+  # OPTIONAL public HTTPS front door for the panel. Only started with
+  #     docker compose --profile public up -d
+  # — a plain `docker compose up -d` ignores it and the panel stays
+  # SSH-tunnel-only. Caddy gets a Let's Encrypt certificate for PANEL_DOMAIN
+  # on its own (which is why it needs ports 80 and 443 open to the internet)
+  # and reverse-proxies to the panel; see ./Caddyfile. The panel itself
+  # still has only the shared ADMIN_PASSWORD, now rate-limited per client
+  # IP (panel.py), so pick a long one before turning this on.
+  caddy:
+    image: caddy:2-alpine
+    container_name: userbot-caddy
+    profiles: ["public"]
+    restart: unless-stopped
+    depends_on:
+      - panel
+    environment:
+      # A real domain whose A record points at this server, or a free
+      # sslip.io name derived from the server's IP (e.g.
+      # 203-0-113-7.sslip.io). `:-` rather than `:?` on purpose: Compose
+      # interpolates the whole file even for services whose profile isn't
+      # enabled, so `:?` here would break plain `docker compose up` for
+      # everyone not using this profile. The `command` below does the
+      # "must be set" check instead, only when Caddy actually starts.
+      PANEL_DOMAIN: ${PANEL_DOMAIN:-}
+    # Same as the image's default command, behind a guard: with
+    # PANEL_DOMAIN empty the Caddyfile's site address would silently
+    # collapse into its global-options block and fail with a confusing
+    # parse error. `$$` is Compose's escape for a literal `$`.
+    command:
+      - sh
+      - -c
+      - >-
+        if [ -z "$$PANEL_DOMAIN" ]; then
+        echo "PANEL_DOMAIN must be set (in .env) for the public profile — see README" >&2;
+        exit 1; fi;
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    ports:
+      - "80:80"      # ACME HTTP-01 challenge + redirect to HTTPS
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account keys. Keep this volume: losing it
+      # means re-issuing certificates, and Let's Encrypt rate-limits that.
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # The fleet manager: leases sessions from Postgres and runs a
   # SessionRuntime worker per leased session, WORKER_COUNT/SESSIONS_PER_WORKER
@@ -160,3 +215,7 @@ volumes:
   # Postgres's data directory. Named (not bind-mounted) so its ownership/
   # permissions are managed by Docker instead of the host filesystem.
   pgdata:
+  # Caddy's certificates/ACME state and its autosaved config (public
+  # profile only; unused otherwise).
+  caddy_data:
+  caddy_config:

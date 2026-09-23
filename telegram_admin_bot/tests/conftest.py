@@ -156,7 +156,8 @@ async def panel_client(pg_pool, tmp_path, monkeypatch):
     monkeypatch.setattr(panel, "login_flow", LoginFlow(pg_pool))
     monkeypatch.setattr(panel, "bus", bus)
     monkeypatch.setattr(panel, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(panel, "_valid_tokens", set())
+    monkeypatch.setattr(panel, "_valid_tokens", {})
+    monkeypatch.setattr(panel, "_login_failures", {})
     monkeypatch.setattr(panel, "_pending_deepseek_key", "")
 
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=panel.app), base_url="http://test")

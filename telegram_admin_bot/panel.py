@@ -37,9 +37,12 @@ running nothing, so depending on start order the panel could show every
 session as unreachable. Making the panel own zero runtimes removes the
 conflict at the root instead of arbitrating it.
 
-Auth (item 14): unchanged from before — a single shared admin password
-(`ADMIN_PASSWORD` env var), checked via a signed-random token in an
-httponly cookie. Deliberately simple for one operator.
+Auth (item 14): a single shared admin password (`ADMIN_PASSWORD` env
+var), checked via a signed-random token in an httponly cookie.
+Deliberately simple for one operator. Because the panel can now be put on
+the public internet (the optional `caddy` service in docker-compose.yml),
+failed logins are rate-limited per client IP and tokens expire after
+`SESSION_TTL_SECONDS` — see the Auth section below.
 """
 
 from __future__ import annotations
@@ -47,6 +50,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -94,6 +98,15 @@ LIVE_ACTION_TIMEOUT = 60.0
 QUICK_ACTION_TIMEOUT = 20.0
 BEST_EFFORT_TIMEOUT = 5.0
 
+# Login hardening. At most LOGIN_MAX_FAILURES wrong passwords per client IP
+# in any LOGIN_FAILURE_WINDOW_SECONDS (a sliding window); after that the IP
+# gets a 429 — even with the right password — until its oldest failure ages
+# out. A successful login clears the IP's count. A login token is good for
+# SESSION_TTL_SECONDS, then the operator logs in again.
+LOGIN_MAX_FAILURES = 5
+LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
+SESSION_TTL_SECONDS = 12 * 60 * 60
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-7s %(name)s: %(message)s",
@@ -107,7 +120,10 @@ app = FastAPI(title="Telegram AI Assistant — Fleet Admin")
 pool = None  # set in startup
 registry: Optional[SessionRegistry] = None
 bus: Optional[commands.CommandBus] = None
-_valid_tokens: set[str] = set()
+# Both in memory on purpose: the panel is a single process, and a restart
+# logging everyone out / forgetting failed attempts is harmless.
+_valid_tokens: dict[str, float] = {}  # token -> expiry, on the _now() clock
+_login_failures: dict[str, list[float]] = {}  # client IP -> times of recent failed logins
 
 
 def db_for(session_id: str) -> Database:
@@ -155,17 +171,78 @@ class LoginBody(BaseModel):
     password: str = ""
 
 
+def _now() -> float:
+    """The clock tokens and failed-login windows are measured on. Monotonic,
+    so a wall-clock change can't extend or cut short either; a function so
+    tests can move it without touching `time.monotonic` itself (which the
+    event loop also uses)."""
+    return time.monotonic()
+
+
+def _token_is_valid(token: Optional[str]) -> bool:
+    if not token:
+        return False
+    expires = _valid_tokens.get(token)
+    if expires is None:
+        return False
+    if expires <= _now():
+        _valid_tokens.pop(token, None)
+        return False
+    return True
+
+
+def _client_ip(request: Request) -> str:
+    """The real client's IP. Behind Caddy that comes from X-Forwarded-For
+    via uvicorn's proxy_headers (see the uvicorn.run call at the bottom);
+    `request.client` would otherwise be Caddy's container address, and
+    every visitor would share one rate-limit bucket."""
+    return request.client.host if request.client else "unknown"
+
+
+def _recent_failures(ip: str, now: float) -> list[float]:
+    """This IP's failed logins still inside the window, oldest first.
+    Forgets the IP entirely once none are left."""
+    cutoff = now - LOGIN_FAILURE_WINDOW_SECONDS
+    recent = [t for t in _login_failures.get(ip, ()) if t > cutoff]
+    if recent:
+        _login_failures[ip] = recent
+    else:
+        _login_failures.pop(ip, None)
+    return recent
+
+
 def require_auth(admin_token: Optional[str] = Cookie(default=None)) -> None:
-    if not admin_token or admin_token not in _valid_tokens:
+    if not _token_is_valid(admin_token):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
 
 @app.post("/api/login")
-async def api_login(body: LoginBody) -> JSONResponse:
+async def api_login(body: LoginBody, request: Request) -> JSONResponse:
+    ip = _client_ip(request)
+    now = _now()
+    failures = _recent_failures(ip, now)
+    if len(failures) >= LOGIN_MAX_FAILURES:
+        retry_after = int(failures[0] + LOGIN_FAILURE_WINDOW_SECONDS - now) + 1
+        log.warning("Login from %s refused: too many recent wrong passwords.", ip)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many wrong passwords from your address. "
+                   f"Try again in {(retry_after + 59) // 60} minute(s).",
+            headers={"Retry-After": str(retry_after)},
+        )
     if not secrets.compare_digest(body.password, ADMIN_PASSWORD):
+        failures.append(now)
+        _login_failures[ip] = failures
+        log.warning("Wrong admin password from %s (%d/%d).", ip, len(failures), LOGIN_MAX_FAILURES)
         raise HTTPException(status_code=401, detail="Wrong password")
+    _login_failures.pop(ip, None)
+
+    # Drop tokens that expired without ever being presented again, so the
+    # dict doesn't grow by one entry per login forever.
+    for stale in [t for t, expires in _valid_tokens.items() if expires <= now]:
+        del _valid_tokens[stale]
     token = secrets.token_urlsafe(32)
-    _valid_tokens.add(token)
+    _valid_tokens[token] = now + SESSION_TTL_SECONDS
     response = JSONResponse({"ok": True})
     response.set_cookie(
         "admin_token", token, httponly=True, samesite="lax",
@@ -177,7 +254,7 @@ async def api_login(body: LoginBody) -> JSONResponse:
 @app.post("/api/logout")
 async def api_logout(admin_token: Optional[str] = Cookie(default=None)) -> JSONResponse:
     if admin_token:
-        _valid_tokens.discard(admin_token)
+        _valid_tokens.pop(admin_token, None)
     response = JSONResponse({"ok": True})
     response.delete_cookie("admin_token")
     return response
@@ -793,8 +870,7 @@ async def _dispatch_live(
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
-    token = ws.cookies.get("admin_token")
-    if not token or token not in _valid_tokens:
+    if not _token_is_valid(ws.cookies.get("admin_token")):
         await ws.close(code=4401)
         return
 
@@ -893,4 +969,16 @@ async def on_shutdown() -> None:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=HOST, port=PORT, log_level="warning", access_log=False)
+    # proxy_headers + forwarded_allow_ips="*": take the client IP (and
+    # scheme) from X-Forwarded-For/-Proto, which the optional Caddy front
+    # door sets to the real visitor's address — the login rate limit keys
+    # on it. Trusting those headers from anyone is acceptable only because
+    # nothing untrusted can reach this port: docker-compose.yml publishes it
+    # on the host's 127.0.0.1 alone, so the only other senders are the
+    # compose network (Caddy, which overwrites any client-supplied
+    # X-Forwarded-For) and someone already on the server. If you ever
+    # publish this port more widely, narrow forwarded_allow_ips first.
+    uvicorn.run(
+        app, host=HOST, port=PORT, log_level="warning", access_log=False,
+        proxy_headers=True, forwarded_allow_ips="*",
+    )

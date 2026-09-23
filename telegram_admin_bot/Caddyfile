@@ -1,0 +1,31 @@
+# Public HTTPS front door for the admin panel — used only by the `caddy`
+# service in docker-compose.yml, which only runs with
+#     docker compose --profile public up -d
+#
+# PANEL_DOMAIN (from .env) is the site address. Because it's a real hostname,
+# Caddy automatically gets and renews a Let's Encrypt certificate for it and
+# redirects plain http:// to https:// — no extra config needed. That needs
+# ports 80 and 443 reachable from the internet and PANEL_DOMAIN resolving to
+# this server (a real domain's A record, or an <ip-with-dashes>.sslip.io name).
+#
+# reverse_proxy sets X-Forwarded-For to the real client IP (ignoring any
+# X-Forwarded-For the client sent, since no trusted_proxies are configured);
+# panel.py's login rate limiting relies on that. Websockets (/ws/*) are
+# proxied as-is by default.
+
+{$PANEL_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		# Don't advertise what's serving the panel (Caddy's own, or
+		# uvicorn's passed through from upstream).
+		-Server
+		-Via
+	}
+
+	reverse_proxy panel:8787
+}
