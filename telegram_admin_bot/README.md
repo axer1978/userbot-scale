@@ -149,6 +149,29 @@ either way, so the SSH tunnel keeps working. Everyone coming through the
 tunnel shares one rate-limit bucket, so 5 typos there lock the tunnel out
 for up to 15 minutes too (restarting the panel clears it).
 
+### Using nginx instead of Caddy
+
+If you'd rather run nginx on the host, use
+[`deploy/nginx-panel.conf`](deploy/nginx-panel.conf) and **don't** enable the
+`public` profile (both need ports 80 and 443). Open ports 80 and 443 as above,
+then, with `panel.example.com` replaced by your hostname:
+
+```bash
+sudo apt install -y nginx certbot python3-certbot-nginx
+sudo cp deploy/nginx-panel.conf /etc/nginx/sites-available/userbot-panel
+sudo sed -i 's/panel.example.com/YOUR-HOSTNAME/' /etc/nginx/sites-available/userbot-panel
+sudo ln -s /etc/nginx/sites-available/userbot-panel /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d YOUR-HOSTNAME --redirect
+```
+
+certbot adds HTTPS and the http→https redirect to that file and renews the
+certificate automatically. If you edit the config, keep
+`proxy_set_header X-Forwarded-For $remote_addr;` as it is: the panel treats
+the first address in that header as the client, so nginx's usual
+`$proxy_add_x_forwarded_for` (which appends to whatever the visitor sent)
+would let anyone fake their IP and dodge the login rate limit.
+
 ## Add a Telegram account
 
 Open the account picker at the top left and choose **+ Add account**. With no
