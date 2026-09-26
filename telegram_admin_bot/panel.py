@@ -66,6 +66,7 @@ import config_store
 import context_link
 import media
 import pg
+import totp
 from database import (
     OUT_CANCELLED,
     OUT_SENT,
@@ -82,6 +83,10 @@ DATA_DIR = Path(os.getenv("DATA_DIR") or BASE_DIR / "data")
 DATABASE_URL = os.environ["DATABASE_URL"]
 REDIS_URL = os.environ["REDIS_URL"]
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
+# Optional second factor: a base32 TOTP secret (generate with `python totp.py`
+# on the server). When set, logging in takes the password AND the current
+# 6-digit code from an authenticator app.
+ADMIN_TOTP_SECRET = "".join((os.getenv("ADMIN_TOTP_SECRET") or "").split())
 HOST = (os.getenv("ADMIN_HOST") or "127.0.0.1").strip()
 PORT = int(os.getenv("ADMIN_PORT") or 8787)
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
@@ -124,6 +129,9 @@ bus: Optional[commands.CommandBus] = None
 # logging everyone out / forgetting failed attempts is harmless.
 _valid_tokens: dict[str, float] = {}  # token -> expiry, on the _now() clock
 _login_failures: dict[str, list[float]] = {}  # client IP -> times of recent failed logins
+# Highest TOTP time step already used to log in: a code works once, so one
+# seen over someone's shoulder (or replayed) is useless even within its 30 s.
+_last_totp_step = -1
 
 
 def db_for(session_id: str) -> Database:
@@ -169,6 +177,7 @@ async def publish(session_id: str, payload: dict[str, Any]) -> None:
 
 class LoginBody(BaseModel):
     password: str = ""
+    code: str = ""  # authenticator code; only checked when ADMIN_TOTP_SECRET is set
 
 
 def _now() -> float:
@@ -216,6 +225,28 @@ def require_auth(admin_token: Optional[str] = Cookie(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
 
+def _credentials_ok(body: LoginBody) -> bool:
+    """Password (and, when enabled, a fresh authenticator code). Both are
+    always checked, so the response time doesn't say which one was wrong."""
+    global _last_totp_step
+    # Bytes, not str: compare_digest rejects non-ASCII str with a TypeError.
+    password_ok = secrets.compare_digest(body.password.encode(), ADMIN_PASSWORD.encode())
+    if not ADMIN_TOTP_SECRET:
+        return password_ok
+    step = totp.matching_counter(ADMIN_TOTP_SECRET, body.code)
+    code_ok = step is not None and step > _last_totp_step
+    if password_ok and code_ok:
+        _last_totp_step = step
+        return True
+    return False
+
+
+@app.get("/api/login-options")
+async def api_login_options() -> dict[str, Any]:
+    """Tells the sign-in screen whether to ask for an authenticator code."""
+    return {"totp": bool(ADMIN_TOTP_SECRET)}
+
+
 @app.post("/api/login")
 async def api_login(body: LoginBody, request: Request) -> JSONResponse:
     ip = _client_ip(request)
@@ -230,11 +261,14 @@ async def api_login(body: LoginBody, request: Request) -> JSONResponse:
                    f"Try again in {(retry_after + 59) // 60} minute(s).",
             headers={"Retry-After": str(retry_after)},
         )
-    if not secrets.compare_digest(body.password, ADMIN_PASSWORD):
+    if not _credentials_ok(body):
         failures.append(now)
         _login_failures[ip] = failures
-        log.warning("Wrong admin password from %s (%d/%d).", ip, len(failures), LOGIN_MAX_FAILURES)
-        raise HTTPException(status_code=401, detail="Wrong password")
+        log.warning("Failed admin login from %s (%d/%d).", ip, len(failures), LOGIN_MAX_FAILURES)
+        raise HTTPException(
+            status_code=401,
+            detail="Wrong password or code" if ADMIN_TOTP_SECRET else "Wrong password",
+        )
     _login_failures.pop(ip, None)
 
     # Drop tokens that expired without ever being presented again, so the
@@ -245,7 +279,9 @@ async def api_login(body: LoginBody, request: Request) -> JSONResponse:
     _valid_tokens[token] = now + SESSION_TTL_SECONDS
     response = JSONResponse({"ok": True})
     response.set_cookie(
-        "admin_token", token, httponly=True, samesite="lax",
+        # strict: the cookie never rides along on a request another site
+        # starts, not even a top-level link into the panel.
+        "admin_token", token, httponly=True, samesite="strict",
         secure=HOST not in LOOPBACK,
     )
     return response
@@ -941,6 +977,13 @@ app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 @app.on_event("startup")
 async def on_startup() -> None:
     global pool, registry, bus, login_flow
+    if ADMIN_TOTP_SECRET:
+        # Fail at boot, not at the first login attempt, if it can't work.
+        try:
+            totp.validate_secret(ADMIN_TOTP_SECRET)
+        except ValueError as exc:
+            raise RuntimeError(f"ADMIN_TOTP_SECRET is unusable: {exc}") from exc
+        log.info("Admin login requires an authenticator code (ADMIN_TOTP_SECRET is set).")
     pool = await pg.create_pool(DATABASE_URL)
     await pg.assert_version(pool, pg.latest_version())
     registry = SessionRegistry(pool)

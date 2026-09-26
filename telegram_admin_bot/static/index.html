@@ -319,6 +319,9 @@
     <form id="ag-form" autocomplete="off">
       <div class="field"><label for="ag-password">Password</label>
         <input id="ag-password" type="password" autocomplete="current-password" required></div>
+      <div class="field" id="ag-code-field" hidden><label for="ag-code">Authenticator code</label>
+        <input id="ag-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7"
+               placeholder="6 digits from your authenticator app"></div>
       <div class="sheet-actions">
         <button type="submit" class="btn primary">Sign in</button>
       </div>
@@ -2288,6 +2291,11 @@ function showGate(message) {
   else { notice.hidden = true; notice.textContent = ""; }
   $("admin-gate").classList.add("open");
   setTimeout(() => $("ag-password").focus(), 0);
+  // Only ask for an authenticator code when the server has 2FA turned on.
+  api("GET", "/api/login-options").then((opts) => {
+    $("ag-code-field").hidden = !opts.totp;
+    $("ag-code").required = !!opts.totp;
+  }).catch(() => {});
 }
 
 function hideGate() {
@@ -2316,10 +2324,12 @@ $("ag-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const button = $("ag-form").querySelector('button[type="submit"]');
   const password = $("ag-password").value;
+  const code = $("ag-code").value.trim();
   button.disabled = true;
   try {
-    await api("POST", "/api/login", { password });
+    await api("POST", "/api/login", { password, code });
     $("ag-password").value = "";
+    $("ag-code").value = "";
     hideGate();
     const sessions = await fetchSessions();
     await afterAuth(sessions);
