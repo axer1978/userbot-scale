@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-# tzdata so active hours honour the timezone in config.json
+# tzdata so quiet hours and bookings honour each client's timezone
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tzdata \
     && rm -rf /var/lib/apt/lists/*

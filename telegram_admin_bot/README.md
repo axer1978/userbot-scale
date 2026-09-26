@@ -272,113 +272,149 @@ Without this, every account on the server would report Telethon's
 `PC 64bit`. Locale and timezone offset default to Latvian (`lv`,
 Europe/Riga).
 
-## Settings that matter first
+## Clients, industries and settings
 
-Select the account in the picker and open **Settings**. Every account has its
-own settings. They are stored in Postgres and take effect immediately, with no
-restart.
+Every Telegram account belongs to a **client** (a tenant: one business), and
+every client belongs to an **industry**. A new account becomes a new client in
+the *General* industry. Open **Clients** in the top bar to see them all, or
+**Settings** to open the client of the account you are looking at. Changes are
+stored in Postgres, logged in the audit log, and reach a running account within
+seconds (at most five minutes if the reload message is missed).
 
-### Persona: fill it in before anything else
+How a client's bot behaves comes from three layers, lowest first:
 
-**Every persona field starts blank, and a blank persona produces generic
-replies.** Until at least one field is filled in, the account uses a minimal
-neutral system prompt and the top bar shows *"persona not configured"*.
+| Layer | Where | What it holds |
+|---|---|---|
+| Platform | the code's defaults, and **Clients → Platform rules** | Default values and hard limits for every setting; the platform rules at the top of every prompt |
+| Industry | **Clients → the industry folder** | A prompt template (one text per section) and default settings for every client in it |
+| Client | **Clients → the client** | Only what differs for this business: its own settings, and per prompt section *override* or *append* |
 
-| Field | What to put there |
-|---|---|
-| Purpose | What this account is for and what you want the assistant to do |
-| Tone & style | How it should sound |
-| Languages | e.g. "always reply in the language the person wrote in" |
-| Boundaries | Hard rules: what it must never say, promise, or do |
-| Sign-off behaviour | Whether and how to sign off |
+In a client's **Config** tab, greyed rows are inherited and highlighted rows are
+set for this client. **Override** sets a value here, **Inherit** removes it.
+Every value is checked when you save; nothing is silently clamped, and an
+error shows next to its field.
 
-### The rest
+### Prompt: fill it in before anything else
+
+**The business sections start empty, and an empty prompt produces generic
+replies.** Until a section says something, the top bar shows *"no business
+details in the prompt yet"*. Fill the industry template once (**Template**
+tab of the industry), then each client's own details (**Prompt** tab of the
+client): about the business, services and prices, opening hours and
+location, how booking works, frequent questions, tone, what not to do,
+sign-off, and examples of how you write.
+
+The **platform rules** always come first and are restated as taking
+precedence at the end; no industry or client text can change them. See the
+**Rendered prompt** tab for exactly what the model is given. Every save of any
+layer is a new version: the **Versions** tabs roll back, and a client can be
+pinned to one industry template version so industry edits don't reach it.
+
+**Ask AI** (on a client) turns a plain request ("don't answer between 10 pm
+and 8 am") into a proposed config change with a field-by-field diff. Nothing
+changes until you press **Apply**. It uses `DEEPSEEK_PLATFORM_KEY` from `.env`.
+
+### Settings that matter first
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Auto-send AI replies | **off** | Off: every draft waits in the panel for *Approve & Send*, *Edit then Send* or *Reject*. On: replies go out by themselves. |
-| Min / max delay | 20 / 90 s | Random wait before a reply is drafted, so replies don't look instant |
-| Active hours | **off**, 09:00–21:00 UTC | When on, drafting only happens inside the window (it may cross midnight), in the IANA timezone you set |
-| Log all messages | on | Store messages in the database. Turned off, messages still show live but no history is kept, so the AI also gets less context. |
-| Model / max tokens / temperature | `deepseek-chat` / 400 / 1.0 | DeepSeek request parameters |
-| Parallel replies | 4 | How many chats can be drafted at once for this account |
+| `auto_send` | **off** | Off: every draft waits in the panel for *Approve & Send*, *Edit then Send* or *Reject*. On: replies that pass the policy checks go out by themselves. |
+| `reply_delay` | 20–90 s, uniform | Wait before a reply is written. `lognormal` clusters most replies early with a few slow ones. |
+| `quiet_hours` | **off**, 21:00–09:00 | In the client's `timezone` (default Europe/Riga). A reply due inside the window waits until it ends; it is not dropped. |
+| `burst` | up to 4 messages, 0.6–2.2 s apart | A reply may go out as several short messages. |
+| `language_policy` | `mirror` | Or `fixed:lv` / `fixed:ru` / `fixed:en`. |
+| `daily_message_cap` | 150 | All messages the account sends per day, replies included. |
+| `safety.daily_peer_cap` | 30 | Distinct people written to per day. |
+| `price_floors` | none | Service → lowest price (EUR) a reply may quote. |
+| `allowed_link_domains`, `shareable_contacts` | none | Links, phone numbers and e-mail addresses a reply may contain. |
+| `banned_topics` | none | A reply mentioning one is held for approval. |
+| `api_spend_cap_eur` | 10 | Recorded now; enforced from phase 3. |
+| `ai.*` | `deepseek-chat`, 400 tokens, 1.0 | DeepSeek request parameters |
 
-**Account safety** protects the number itself. Telegram does not publish its
-thresholds, so the defaults are deliberately low:
+**Account safety** (`safety.*`) protects the number itself. Telegram does not
+publish its thresholds, so the defaults are deliberately low: halt on
+`PeerFloodError`, halt if Telegram asks for a wait longer than
+`max_flood_wait_seconds` (300 s), and never start a conversation with someone
+who is not a contact and has not written first.
 
-| Setting | Default | Meaning |
-|---|---|---|
-| Messages per day | 150 | All messages sent by this account per day, replies included |
-| People per day | 30 | Distinct people written to per day |
-| Max wait | 300 s | If Telegram asks for a longer pause (FloodWait), automation halts instead of waiting it out |
-| Stop everything if Telegram flags the account as spammy | on | Halt on `PeerFloodError` |
-| Only message people in contacts or who wrote first | on | Applies to messages the bot **starts** (outreach). The bot never opens a conversation with a stranger. Replies to people who wrote to you are not affected. |
+### Policy checks on every AI-written reply
+
+Before a reply goes out on its own, it is checked in code: links to domains not
+allowed, crypto wallet addresses or IBANs the business has not written itself,
+phone numbers or e-mail addresses not in `shareable_contacts`, prices below
+`price_floors`, `banned_topics`, and discounts, refunds or guarantees the
+business has not offered in its own prompt text. A reply that fails is kept as
+a draft with the reasons shown in the chat, and the hold is audited. Customers
+will try to talk the model out of its rules; these checks don't listen.
 
 ### Pausing and "Automation halted"
 
 - **Pause / Resume** on a conversation stops AI drafting for that chat, for when you take it over by hand. Any draft in progress is cancelled.
-- **Pause all** in the top bar pauses every chat on the selected account. The button then reads **Automation paused**. Click it again to resume.
-- **Automation halted** means the account paused itself. This happens when Telegram returned `PeerFloodError`, asked for a wait longer than *Max wait*, or rejected the session (banned or revoked). The reason appears as an error in the panel and in `docker compose logs manager` (`HALTING ALL AUTOMATION: ...`). Queued outreach is cancelled. **Resuming is manual on purpose:** find out why before you click *Automation paused* to resume. Sending straight through a flood warning is how numbers get banned.
+- **Pause all** in the top bar pauses every chat on the selected account. The button then reads **Automation paused**. Click it again to resume. Both are audited.
+- **Automation halted** means the account paused itself. This happens when Telegram returned `PeerFloodError`, asked for a wait longer than `max_flood_wait_seconds`, or rejected the session (banned or revoked). The reason appears as an error in the panel and in `docker compose logs manager` (`HALTING ALL AUTOMATION: ...`). Queued outreach is cancelled. **Resuming is manual on purpose:** find out why before you click *Automation paused* to resume. Sending straight through a flood warning is how numbers get banned.
 
 ## What it does with a message
 
 - It handles **private messages only**. Group and channel traffic is ignored. Messages from **bot accounts are included**, so conversations that run through a bot's interface are handled like any other DM.
 - Every message is stored in Postgres and pushed live to any open panel tab.
-- For each incoming text message it checks the global pause, the per-chat pause and the active hours, in that order. If any says stop, no draft is made.
-- Otherwise it waits the random delay, builds the last ~30 messages of the chat into the prompt under your persona, and asks DeepSeek for a reply. With auto-send off, the draft is saved as pending and appears in the panel. With auto-send on, it is sent.
+- For each incoming text message it checks the global pause and the per-chat pause. If either says stop, no draft is made.
+- Otherwise it waits the reply delay (and, if the reply would land in quiet hours, until they end), builds the last ~30 messages of the chat into the prompt under the client's rendered prompt, and asks DeepSeek for a reply. The reply is checked by the policy layer. With auto-send off, or if a check fails, it is saved as a draft for the panel. With auto-send on and all checks passed, it is sent.
+- Every message the account sends is recorded in the audit log with who caused it (the bot, or you from the panel) and why. AI-written messages also record the model and the prompt versions used (e.g. `b1/i1v3/c2`). Every DeepSeek call is metered per client.
 - **If a newer message arrives while a draft is still being prepared, that draft is cancelled and restarted**, so the reply always answers the latest state of the conversation. Sending a message yourself from the panel also cancels any draft in progress for that chat.
 - Messages you send from your phone or Telegram Desktop also appear in the panel, so the thread stays complete.
 - DeepSeek failures (network, timeout, 429, malformed response) are retried with backoff that honours `Retry-After`, then shown as a red error in the conversation. A bad key (401/403) fails at once. Telegram disconnects are reconnected automatically with backoff.
 
 ## Other features
 
-All of these are per account, under the buttons in the top bar.
+**Sounding human** (`human.*` and `presence.*`, all on by default). *Adaptive
+style* profiles how each person writes (length, emoji, capitalisation) from
+their own messages and tells the model to match it. It needs at least two of
+their messages. *Mark read* marks their message read after the delay. The
+*typing indicator* shows "typing…" for as long as the text would plausibly
+take: length ÷ 12 characters/second, capped at 25 s. Replies you send or
+approve by hand skip the typing wait. *Presence* keeps the account offline
+between conversations and online only around replying.
 
-**Sounding human** (Settings, all on by default). *Adaptive style* profiles
-how each person writes (length, emoji, capitalisation, language) from their
-own messages and tells the model to match it. It needs at least two of their
-messages. *Mark read* marks their message read after the delay. The *typing
-indicator* shows "typing…" for as long as the text would plausibly take:
-length ÷ 12 characters/second, capped at 25 s. Replies you send or approve by
-hand skip the typing wait. *Presence* keeps the account offline between
-conversations and online only around replying.
+**Outreach** (off for clients unless `outreach.enabled` is on) starts
+conversations with people in the account's Telegram contacts. You say what
+each message should achieve, and each person gets one written for them. The
+server re-checks that every recipient is a contact. Messages wait for approval
+by default and go out one at a time, 90–300 s apart, with at most 20 per day.
+Use it only for people who expect to hear from you: Telegram limits or bans
+accounts that send unsolicited DMs.
 
-**Outreach** starts conversations with people in the account's Telegram
-contacts. You say what each message should achieve, and each person gets one
-written for them. The server re-checks that every recipient is a contact.
-Messages wait for approval by default and go out one at a time, 90–300 s
-apart, with at most 20 per day. Someone who already has a queued message is
-skipped. *Cancel queued* and the global pause both stop it. Use it only for
-people who expect to hear from you: Telegram limits or bans accounts that send
-unsolicited DMs.
+**Linked-chat context** (`context_link.*`) is **off for clients**: it stores
+written summaries about people, which the platform does not keep.
 
-**Bookings** (Settings → Bookings, off by default). When a client settles on a
-day and time, a request goes to a *provider* account (a person or a bot), who
-replies `YES <n>` or `NO <n>`. The client is then told through the normal
+**Bookings** (`booking.*`, off by default). When a customer settles on a day
+and time, a request goes to a *provider* account (a person or a bot), who
+replies `YES <n>` or `NO <n>`. The customer is then told through the normal
 reply flow. You can set a check-in reminder before the slot (default 120 min).
 The *arrival instructions* (address, door code) are sent word for word, once,
-when the client says they have arrived. Detection costs one short DeepSeek
+when the customer says they have arrived. Detection costs one short DeepSeek
 call per incoming message while it is on. Bookings are stored in
-`./data/<account-id>/bookings.json`.
+`./data/tenants/<client id>/bookings.json`. (Phase 2 replaces this.)
 
 *Google Calendar mirror (optional):* create a Google Cloud service account
 with the Calendar API enabled and download its JSON key. Put the key at
-`./data/<account-id>/google-service-account.json`, or put it anywhere under
-`./data` and set `GOOGLE_SERVICE_ACCOUNT_FILE=/app/data/<file>.json` in `.env`.
-That path is the one inside the container. Then recreate with
+`./data/tenants/<client id>/google-service-account.json`, or put it anywhere
+under `./data` and set `GOOGLE_SERVICE_ACCOUNT_FILE=/app/data/<file>.json` in
+`.env`. That path is the one inside the container. Then recreate with
 `docker compose up -d`. Share the calendar with the service account's email
-address with *Make changes to events*, and paste the calendar ID into
-Settings. Calendar failures are reported in the thread and never stop the
-Telegram side.
+address with *Make changes to events*, and put the calendar ID in
+`booking.google_calendar_id`. Calendar failures are reported in the thread and
+never stop the Telegram side.
 
 **Media.** Upload photos and videos the assistant may send, or copy them into
-`./data/<account-id>/media/`, and give each one a short description. The AI
-uses the description to pick the right file when someone asks. By default a
-video is only offered first and sent once the person says yes, and a reply
-carrying a video always waits for approval, even with auto-send on.
+`./data/tenants/<client id>/media/`, and give each one a short description.
+The AI uses the description to pick the right file when someone asks. By
+default (`media.*`) a video is only offered first and sent once the person
+says yes, and a reply carrying a video always waits for approval, even with
+auto-send on.
 
-**Style** holds writing samples and per-contact overrides: extra persona
-notes, delays and typing speed for one person.
+**Style** holds per-contact overrides for one person: extra notes, message
+length, delays and typing speed. Writing samples for everyone are the
+client's *Examples of how we write* prompt section.
 
 ## Operations
 
@@ -394,7 +430,8 @@ git pull && docker compose up -d --build  # update; migrate runs before panel/ma
 up. Change both in `.env` and run `docker compose up -d`.
 
 **Backups.** Everything that matters is in three places: the Postgres volume,
-`./data` (media, bookings, the last halt reason for each account), and `.env`.
+`./data` (per client under `./data/tenants/<client id>`: media, bookings, the
+last halt reason), and `.env`.
 To dump the database:
 
 ```bash
@@ -484,16 +521,18 @@ the number in again with **+ Add account**. After a halt, the dot can stay red
 even after you resume. `docker compose restart manager` clears it.
 
 **Drafts appear but nothing is sent**: auto-send is off, which is the
-default. Approve drafts by hand, or turn on *Auto-send* in Settings.
+default. Approve drafts by hand, or turn on `auto_send` in the client's
+Config. With auto-send on, a draft with a *"Held for approval"* note above it
+failed a policy check; the note says which.
 
 **No reply at all**: first check that the account isn't paused (top bar and
-conversation), that you are inside active hours if they are on, and that the
-message was private and had text. Then check `docker compose logs manager` for
+conversation), whether it is inside the client's quiet hours (the reply then
+waits until they end), and that the message was private and had text. Then check `docker compose logs manager` for
 `DeepSeek` errors (bad key, no balance, rate limit) or other errors for that
 account. DeepSeek errors also show up red in the conversation.
 
 **"Automation halted"**: a Telegram flood limit tripped (`PeerFloodError`, or
-a FloodWait longer than *Max wait*) or the session was rejected. Read the
+a FloodWait longer than `max_flood_wait_seconds`) or the session was rejected. Read the
 reason in the panel or the manager logs, wait and work out what caused it,
 then resume by clicking *Automation paused*.
 
@@ -519,8 +558,17 @@ session_runtime.py     one Telegram account: client, drafting, sending, safety, 
 login_flow.py          phone -> code -> 2FA sign-in behind "Add account"
 leasing.py             one-worker-per-account leases in Postgres
 commands.py            Redis command bus (panel -> worker) and live events (worker -> panel)
-database.py            Postgres access: SessionRegistry (accounts) and per-account Database
-config_store.py        per-account settings, defaults and validation
+database.py            Postgres access: SessionRegistry (accounts) and the tenant-scoped Database
+tenants.py             tenants, industries, prompt versions; one-off import of pre-platform settings
+tenant_config.py       the per-client config schema and its platform <- industry <- client layers
+prompt_layers.py       renders platform rules + industry template + client overrides into one prompt
+policy.py              in-code checks on every AI-written reply before it is sent automatically
+humanlike.py           reply delay, burst gaps and quiet hours from the config
+audit.py               the append-only audit log
+llm_usage.py           per-client LLM token and cost metering
+config_assist.py       plain-language request -> proposed config change (never applied by itself)
+platform_api.py        admin API behind the Clients view
+config_store.py        per-account state: pause switch, device identity, per-contact styles
 crypto.py              AES-GCM encryption of stored secrets under USERBOT_MASTER_KEY
 device_profiles.py     stable per-account device identity
 pg.py                  connection pool and migration runner
@@ -531,9 +579,9 @@ context_link.py        borrows context from a linked chat of the same person
 bookings.py            appointment requests and the provider's YES/NO
 media.py               the photo/video library the AI may attach
 google_calendar.py     optional Google Calendar mirror for bookings
-static/index.html      the panel UI: plain HTML/CSS/JS, no build step
+static/                the panel UI: index.html, css/, js/ (plain HTML/CSS/JS, no build step)
 tests/                 pytest suite (see "Running the tests")
-data/                  created at runtime: per-account media/ and bookings.json
+data/                  created at runtime: tenants/<client id>/ with media/ and bookings.json
 ```
 
 ## A note on userbots
@@ -541,3 +589,6 @@ data/                  created at runtime: per-account media/ and bookings.json
 Automating a personal account is against Telegram's Terms of Service and can
 get the account limited or banned. Keep the delays human, keep the safety
 limits low, and prefer approval mode over auto-send.
+
+See [`ARCHITECTURE.md`](../ARCHITECTURE.md) for the data model and how a
+message flows through the system.

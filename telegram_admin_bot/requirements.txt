@@ -1,5 +1,7 @@
 telethon>=1.36,<2.0
 fastapi>=0.115
+# The tenant config schema (tenant_config.py) uses it directly.
+pydantic>=2.6
 uvicorn[standard]>=0.30
 httpx>=0.27
 python-dotenv>=1.0
