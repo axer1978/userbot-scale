@@ -60,12 +60,15 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import audit
 import bookings as bookings_module
 import commands
 import config_store
 import context_link
 import media
 import pg
+import platform_api
+import tenants
 import totp
 from database import (
     OUT_CANCELLED,
@@ -143,12 +146,20 @@ def db_for(session_id: str) -> Database:
     return Database(pool, session_id)
 
 
-def booking_store_for(session_id: str) -> bookings_module.BookingStore:
-    return bookings_module.BookingStore(DATA_DIR / session_id / "bookings.json")
+async def tenant_dir(session_id: str) -> Path:
+    """The tenant's folder for this account (tenants.tenant_data_dir)."""
+    tenant = await tenants.TenantStore(pool).by_session(session_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    return tenants.tenant_data_dir(DATA_DIR, tenant["id"], session_id)
 
 
-def media_library_for(session_id: str) -> media.MediaLibrary:
-    return media.MediaLibrary(DATA_DIR / session_id / "media")
+async def booking_store_for(session_id: str) -> bookings_module.BookingStore:
+    return bookings_module.BookingStore(await tenant_dir(session_id) / "bookings.json")
+
+
+async def media_library_for(session_id: str) -> media.MediaLibrary:
+    return media.MediaLibrary(await tenant_dir(session_id) / "media")
 
 
 async def best_effort_dispatch(session_id: str, action: str, args: Optional[dict[str, Any]] = None) -> None:
@@ -526,6 +537,26 @@ async def api_status(session_id: str) -> dict[str, Any]:
         "telegram_error": row.get("state_reason") if row.get("state") == "error" else None,
         "state": row.get("state"),
         "global_pause": (await config_store.load(pool, session_id))["behavior"].get("global_pause", False),
+        **(await _tenant_status(session_id)),
+    }
+
+
+async def _tenant_status(session_id: str) -> dict[str, Any]:
+    """What the top bar shows about the tenant: its id, auto-send, quiet
+    hours, and whether the business sections of the prompt say anything."""
+    try:
+        bundle = await tenants.TenantStore(pool).bundle_for_session(session_id)
+    except Exception as exc:  # a broken config must not break the status line
+        log.warning("[%s] Could not load tenant for status: %s", session_id, exc)
+        return {"tenant_id": None}
+    cfg = bundle.config
+    return {
+        "tenant_id": bundle.tenant["id"],
+        "tenant_name": bundle.tenant["name"],
+        "auto_send": cfg["auto_send"],
+        "quiet_hours": cfg["quiet_hours"],
+        "timezone": cfg["timezone"],
+        "persona_configured": bool(bundle.prompt.business_text.strip()),
     }
 
 
@@ -536,12 +567,14 @@ async def api_get_config(session_id: str) -> dict[str, Any]:
 
 @app.put("/api/sessions/{session_id}/config", dependencies=[Depends(require_auth)])
 async def api_put_config(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """This account's own settings (session_config): the per-contact style
+    overrides from the Style sheet. How the bot behaves is the tenant's
+    config, edited under Clients (platform_api.py)."""
     stored = await config_store.load(pool, session_id)
-    before = stored.get("booking") or {}
-    # The device identity is assigned by the runtime, not edited here, and the
-    # Settings form doesn't send it; without this a save would blank it.
-    if "identity" not in payload:
-        payload = {**payload, "identity": stored["identity"]}
+    # The device identity is assigned by the runtime and the pause switch has
+    # its own route; neither is edited here, so a save can't blank them.
+    payload = {**payload, "identity": stored["identity"],
+               "behavior": {**stored["behavior"], "global_pause": stored["behavior"]["global_pause"]}}
     try:
         new_config = await config_store.save(pool, session_id, payload)
     except (ValueError, OSError) as exc:
@@ -549,13 +582,7 @@ async def api_put_config(session_id: str, payload: dict[str, Any]) -> dict[str, 
 
     await best_effort_dispatch(session_id, "reload_config")
     await publish(session_id, {"type": "config", "config": new_config})
-    log.info("[%s] Config updated from the admin panel.", session_id)
-
-    after = new_config.get("booking") or {}
-    if after.get("enabled") and (
-        after.get("provider") != before.get("provider") or not before.get("enabled")
-    ):
-        await best_effort_dispatch(session_id, "resend_unsent_bookings")
+    log.info("[%s] Account settings updated from the admin panel.", session_id)
     return new_config
 
 
@@ -671,6 +698,13 @@ async def api_global_pause(session_id: str, body: GlobalPauseBody) -> dict[str, 
         {**current, "behavior": {**current["behavior"], "global_pause": body.global_pause}},
     )
     await best_effort_dispatch(session_id, "reload_config")
+    tenant = await tenants.TenantStore(pool).by_session(session_id)
+    await audit.record(
+        pool, tenant_id=tenant["id"] if tenant else None, actor=audit.ADMIN,
+        event=audit.ACCOUNT_PAUSED if body.global_pause else audit.ACCOUNT_RESUMED,
+        reason="Pause all, from the panel" if body.global_pause else "Resumed from the panel",
+        payload={"session_id": session_id},
+    )
     if body.global_pause:
         log.warning("[%s] Automation PAUSED from the admin panel.", session_id)
         await best_effort_dispatch(session_id, "cancel_all_drafts")
@@ -719,7 +753,7 @@ async def api_reject(session_id: str, draft_id: int) -> dict[str, Any]:
 
 @app.get("/api/sessions/{session_id}/bookings", dependencies=[Depends(require_auth)])
 async def api_bookings(session_id: str) -> list[dict[str, Any]]:
-    return [b.to_dict() for b in booking_store_for(session_id).all()]
+    return [b.to_dict() for b in (await booking_store_for(session_id)).all()]
 
 
 @app.post(
@@ -763,6 +797,12 @@ async def api_outreach_queue(session_id: str, body: OutreachBody) -> dict[str, A
         raise HTTPException(status_code=400, detail="Say what the message should achieve")
     if not body.chat_ids:
         raise HTTPException(status_code=400, detail="Pick at least one contact")
+    bundle = await tenants.TenantStore(pool).bundle_for_session(session_id)
+    if not bundle.config["outreach"]["enabled"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Outreach is off for this client. Turn on outreach.enabled in its settings first.",
+        )
 
     try:
         contacts = await _dispatch_live(session_id, "list_contacts", {}, timeout=LIVE_ACTION_TIMEOUT)
@@ -803,14 +843,14 @@ async def api_outreach_cancel(session_id: str) -> dict[str, Any]:
 
 @app.get("/api/sessions/{session_id}/media", dependencies=[Depends(require_auth)])
 async def api_media_list(session_id: str) -> list[dict[str, Any]]:
-    library = media_library_for(session_id)
+    library = await media_library_for(session_id)
     library.refresh()
     return library.all()
 
 
 @app.put("/api/sessions/{session_id}/media/upload", dependencies=[Depends(require_auth)])
 async def api_media_upload(session_id: str, request: Request, name: str, description: str = "") -> dict[str, Any]:
-    library = media_library_for(session_id)
+    library = await media_library_for(session_id)
     if media.kind_for(name) is None:
         raise HTTPException(
             status_code=400,
@@ -840,7 +880,7 @@ async def api_media_upload(session_id: str, request: Request, name: str, descrip
 
 @app.patch("/api/sessions/{session_id}/media/{item_id}", dependencies=[Depends(require_auth)])
 async def api_media_describe(session_id: str, item_id: int, body: MediaDescribeBody) -> dict[str, Any]:
-    library = media_library_for(session_id)
+    library = await media_library_for(session_id)
     item = library.describe(item_id, body.description)
     if item is None:
         raise HTTPException(status_code=404, detail="Unknown media item")
@@ -850,7 +890,7 @@ async def api_media_describe(session_id: str, item_id: int, body: MediaDescribeB
 
 @app.delete("/api/sessions/{session_id}/media/{item_id}", dependencies=[Depends(require_auth)])
 async def api_media_delete(session_id: str, item_id: int) -> dict[str, Any]:
-    library = media_library_for(session_id)
+    library = await media_library_for(session_id)
     if not library.remove(item_id):
         raise HTTPException(status_code=404, detail="Unknown media item")
     await publish(session_id, {"type": "media", "media": library.all()})
@@ -859,7 +899,7 @@ async def api_media_delete(session_id: str, item_id: int) -> dict[str, Any]:
 
 @app.get("/api/sessions/{session_id}/media/{item_id}/file", dependencies=[Depends(require_auth)])
 async def api_media_file(session_id: str, item_id: int) -> FileResponse:
-    path = media_library_for(session_id).path(item_id)
+    path = (await media_library_for(session_id)).path(item_id)
     if path is None:
         raise HTTPException(status_code=404, detail="Unknown media item")
     return FileResponse(str(path))
@@ -872,7 +912,7 @@ async def api_media_file(session_id: str, item_id: int) -> FileResponse:
 async def api_send_media(session_id: str, chat_id: int, body: SendMediaBody) -> dict[str, Any]:
     if await db_for(session_id).get_conversation(chat_id) is None:
         raise HTTPException(status_code=404, detail="Unknown conversation")
-    if media_library_for(session_id).get(body.media_id) is None:
+    if (await media_library_for(session_id)).get(body.media_id) is None:
         raise HTTPException(status_code=404, detail="Unknown media item")
     await best_effort_dispatch(session_id, "cancel_draft", {"chat_id": chat_id})
     return await _dispatch_live(session_id, "send_media", {"chat_id": chat_id, "media_id": body.media_id})
@@ -922,9 +962,10 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
             "type": "hello",
             "conversations": await db.list_conversations(),
             "config": await config_store.load(pool, session_id),
+            "tenant_config": (await tenants.TenantStore(pool).bundle_for_session(session_id)).config,
             "status": await api_status(session_id),
-            "bookings": [b.to_dict() for b in booking_store_for(session_id).all()],
-            "media": media_library_for(session_id).all(),
+            "bookings": [b.to_dict() for b in (await booking_store_for(session_id)).all()],
+            "media": (await media_library_for(session_id)).all(),
         })
     except Exception:
         log.exception("[%s] Failed to send websocket hello", session_id)
@@ -964,6 +1005,10 @@ async def unhandled(_request, exc: Exception) -> JSONResponse:
     log.exception("Unhandled error in admin API")
     return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
 
+
+# Industries, tenants, prompt layers, the config helper and the audit log.
+platform_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(platform_api.router, dependencies=[Depends(require_auth)])
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 

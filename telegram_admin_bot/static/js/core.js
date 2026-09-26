@@ -55,9 +55,16 @@ async function api(method, path, body) {
   });
   if (!res.ok) {
     let detail = res.statusText;
+    let errors = null;
     try { detail = (await res.json()).detail || detail; } catch (_) {}
+    // Config validation answers {message, errors: [{path, message}]}.
+    if (detail && typeof detail === "object") {
+      errors = detail.errors || null;
+      detail = detail.message || JSON.stringify(detail);
+    }
     const err = new Error(detail);
     err.status = res.status;
+    err.errors = errors;
     throw err;
   }
   return res.status === 204 ? null : res.json();
