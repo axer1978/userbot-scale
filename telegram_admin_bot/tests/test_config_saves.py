@@ -24,12 +24,12 @@ from database import OUT_CANCELLED, OUT_QUEUED
 async def test_halt_everything_pauses_persists_and_announces(app, db, pg_pool):
     queued = await db.queue_outreach([(101, "Ann"), (102, "Bob")], "say hi")
     assert {row["status"] for row in queued} == {OUT_QUEUED}
-    assert app.config["behavior"]["global_pause"] is False
+    assert app.account["behavior"]["global_pause"] is False
 
     await app.halt_everything("PeerFloodError on send")
 
     # Paused in memory and in Postgres, so a restart stays halted.
-    assert app.config["behavior"]["global_pause"] is True
+    assert app.account["behavior"]["global_pause"] is True
     stored = await config_store.load(pg_pool, app.session_id)
     assert stored["behavior"]["global_pause"] is True
 

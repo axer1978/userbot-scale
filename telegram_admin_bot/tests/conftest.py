@@ -125,7 +125,7 @@ async def app(pg_pool, db, tmp_path):
     """A `SessionRuntime` for session "test", built but never started.
 
     Config-only tests (settings routes, halt_everything, global pause) only
-    touch `runtime.config` / `save_config()`, neither of which needs a
+    touch `runtime.config` / `runtime.account`, neither of which needs a
     lease, Redis, or a Telegram connection — `start()` would need all
     three and this session has none of them. Skipping `start()` means
     there is nothing to `stop()` in teardown either.
@@ -134,6 +134,9 @@ async def app(pg_pool, db, tmp_path):
         pg_pool, db.session_id, data_dir=tmp_path, redis_url="redis://unused"
     )
     runtime.hub = FakeHub()  # handle_send_failure and friends reach for it by attribute
+    # What start() does before it connects: load the tenant's config and
+    # prompt, and settle its data folder.
+    await runtime.bind_tenant()
     yield runtime
 
 

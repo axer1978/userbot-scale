@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import asyncpg
@@ -502,6 +503,28 @@ class TenantStore:
             """,
             json.dumps(version), actor,
         )
+
+
+def tenant_data_dir(root: Path, tenant_id: int, session_id: Optional[str] = None) -> Path:
+    """DATA_DIR/tenants/<tenant id>: this tenant's files (media library,
+    bookings.json, last_halt.txt), keyed by tenant so they stay with the
+    tenant, not with whichever account it runs on. Before the platform they
+    lived in DATA_DIR/<session_id>; the first call after the upgrade moves
+    that folder here. The panel and a worker may both get there first, so
+    losing the race to the rename is fine."""
+    target = root / "tenants" / str(int(tenant_id))
+    if session_id and not target.exists():
+        legacy = root / session_id
+        if legacy.is_dir():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                legacy.rename(target)
+                log.info("Moved %s to %s.", legacy, target)
+            except OSError:
+                if not target.exists():
+                    raise
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 # ------------------------------------------------------------ legacy import

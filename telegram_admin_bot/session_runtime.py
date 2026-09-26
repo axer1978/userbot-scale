@@ -3,53 +3,37 @@ one Telegram account, ported from the original single-account `main.py` to
 run against the fleet's shared Postgres pool.
 
 One `SessionRuntime` instance == one Telegram account == one row in
-`telegram_sessions`. A worker process (see `manager.py`, not built yet) is
-expected to construct one `SessionRuntime` per leased session it owns and
-call `start()` / `stop()` on each. Nothing here is module-level global
-state — every module-level global in the old `main.py` became `self.<name>`
-here, and every bare function became a method, specifically so N runtimes
-can coexist in one process without stepping on each other's state.
+`telegram_sessions`, owned by exactly one tenant. `manager.py`'s workers
+construct one per leased session and call `start()` / `stop()` on each; for
+a single manual test, construct one directly (see `__main__` below) and it
+manages its own lease. Nothing here is module-level global state, so N
+runtimes can coexist in one process.
 
-Deliberately NOT included in this file (separate, still-open pieces of the
-fleet rework):
+`start()` assumes the account has already signed in (login_flow.py); call
+`needs_login()` to check first. It then binds to the tenant
+(`bind_tenant()`): the tenant's effective config (tenant_config.py) and
+rendered prompt (prompt_layers.py) decide how replies are timed and
+written, policy.py checks every AI-written reply before an automatic send,
+every send writes an audit row (audit.py) and every LLM call is metered
+(llm_usage.py). The account's own state (pause switch, device identity,
+per-contact overrides) stays in session_config via config_store.py.
 
-- The FastAPI admin panel / HTTP routes (plan items 11-14). This module is
-  the engine; a panel wraps N of these behind one API, routed by
-  session_id, and calls the methods below instead of module functions.
-- Turning a phone/code/2FA exchange into the dc_id/server_address/port/
-  auth_key that `SessionRegistry.save_login()` needs (the fleet-mode
-  rework of `login_flow.py`). `start()` here assumes the session already
-  has usable auth in `telegram_sessions` — i.e. login already happened.
-  Call `SessionRuntime.needs_login()` to check first.
-- `manager.py` (the Master Process Manager) — leases sessions from
-  Postgres, spawns worker processes, and is what will actually construct
-  `SessionRuntime` objects in production. For a single manual test today,
-  construct one directly (see `__main__` below) and it manages its own
-  lease via a private `LeaseKeeper`.
-
-Everything in `ai_responder.py`, `bookings.py`, `media.py`, `context_link.py`
-and `google_calendar.py` is unchanged — they take `db`/paths as arguments
-and were already storage-agnostic. `bookings.BookingStore` and
-`media.MediaLibrary` are still per-session *files* (not yet migrated into
-Postgres), so each runtime is given its own subdirectory under `DATA_DIR`
-keyed by session_id, rather than the old single shared `DATA_DIR`.
+`bookings.BookingStore` and `media.MediaLibrary` are still files, kept per
+tenant under DATA_DIR/tenants/<tenant id> (tenants.tenant_data_dir).
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import random
 import socket
+import time
 from contextlib import suppress
-from datetime import datetime, time as dtime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
-
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:  # pragma: no cover - Python < 3.9
-    ZoneInfo = None  # type: ignore[assignment]
 
 import asyncpg
 import httpx
@@ -61,14 +45,20 @@ from telethon.tl.functions.contacts import GetContactsRequest
 from telethon.tl.types import InputPeerUser, User
 
 import ai_responder
+import audit
 import bookings
 import commands
 import config_store
 import context_link
 import device_profiles
 import google_calendar
+import humanlike
 import leasing
+import llm_usage
 import media
+import policy
+import tenant_config
+import tenants
 from database import (
     DIR_IN,
     DIR_OUT,
@@ -102,14 +92,6 @@ class SendBlocked(Exception):
 def _ov_int(overrides: dict[str, Any], key: str, fallback: int) -> int:
     value = overrides.get(key)
     return value if isinstance(value, int) else fallback
-
-
-def _parse_time(value: Any, fallback: dtime) -> dtime:
-    try:
-        hour, minute = str(value).split(":")
-        return dtime(int(hour), int(minute))
-    except (ValueError, AttributeError):
-        return fallback
 
 
 def describe_sender(sender: Any, fallback_id: int) -> tuple[str, Optional[str], bool, Optional[int]]:
@@ -231,19 +213,28 @@ class SessionRuntime:
         self.db = Database(pool, session_id)
         self.worker_id = worker_id or f"{socket.gethostname()}:{id(self)}"
 
-        # Per-session data directory — bookings.json and media/ are still
-        # files, not Postgres rows, so each session gets its own subtree
-        # rather than the old single shared DATA_DIR.
-        self.data_dir = data_dir / session_id
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.media_library = media.MediaLibrary(self.data_dir / "media")
-        self.booking_store = bookings.BookingStore(self.data_dir / "bookings.json")
+        # The tenant's files (media library, bookings.json) live under
+        # DATA_DIR/tenants/<tenant id> (tenants.tenant_data_dir). Until
+        # bind_tenant() knows the tenant, data_dir, media_library and
+        # booking_store are not set.
+        self.data_root = data_dir
 
         self.hub = Hub(self)
         self.bus: Optional[commands.CommandBus] = None
         self._command_stop_event = asyncio.Event()
         self._command_serve_task: Optional[asyncio.Task] = None
-        self.config: dict[str, Any] = config_store.normalize({})
+        self.tenants = tenants.TenantStore(pool)
+        self.tenant_id: Optional[int] = None
+        self.bundle: Optional[tenants.Bundle] = None
+        # Two kinds of settings. `config` is the tenant's effective config
+        # (tenant_config.py: platform <- industry <- client), everything
+        # about how the bot behaves. `account` is this Telegram account's own
+        # state from session_config (config_store.py): the pause switch,
+        # the device identity and per-contact style overrides.
+        self.config: dict[str, Any] = tenant_config.TenantConfig().model_dump(mode="json")
+        self.account: dict[str, Any] = config_store.normalize({})
+        self._bound_at = 0.0
+        self.REBIND_SECONDS = 300
         self.api_id: Optional[int] = None
         self.api_hash: Optional[str] = None
         self.deepseek_key: Optional[str] = None
@@ -279,8 +270,6 @@ class SessionRuntime:
         self._lease_keeper_task: Optional[asyncio.Task] = None
         self._stopping = False
 
-        self.BURST_GAP_MIN_SECONDS = 0.6
-        self.BURST_GAP_MAX_SECONDS = 2.2
 
     # ------------------------------------------------------------------
     # Startup / shutdown
@@ -317,7 +306,7 @@ class SessionRuntime:
                 self.bus.serve(self.session_id, self.handle_command, self._command_stop_event)
             )
             self.http_client = httpx.AsyncClient(timeout=ai_responder.REQUEST_TIMEOUT_SECONDS)
-            self.config = await config_store.load(self.pool, self.session_id)
+            await self.bind_tenant()
 
             auth = await self.registry.load_auth(self.session_id)
             if auth is None or not auth.get("auth_key"):
@@ -393,10 +382,14 @@ class SessionRuntime:
         needs the live Telethon client. Anything that only needs Postgres or
         local files, the panel does directly and this is never reached."""
         if action == "send":
-            return await self.send_as_me(args["chat_id"], args["text"])
+            return await self.send_as_me(
+                args["chat_id"], args["text"], actor=audit.ADMIN, reason="sent by hand from the panel",
+            )
 
         if action == "send_media":
-            return await self.send_media_as_me(args["chat_id"], args["media_id"])
+            return await self.send_media_as_me(
+                args["chat_id"], args["media_id"], actor=audit.ADMIN, reason="sent by hand from the panel",
+            )
 
         if action == "list_contacts":
             return await self.list_contacts()
@@ -413,8 +406,8 @@ class SessionRuntime:
         if action == "reload_config":
             # The panel wrote the new config straight to Postgres (it holds
             # no runtime to go through); without this the worker's in-memory
-            # copy would stay stale until its own next unrelated read.
-            self.config = await config_store.load(self.pool, self.session_id)
+            # copy would stay stale until the next periodic rebind.
+            await self.bind_tenant()
             return {"ok": True}
 
         if action == "resend_unsent_bookings":
@@ -445,10 +438,13 @@ class SessionRuntime:
             attachments = [
                 i for i in (draft.get("attachments") or []) if self.media_library.get(i) is not None
             ]
-            parts = ai_responder.split_burst(text)
+            parts = ai_responder.split_burst(text, self.config["burst"]["max_messages"])
             if not parts and not attachments:
                 raise ValueError("Message is empty")
-            sent = await self.send_burst(draft["chat_id"], parts, draft_id=draft_id, attachments=attachments)
+            sent = await self.send_burst(
+                draft["chat_id"], parts, draft_id=draft_id, attachments=attachments,
+                actor=audit.ADMIN, reason="draft approved in the panel",
+            )
             await self.settle_outreach_draft(draft_id, OUT_SENT, text=text)
             return sent
 
@@ -479,6 +475,7 @@ class SessionRuntime:
                     await self.send_as_me(
                         booking.provider_chat_id,
                         f"#{booking.id} was {'confirmed' if confirmed else 'declined'} from the panel.",
+                        actor=audit.ADMIN, reason="booking decision passed on to the provider",
                     )
                 except Exception as exc:
                     log.warning(
@@ -504,13 +501,57 @@ class SessionRuntime:
     # fresh value and stores it on self, same call-site shape as before)
     # ------------------------------------------------------------------
 
-    async def save_config(
+    async def save_account(
         self, payload: dict[str, Any], *, expected_revision: Optional[int] = None
     ) -> dict[str, Any]:
-        self.config = await config_store.save(
+        """Write this account's own state (session_config): the pause
+        switch, device identity, per-contact overrides."""
+        self.account = await config_store.save(
             self.pool, self.session_id, payload, expected_revision=expected_revision
         )
-        return self.config
+        return self.account
+
+    async def bind_tenant(self) -> None:
+        """Load, or reload, everything tenant-specific: the effective config,
+        the rendered prompt and this account's own state. The first call also
+        settles where the tenant's files live.
+
+        A stored config that no longer validates (someone edited the
+        database by hand) keeps the last good one rather than stopping the
+        account, and says so."""
+        try:
+            bundle = await self.tenants.bundle_for_session(self.session_id)
+        except (tenant_config.ConfigError, ValueError) as exc:
+            if self.bundle is None:
+                raise
+            log.error("[%s] Tenant config no longer valid; keeping the last good one: %s", self.session_id, exc)
+            await self.push_error(None, f"Tenant config is invalid, still using the previous one: {exc}")
+            return
+        first = self.tenant_id is None
+        self.bundle, self.tenant_id = bundle, bundle.tenant["id"]
+        self.config = bundle.config
+        self.account = await config_store.load(self.pool, self.session_id)
+        if first:
+            self.data_dir = tenants.tenant_data_dir(self.data_root, self.tenant_id, self.session_id)
+            self.media_library = media.MediaLibrary(self.data_dir / "media")
+            self.booking_store = bookings.BookingStore(self.data_dir / "bookings.json")
+        self._bound_at = time.monotonic()
+
+    def paused(self) -> bool:
+        """The account-wide pause (panel "Pause all", or halt_everything)."""
+        return bool(self.account["behavior"].get("global_pause"))
+
+    def usage_sink(self, purpose: str) -> ai_responder.UsageSink:
+        """Meters every LLM call against this tenant (llm_usage.py)."""
+        return functools.partial(self._record_usage, purpose)
+
+    async def _record_usage(self, purpose: str, model: str, usage: dict[str, int]) -> None:
+        await llm_usage.record(self.pool, tenant_id=self.tenant_id, purpose=purpose, model=model, usage=usage)
+
+    async def write_audit(self, event: str, *, actor: str = audit.BOT, reason: str = "",
+                    payload: Optional[dict[str, Any]] = None) -> None:
+        await audit.record(self.pool, tenant_id=self.tenant_id, actor=actor, event=event,
+                           reason=reason, payload=payload)
 
     def ai_gate(self) -> asyncio.Semaphore:
         size = max(1, int(self.config["ai"].get("max_concurrent_requests", 4) or 4))
@@ -536,14 +577,15 @@ class SessionRuntime:
         should look at it before this account starts sending again.
         """
         log.error("[%s] HALTING ALL AUTOMATION: %s", self.session_id, reason)
-        if not self.config["behavior"].get("global_pause"):
-            await self.save_config(
-                {**self.config, "behavior": {**self.config["behavior"], "global_pause": True}}
+        if not self.paused():
+            await self.save_account(
+                {**self.account, "behavior": {**self.account["behavior"], "global_pause": True}}
             )
+        await self.write_audit(audit.ACCOUNT_HALTED, actor=audit.SYSTEM, reason=reason)
         for chat_id in list(self.draft_tasks):
             self.cancel_draft(chat_id)
         await self.db.cancel_queued_outreach()
-        await self.hub.broadcast({"type": "config", "config": self.config})
+        await self.hub.broadcast({"type": "config", "config": self.account})
         await self.hub.broadcast({"type": "halted", "reason": reason})
         await self.push_error(None, f"Automation halted: {reason}")
         try:
@@ -560,15 +602,15 @@ class SessionRuntime:
         since = self.start_of_day_utc()
 
         sent = await self.db.sent_since(since)
-        limit = int(safety.get("daily_send_limit", 150))
+        limit = int(self.config["daily_message_cap"])
         if sent >= limit:
             raise SendBlocked(
                 f"Daily send limit reached ({sent}/{limit} messages today). "
-                "Sending resumes tomorrow; raise the limit in Settings if this is wrong."
+                "Sending resumes tomorrow; raise daily_message_cap in the tenant config if this is wrong."
             )
 
         peers = await self.db.distinct_peers_since(since)
-        peer_limit = int(safety.get("daily_peer_limit", 30))
+        peer_limit = int(safety["daily_peer_cap"])
         if peers >= peer_limit:
             raise SendBlocked(
                 f"Daily limit on distinct people reached ({peers}/{peer_limit} today). "
@@ -648,22 +690,13 @@ class SessionRuntime:
     # Helpers
     # ------------------------------------------------------------------
 
-    def within_active_hours(self, timing: dict[str, Any]) -> bool:
-        if not timing.get("active_hours_enabled"):
-            return True
-        tz_name = timing.get("timezone") or "UTC"
-        tz = None
-        if ZoneInfo is not None:
-            try:
-                tz = ZoneInfo(tz_name)
-            except Exception:
-                log.warning("Unknown timezone %r in config; falling back to system time.", tz_name)
-        now = datetime.now(tz).time() if tz else datetime.now().time()
-        start = _parse_time(timing.get("active_hours_start"), dtime(0, 0))
-        end = _parse_time(timing.get("active_hours_end"), dtime(23, 59))
-        if start <= end:
-            return start <= now <= end
-        return now >= start or now <= end
+    def local_now(self) -> datetime:
+        """Now, in the tenant's timezone."""
+        return datetime.now(bookings.tzinfo_for(self.config["timezone"]))
+
+    def quiet_seconds_left(self, at: Optional[datetime] = None) -> float:
+        """How long until quiet hours end (0 outside them) at `at`, now by default."""
+        return humanlike.seconds_until_quiet_ends(at or self.local_now(), self.config["quiet_hours"])
 
     async def resolve_peer(self, chat_id: int):
         if self.client is None or not self.telegram_state["connected"]:
@@ -702,7 +735,7 @@ class SessionRuntime:
     def contact_overrides(self, chat_id: Optional[int]) -> dict[str, Any]:
         if chat_id is None:
             return {}
-        return self.config.get("contacts", {}).get(str(chat_id)) or {}
+        return self.account.get("contacts", {}).get(str(chat_id)) or {}
 
     async def borrowed_context(self, chat_id: int) -> str:
         settings = self.config["context_link"]
@@ -716,6 +749,7 @@ class SessionRuntime:
                 ai_config=self.config["ai"],
                 settings=settings,
                 client=self.http_client,
+                usage_sink=self.usage_sink("context_summary"),
             )
 
     async def detect_links(self, conversation: dict[str, Any]) -> None:
@@ -840,7 +874,15 @@ class SessionRuntime:
         draft_id: Optional[int] = None,
         typing: bool = False,
         guard: bool = True,
+        *,
+        actor: str = audit.BOT,
+        reason: str = "",
+        llm_model: Optional[str] = None,
+        prompt_version: Optional[str] = None,
     ) -> dict[str, Any]:
+        """Send one text message as this account. Every send writes an
+        audit row saying who caused it (`actor`) and why (`reason`);
+        `llm_model` / `prompt_version` mark an AI-written message."""
         if guard:
             await self.check_daily_quota()
         peer = await self.resolve_peer(chat_id)
@@ -855,7 +897,8 @@ class SessionRuntime:
                 await self.db.set_conversation_preview(chat_id, text)
             else:
                 row = await self.db.record_message(
-                    chat_id, DIR_OUT, STATUS_SENT, text, telegram_id=telegram_id
+                    chat_id, DIR_OUT, STATUS_SENT, text, telegram_id=telegram_id,
+                    llm_model=llm_model, prompt_version=prompt_version,
                 )
                 if row is None:
                     row = await self.db.find_by_telegram_id(chat_id, telegram_id)
@@ -866,6 +909,8 @@ class SessionRuntime:
             if not pending:
                 self.in_flight_sends.pop(chat_id, None)
 
+        await self.write_audit(audit.MESSAGE_SENT, actor=actor, reason=reason,
+                         payload={"message_id": (row or {}).get("id"), "kind": "text"})
         if row is not None:
             await self.push_message(row)
         return row or {}
@@ -889,6 +934,7 @@ class SessionRuntime:
 
     async def send_media_as_me(
         self, chat_id: int, item_id: int, draft_id: Optional[int] = None, guard: bool = True,
+        *, actor: str = audit.BOT, reason: str = "",
     ) -> dict[str, Any]:
         item = self.media_library.get(item_id)
         path = self.media_library.path(item_id)
@@ -922,6 +968,8 @@ class SessionRuntime:
             else:
                 self.in_flight_media.pop(chat_id, None)
 
+        await self.write_audit(audit.MESSAGE_SENT, actor=actor, reason=reason,
+                         payload={"message_id": (row or {}).get("id"), "kind": item.get("kind"), "media_id": item_id})
         if row is not None:
             await self.push_message(row)
         log.info("[%s]   sent %s to chat %s.", self.session_id, media.label(item), chat_id)
@@ -935,23 +983,30 @@ class SessionRuntime:
         typing: bool = False,
         guard: bool = True,
         attachments: Optional[list[int]] = None,
+        *,
+        actor: str = audit.BOT,
+        reason: str = "",
+        llm_model: Optional[str] = None,
+        prompt_version: Optional[str] = None,
     ) -> dict[str, Any]:
         row: dict[str, Any] = {}
         files = [i for i in (attachments or []) if self.media_library.get(i) is not None]
         for index, part in enumerate(parts):
             if index:
-                await asyncio.sleep(random.uniform(self.BURST_GAP_MIN_SECONDS, self.BURST_GAP_MAX_SECONDS))
+                await asyncio.sleep(humanlike.burst_gap_seconds(self.config["burst"]))
             row = await self.send_as_me(
                 chat_id, part, draft_id=draft_id if index == 0 else None, typing=typing, guard=guard,
+                actor=actor, reason=reason, llm_model=llm_model, prompt_version=prompt_version,
             )
             if index == 0 and draft_id is not None and files:
                 row = await self.db.update_message(draft_id, attachments=[]) or row
                 await self.push_message(row)
         for index, item_id in enumerate(files):
             if parts or index:
-                await asyncio.sleep(random.uniform(self.BURST_GAP_MIN_SECONDS, self.BURST_GAP_MAX_SECONDS))
+                await asyncio.sleep(humanlike.burst_gap_seconds(self.config["burst"]))
             row = await self.send_media_as_me(
                 chat_id, item_id, draft_id=draft_id if (not parts and index == 0) else None, guard=guard,
+                actor=actor, reason=reason,
             )
         return row
 
@@ -971,25 +1026,41 @@ class SessionRuntime:
             return
         task.cancel()
 
+    def reply_delay(self, chat_id: int) -> float:
+        """Seconds before the reply to this chat is written: a per-contact
+        override from the Style sheet if one is set, else the tenant's
+        reply_delay. Quiet hours come on top (draft_worker)."""
+        overrides = self.contact_overrides(chat_id)
+        if overrides.get("min_delay_seconds") is not None or overrides.get("max_delay_seconds") is not None:
+            delay_cfg = self.config["reply_delay"]
+            low = _ov_int(overrides, "min_delay_seconds", int(delay_cfg["min_s"]))
+            high = _ov_int(overrides, "max_delay_seconds", int(delay_cfg["max_s"]))
+            return random.uniform(min(low, high), max(low, high))
+        return humanlike.sample_reply_delay(self.config["reply_delay"])
+
     async def draft_worker(self, chat_id: int) -> None:
         try:
-            timing = self.config["timing"]
             overrides = self.contact_overrides(chat_id)
-            low = _ov_int(overrides, "min_delay_seconds", int(timing.get("min_delay_seconds", 20)))
-            high = _ov_int(overrides, "max_delay_seconds", int(timing.get("max_delay_seconds", 90)))
-            delay = random.uniform(min(low, high), max(low, high))
+            delay = self.reply_delay(chat_id)
+            # A reply that would land in quiet hours waits for them to end,
+            # plus a fresh delay so a night's messages don't all get
+            # answered in the same second at opening time.
+            quiet = self.quiet_seconds_left(humanlike.later(self.local_now(), delay))
+            if quiet:
+                delay += quiet + humanlike.sample_reply_delay(self.config["reply_delay"])
+                log.info("[%s]   quiet hours: the reply to chat %s waits %.0f min.", self.session_id, chat_id, delay / 60)
 
             await self.hub.broadcast({"type": "drafting", "chat_id": chat_id, "delay_seconds": round(delay, 1)})
             log.info("[%s]   drafting a reply for chat %s in %.0fs…", self.session_id, chat_id, delay)
             await asyncio.sleep(delay)
+            # Quiet hours may have been switched on or moved while waiting.
+            while (left := self.quiet_seconds_left()) > 0:
+                await asyncio.sleep(left + humanlike.sample_reply_delay(self.config["reply_delay"]))
 
-            if self.config["behavior"].get("global_pause"):
+            if self.paused():
                 return
             conversation = await self.db.get_conversation(chat_id)
             if conversation is None or conversation["automation_paused"]:
-                return
-            if not self.within_active_hours(self.config["timing"]):
-                log.info("[%s] Outside active hours; skipping draft for chat %s.", self.session_id, chat_id)
                 return
 
             history = await self.db.get_history_for_ai(chat_id, limit=30)
@@ -997,7 +1068,7 @@ class SessionRuntime:
                 log.info("[%s] No usable history for chat %s; skipping draft.", self.session_id, chat_id)
                 return
 
-            if self.config["behavior"].get("auto_send"):
+            if self.config["auto_send"]:
                 await self.check_daily_quota()
 
             await self.go_online_for(chat_id)
@@ -1015,27 +1086,31 @@ class SessionRuntime:
                 log.info("[%s]   booking #%s: writing the %s into this reply.", self.session_id, news.id, news_kind)
 
             media_note = self.media_prompt()
+            prompt = self.bundle.prompt if self.bundle is not None else None
 
             async with self.ai_gate():
                 text = await ai_responder.generate_reply(
                     api_key=self.deepseek_key,
                     history=history,
-                    persona=self.config["persona"],
+                    persona={},
                     ai_config=self.config["ai"],
                     client=self.http_client,
-                    adaptive_style=self.config["human"].get("adaptive_style", True),
-                    general_samples=self.config["finetune"].get("writing_samples", ""),
+                    adaptive_style=self.config["human"]["adaptive_style"],
                     contact=overrides,
                     background=background,
                     booking_note=booking_note,
                     media_note=media_note,
+                    system_prompt=prompt.text if prompt else None,
+                    language_locked=self.config["language_policy"] != "mirror",
+                    burst_max=self.config["burst"]["max_messages"],
+                    usage_sink=self.usage_sink("reply"),
                 )
 
             text, attachments = media.split_attachments(text)
             attachments = [i for i in attachments if self.media_library.get(i) is not None]
             if not media_note:
                 attachments = []
-            parts = ai_responder.split_burst(text)
+            parts = ai_responder.split_burst(text, self.config["burst"]["max_messages"])
             if not parts and not attachments:
                 raise ai_responder.AIResponderError("The reply came back empty.")
             if attachments:
@@ -1046,12 +1121,18 @@ class SessionRuntime:
             holds_video = any(
                 (self.media_library.get(i) or {}).get("kind") == media.VIDEO for i in attachments
             )
-            hold = holds_video and self.config["media"].get("videos_need_approval", True)
+            hold = holds_video and self.config["media"]["videos_need_approval"]
+            verdict = await self.check_policy(chat_id, text, prompt)
+            model = self.config["ai"]["model"]
+            version = prompt.version_tag if prompt else None
 
-            if self.config["behavior"].get("auto_send") and not hold:
+            if self.config["auto_send"] and not hold and verdict.ok:
                 self.sending_chats.add(chat_id)
                 try:
-                    await self.send_burst(chat_id, parts, typing=True, attachments=attachments)
+                    await self.send_burst(
+                        chat_id, parts, typing=True, attachments=attachments,
+                        actor=audit.BOT, reason="automatic reply", llm_model=model, prompt_version=version,
+                    )
                 finally:
                     self.sending_chats.discard(chat_id)
                 log.info(
@@ -1059,10 +1140,11 @@ class SessionRuntime:
                     f" as {len(parts)} messages" if len(parts) > 1 else "",
                 )
             else:
-                if hold and self.config["behavior"].get("auto_send"):
+                if hold and self.config["auto_send"]:
                     log.info("[%s]   reply carries a video — held for approval in the panel.", self.session_id)
                 row = await self.db.record_message(
                     chat_id, DIR_OUT, STATUS_PENDING, text, bump_preview=False, attachments=attachments,
+                    llm_model=model, prompt_version=version,
                 )
                 if row is not None:
                     await self.push_message(row)
@@ -1092,6 +1174,20 @@ class SessionRuntime:
             if self.draft_tasks.get(chat_id) is asyncio.current_task():
                 self.draft_tasks.pop(chat_id, None)
 
+    async def check_policy(
+        self, chat_id: int, text: str, prompt: Optional[Any]
+    ) -> policy.Verdict:
+        """policy.py on an AI-written message. A failure is shown in the
+        chat and audited; the caller then keeps the message as a draft
+        instead of sending it."""
+        verdict = policy.check_outbound(text, self.config, prompt.business_text if prompt else "")
+        if not verdict.ok:
+            log.warning("[%s] Reply to chat %s held by policy: %s", self.session_id, chat_id, verdict.reasons)
+            await self.post_note(chat_id, "Held for approval: the reply " + "; ".join(verdict.reasons) + ".")
+            await self.write_audit(audit.POLICY_HOLD, reason="; ".join(verdict.reasons),
+                             payload={"reasons": verdict.reasons})
+        return verdict
+
     # ------------------------------------------------------------------
     # Outreach
     # ------------------------------------------------------------------
@@ -1113,8 +1209,11 @@ class SessionRuntime:
                     return
 
                 settings = self.config["outreach"]
-                if self.config["behavior"].get("global_pause"):
+                if self.paused():
                     log.info("[%s] Outreach paused (global pause); leaving %s queued.", self.session_id, item["id"])
+                    return
+                if not settings["enabled"]:
+                    log.info("[%s] Outreach is off in the tenant config; leaving %s queued.", self.session_id, item["id"])
                     return
 
                 sent_today = await self.db.outreach_sent_since(self.start_of_day_utc())
@@ -1164,12 +1263,13 @@ class SessionRuntime:
                     api_key=self.deepseek_key,
                     goal=item["goal"],
                     recipient_name=item["display_name"] or "them",
-                    persona=self.config["persona"],
+                    persona={},
                     ai_config=self.config["ai"],
                     client=self.http_client,
-                    general_samples=self.config["finetune"].get("writing_samples", ""),
                     contact=self.contact_overrides(chat_id),
                     background=background,
+                    system_prompt=self.bundle.prompt.text if self.bundle is not None else None,
+                    usage_sink=self.usage_sink("outreach"),
                 )
         except ai_responder.AIResponderError as exc:
             await self.db.update_outreach(outreach_id, status=OUT_FAILED, error=str(exc))
@@ -1178,9 +1278,14 @@ class SessionRuntime:
             return
 
         await self.go_online_for(chat_id)
+        prompt = self.bundle.prompt if self.bundle is not None else None
+        verdict = await self.check_policy(chat_id, text, prompt)
 
-        if not self.config["outreach"].get("auto_send"):
-            row = await self.db.record_message(chat_id, DIR_OUT, STATUS_PENDING, text, bump_preview=False)
+        if not self.config["outreach"]["auto_send"] or not verdict.ok:
+            row = await self.db.record_message(
+                chat_id, DIR_OUT, STATUS_PENDING, text, bump_preview=False,
+                llm_model=self.config["ai"]["model"], prompt_version=prompt.version_tag if prompt else None,
+            )
             await self.db.update_outreach(
                 outreach_id, status=OUT_DRAFTED, message=text, draft_id=row["id"] if row else None,
             )
@@ -1192,7 +1297,10 @@ class SessionRuntime:
             return
 
         try:
-            await self.send_as_me(chat_id, text, typing=True)
+            await self.send_as_me(
+                chat_id, text, typing=True, actor=audit.BOT, reason="outreach",
+                llm_model=self.config["ai"]["model"], prompt_version=prompt.version_tag if prompt else None,
+            )
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
             await self.db.update_outreach(outreach_id, status=OUT_FAILED, error=detail)
@@ -1233,7 +1341,7 @@ class SessionRuntime:
     # ------------------------------------------------------------------
 
     def booking_settings(self) -> dict[str, Any]:
-        return self.config.get("booking") or config_store.DEFAULTS["booking"]
+        return self.config["booking"]
 
     def booking_news(self, chat_id: int) -> tuple[Optional[bookings.Booking], str]:
         for booking in self.booking_store.for_chat(chat_id, (bookings.CONFIRMED, bookings.DECLINED)):
@@ -1245,7 +1353,7 @@ class SessionRuntime:
         return None, ""
 
     def booking_now(self) -> datetime:
-        return datetime.now(bookings.tzinfo_for(self.config["timing"].get("timezone") or "UTC"))
+        return datetime.now(bookings.tzinfo_for(self.config["timezone"]))
 
     async def check_reminders(self) -> None:
         settings = self.booking_settings()
@@ -1262,7 +1370,7 @@ class SessionRuntime:
                 "— asking the client whether they are still coming.",
             )
             await self.broadcast_booking(booking)
-            if self.config["behavior"].get("global_pause"):
+            if self.paused():
                 continue
             conversation = await self.db.get_conversation(booking.chat_id)
             if conversation and conversation["automation_paused"]:
@@ -1273,6 +1381,11 @@ class SessionRuntime:
         try:
             while True:
                 try:
+                    # Backstop for a missed reload_config: pick up config and
+                    # prompt changes (an industry template edit, say) every
+                    # few minutes regardless.
+                    if time.monotonic() - self._bound_at > self.REBIND_SECONDS:
+                        await self.bind_tenant()
                     await self.check_reminders()
                 except asyncio.CancelledError:
                     raise
@@ -1296,7 +1409,7 @@ class SessionRuntime:
         self.cancel_draft(booking.chat_id)
         self.sending_chats.add(booking.chat_id)
         try:
-            await self.send_as_me(booking.chat_id, text, typing=True)
+            await self.send_as_me(booking.chat_id, text, typing=True, reason="arrival instructions")
         except Exception as exc:
             if not await self.handle_send_failure(booking.chat_id, exc):
                 await self.push_error(
@@ -1380,7 +1493,7 @@ class SessionRuntime:
             history = await self.db.get_history_for_ai(chat_id, limit=int(settings.get("scan_messages", 20)))
             if not history:
                 return
-            tz_name = self.config["timing"].get("timezone") or "UTC"
+            tz_name = self.config["timezone"]
 
             arriving = self.booking_store.awaiting_arrival(
                 chat_id, self.booking_now(), int(settings.get("reminder_minutes_before", 0) or 0)
@@ -1389,6 +1502,7 @@ class SessionRuntime:
                 async with self.ai_gate():
                     arrived = await ai_responder.extract_arrival(
                         api_key=self.deepseek_key, history=history, ai_config=self.config["ai"], client=self.http_client,
+                        usage_sink=self.usage_sink("arrival_check"),
                     )
                 if arrived:
                     log.info("[%s] Booking #%s: %s says they have arrived.", self.session_id, arriving.id, arriving.client_name)
@@ -1397,6 +1511,7 @@ class SessionRuntime:
             async with self.ai_gate():
                 found = await ai_responder.extract_booking(
                     api_key=self.deepseek_key, history=history, tz_name=tz_name, ai_config=self.config["ai"], client=self.http_client,
+                    usage_sink=self.usage_sink("booking_extract"),
                 )
             if not found:
                 return
@@ -1471,7 +1586,7 @@ class SessionRuntime:
             )
             return False
         try:
-            row = await self.send_as_me(provider, bookings.format_request(booking))
+            row = await self.send_as_me(provider, bookings.format_request(booking), reason="booking request to the provider")
         except Exception as exc:
             if not await self.handle_send_failure(provider, exc):
                 await self.push_error(
@@ -1523,13 +1638,14 @@ class SessionRuntime:
             return False
         if decision.booking is None:
             try:
-                await self.send_as_me(chat_id, bookings.format_help(pending))
+                await self.send_as_me(chat_id, bookings.format_help(pending), reason="booking help for the provider")
             except Exception as exc:
                 await self.handle_send_failure(chat_id, exc)
             return True
         await self.decide_booking(decision.booking, decision.confirmed, by="provider")
         try:
-            await self.send_as_me(chat_id, bookings.format_acknowledgement(decision.booking, decision.confirmed))
+            await self.send_as_me(chat_id, bookings.format_acknowledgement(decision.booking, decision.confirmed),
+                                  reason="booking decision acknowledged to the provider")
         except Exception as exc:
             await self.handle_send_failure(chat_id, exc)
         return True
@@ -1560,7 +1676,7 @@ class SessionRuntime:
         )
         await self.broadcast_booking(booking)
 
-        if self.config["behavior"].get("global_pause"):
+        if self.paused():
             log.info("[%s]   automation is paused; the client will be told when a draft next runs.", self.session_id)
             return
         conversation = await self.db.get_conversation(booking.chat_id)
@@ -1590,16 +1706,11 @@ class SessionRuntime:
         has_text = bool(text)
         stored_text = text if has_text else "[non-text message]"
 
-        if self.config["behavior"].get("log_all_messages", True):
-            row = await self.db.record_message(
-                chat_id, DIR_IN, STATUS_RECEIVED, stored_text, telegram_id=event.message.id, mark_unread=True,
-            )
-        else:
-            row = {
-                "id": None, "chat_id": chat_id, "telegram_id": event.message.id, "direction": DIR_IN,
-                "status": STATUS_RECEIVED, "text": stored_text,
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-            }
+        # Always stored: the platform keeps a complete record of every
+        # conversation (the pre-platform log_all_messages switch is gone).
+        row = await self.db.record_message(
+            chat_id, DIR_IN, STATUS_RECEIVED, stored_text, telegram_id=event.message.id, mark_unread=True,
+        )
 
         if row is not None:
             await self.push_message(row)
@@ -1619,7 +1730,7 @@ class SessionRuntime:
         if not has_text:
             log.info("[%s]   no text to reply to — skipping.", self.session_id)
             return
-        if self.config["behavior"].get("global_pause"):
+        if self.paused():
             log.info("[%s]   automation is globally paused — skipping.", self.session_id)
             return
 
@@ -1630,12 +1741,8 @@ class SessionRuntime:
         if conversation and conversation["automation_paused"]:
             log.info("[%s]   this conversation is paused — skipping.", self.session_id)
             return
-        if not self.within_active_hours(self.config["timing"]):
-            timing = self.config["timing"]
-            log.info("[%s]   outside active hours (%s-%s %s) — skipping.", self.session_id,
-                     timing.get("active_hours_start"), timing.get("active_hours_end"), timing.get("timezone"))
-            return
-
+        # Quiet hours do not skip the reply; draft_worker holds it until
+        # they end.
         self.schedule_draft(chat_id)
 
     async def on_outgoing(self, event: events.NewMessage.Event) -> None:
@@ -1647,8 +1754,6 @@ class SessionRuntime:
         if text and text in (self.in_flight_sends.get(chat_id) or []):
             return
         if not text and self.in_flight_media.get(chat_id):
-            return
-        if not self.config["behavior"].get("log_all_messages", True):
             return
 
         try:
@@ -1682,11 +1787,11 @@ class SessionRuntime:
         changed. A blank device_model means it has not been assigned yet, so
         derive a deterministic one and persist it — from then on the stored
         value wins, even if device_profiles.py's list later changes."""
-        identity = dict(self.config.get("identity") or {})
+        identity = dict(self.account.get("identity") or {})
         if identity.get("device_model"):
             return identity
         identity = device_profiles.derive(self.session_id)
-        await self.save_config({**self.config, "identity": identity})
+        await self.save_account({**self.account, "identity": identity})
         log.info(
             "[%s] Assigned device identity: %s / %s / %s",
             self.session_id, identity["device_model"],
@@ -1751,7 +1856,7 @@ class SessionRuntime:
                     "[%s] Telegram connected as %s. Listening for private messages.",
                     self.session_id, self.me_info["name"],
                 )
-                if self.config["behavior"].get("global_pause"):
+                if self.paused():
                     last = ""
                     with suppress(OSError):
                         last = (self.data_dir / "last_halt.txt").read_text(encoding="utf-8").strip()
@@ -1783,11 +1888,12 @@ class SessionRuntime:
             "telegram_connected": self.telegram_state["connected"],
             "telegram_error": self.telegram_state["error"],
             "me": self.me_info,
-            "global_pause": self.config["behavior"].get("global_pause", False),
-            "auto_send": self.config["behavior"].get("auto_send", False),
-            "persona_configured": any(
-                (self.config["persona"].get(k) or "").strip() for k in config_store.DEFAULTS["persona"]
-            ),
+            "global_pause": self.paused(),
+            "auto_send": self.config["auto_send"],
+            "tenant_id": self.tenant_id,
+            # Kept under its old name for the panel: true once the business
+            # sections of the prompt say anything at all.
+            "persona_configured": bool(self.bundle and self.bundle.prompt.business_text.strip()),
         }
 
 

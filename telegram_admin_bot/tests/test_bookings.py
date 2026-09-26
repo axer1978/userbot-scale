@@ -188,7 +188,7 @@ def flow(app, db, monkeypatch, tmp_path):
     monkeypatch.setattr(ai_responder, "generate_reply", fake_reply)
     app.config["booking"]["enabled"] = True
     app.config["booking"]["provider"] = "@provider"
-    app.config["timing"]["timezone"] = TZ
+    app.config["timezone"] = TZ
     app.deepseek_key = "k"
     return app, sent, script
 

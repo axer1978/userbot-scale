@@ -157,7 +157,12 @@ class MediaLibrary:
         item = self._items.get(item_id)
         if item is None:
             return None
-        path = self.dir / item["file"]
+        # The index is a file on disk: an entry naming "../.." would reach
+        # another tenant's folder. Only ever hand out paths inside this one.
+        root = self.dir.resolve()
+        path = (self.dir / item["file"]).resolve()
+        if root not in path.parents:
+            return None
         return path if path.is_file() else None
 
     def __len__(self) -> int:

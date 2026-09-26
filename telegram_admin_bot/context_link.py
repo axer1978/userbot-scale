@@ -152,6 +152,7 @@ async def ensure_summary(
     history_limit: int = 60,
     refresh_after: int = 5,
     client: Optional[httpx.AsyncClient] = None,
+    usage_sink: Optional[ai_responder.UsageSink] = None,
 ) -> str:
     """The cached brief for one chat, rebuilt only once that chat has moved on.
 
@@ -179,6 +180,7 @@ async def ensure_summary(
             subject_name=(conversation or {}).get("display_name", ""),
             ai_config=ai_config,
             client=client,
+            **({"usage_sink": usage_sink} if usage_sink is not None else {}),
         )
     except ai_responder.AIResponderError as exc:
         # A failed summary must not cost the reply itself. Fall back to the
@@ -200,6 +202,7 @@ async def build_background(
     ai_config: dict[str, Any],
     settings: dict[str, Any],
     client: Optional[httpx.AsyncClient] = None,
+    usage_sink: Optional[ai_responder.UsageSink] = None,
 ) -> str:
     """What this chat should already know from the chats linked to it, or ""."""
     if not settings.get("enabled", True):
@@ -222,6 +225,7 @@ async def build_background(
             history_limit=history_limit,
             refresh_after=refresh_after,
             client=client,
+            usage_sink=usage_sink,
         )
         if brief:
             briefs.append(brief)

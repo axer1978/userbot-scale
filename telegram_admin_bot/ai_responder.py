@@ -6,7 +6,7 @@ import asyncio
 import copy
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 import httpx
 
@@ -65,19 +65,27 @@ MAX_BURST_MESSAGES = 4
 # arrives as one multi-line bubble is not a burst.
 _BURST_SPLIT = re.compile(r"\s*\|{3,}\s*|\s*\n\s*")
 
-BURST_OUTPUT_NOTE = (
-    "SENDING AS SEVERAL MESSAGES: real people often send a reply as a few "
-    "short messages in a row rather than one block. When your reply has more "
-    "than one thought in it, or it is getting long, break it into consecutive "
-    "messages: every line break in your output is sent as a separate message, "
-    "so put each message on its own line, exactly where a person would hit "
-    f"send. (Writing {BURST_SEPARATOR} on its own line between messages means "
-    "the same thing.) A short casual reply with two separate points is "
-    "typically two messages of one sentence each; a longer reply is split "
-    "where a person would naturally hit send — never in the middle of a "
-    "sentence. A reply that is a single short thought stays one line. Use at "
-    f"most {MAX_BURST_MESSAGES} messages and keep each one short."
-)
+def burst_note(max_messages: int = MAX_BURST_MESSAGES) -> str:
+    """The prompt instruction for replying as several short messages. With a
+    limit of 1 (config burst.max_messages) it asks for one message instead."""
+    if max_messages <= 1:
+        return "Send your reply as one single message."
+    return (
+        "SENDING AS SEVERAL MESSAGES: real people often send a reply as a few "
+        "short messages in a row rather than one block. When your reply has more "
+        "than one thought in it, or it is getting long, break it into consecutive "
+        "messages: every line break in your output is sent as a separate message, "
+        "so put each message on its own line, exactly where a person would hit "
+        f"send. (Writing {BURST_SEPARATOR} on its own line between messages means "
+        "the same thing.) A short casual reply with two separate points is "
+        "typically two messages of one sentence each; a longer reply is split "
+        "where a person would naturally hit send — never in the middle of a "
+        "sentence. A reply that is a single short thought stays one line. Use at "
+        f"most {max_messages} messages and keep each one short."
+    )
+
+
+BURST_OUTPUT_NOTE = burst_note(MAX_BURST_MESSAGES)
 
 # The brief from a linked chat is prepended under this header. The model has
 # to treat it as things it already knows, not as a document it was handed.
@@ -93,24 +101,29 @@ BASE_BACKOFF_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 60.0
 
 
+# Awaited with (model, token counts) after every successful completion.
+UsageSink = Callable[[str, dict[str, int]], Awaitable[Any]]
+
+
 class AIResponderError(Exception):
     """Raised for any failure that should surface in the admin panel."""
 
 
-def split_burst(text: str) -> list[str]:
+def split_burst(text: str, max_messages: int = MAX_BURST_MESSAGES) -> list[str]:
     """The parts of a reply, in order: one per separator or line break.
 
     Padding around the separator and a hand that leaned on the key ("||||")
     are tolerated; empty parts are dropped; the result is capped at
-    MAX_BURST_MESSAGES with the overflow riding on the last part. A reply
-    that was nothing but separators comes back empty — the caller reports
-    that rather than sending a blank message.
+    `max_messages` (the tenant's burst.max_messages) with the overflow
+    riding on the last part. A reply that was nothing but separators comes
+    back empty — the caller reports that rather than sending a blank message.
     """
+    max_messages = max(1, int(max_messages))
     parts = [part.strip() for part in _BURST_SPLIT.split(text or "")]
     parts = [part for part in parts if part]
-    if len(parts) > MAX_BURST_MESSAGES:
-        head = parts[: MAX_BURST_MESSAGES - 1]
-        head.append(" ".join(parts[MAX_BURST_MESSAGES - 1 :]))
+    if len(parts) > max_messages:
+        head = parts[: max_messages - 1]
+        head.append(" ".join(parts[max_messages - 1 :]))
         parts = head
     return parts
 
@@ -302,6 +315,10 @@ async def generate_reply(
     background: str = "",
     booking_note: str = "",
     media_note: str = "",
+    system_prompt: Optional[str] = None,
+    language_locked: Optional[bool] = None,
+    burst_max: int = MAX_BURST_MESSAGES,
+    usage_sink: Optional[UsageSink] = None,
 ) -> str:
     """Return the draft reply text, or raise AIResponderError with a safe message.
 
@@ -311,17 +328,26 @@ async def generate_reply(
     thing in the prompt. `media_note` lists the files the reply may attach
     (see media.prompt_section); callers take the tags back out with
     media.split_attachments.
+
+    `system_prompt`, when given, is a tenant's rendered prompt layers
+    (prompt_layers.render) and replaces the persona-built one; then
+    `language_locked` says whether its language policy is fixed.
     """
     if not api_key:
         raise AIResponderError("DEEPSEEK_API_KEY is not set.")
 
-    sections = [build_system_prompt(persona)]
+    if system_prompt is not None:
+        sections = [system_prompt]
+        locked = bool(language_locked)
+    else:
+        sections = [build_system_prompt(persona)]
+        locked = language_is_pinned(persona)
     samples = _samples_section(general_samples)
     if samples:
         sections.append(samples)
     sections.extend(_contact_sections(contact))
     if adaptive_style:
-        style = describe_style(history, language_locked=language_is_pinned(persona))
+        style = describe_style(history, language_locked=locked)
         if style:
             sections.append(style)
     brief = _background_section(background)
@@ -331,7 +357,7 @@ async def generate_reply(
         sections.append(booking_note.strip())
     if (media_note or "").strip():
         sections.append(media_note.strip())
-    sections.append(BURST_OUTPUT_NOTE)
+    sections.append(burst_note(burst_max))
 
     messages = [{"role": "system", "content": "\n\n".join(sections)}]
     messages.extend(_merge_consecutive_turns(history))
@@ -339,7 +365,7 @@ async def generate_reply(
         raise AIResponderError("No conversation history to reply to.")
 
     return await _complete(
-        api_key=api_key, messages=messages, ai_config=ai_config, client=client
+        api_key=api_key, messages=messages, ai_config=ai_config, client=client, **_sink(usage_sink)
     )
 
 
@@ -354,6 +380,8 @@ async def generate_opener(
     general_samples: str = "",
     contact: Optional[dict[str, Any]] = None,
     background: str = "",
+    system_prompt: Optional[str] = None,
+    usage_sink: Optional[UsageSink] = None,
 ) -> str:
     """Draft the first message of a conversation, given what it should achieve.
 
@@ -364,7 +392,7 @@ async def generate_opener(
     if not (goal or "").strip():
         raise AIResponderError("No goal given for the outreach message.")
 
-    sections = [build_system_prompt(persona)]
+    sections = [system_prompt if system_prompt is not None else build_system_prompt(persona)]
     sections.append(
         f"You are writing the FIRST message to {recipient_name}, someone in this "
         "person's own contacts. Keep it short, personal and natural — the way you "
@@ -385,7 +413,7 @@ async def generate_opener(
         {"role": "user", "content": f"Write that message. Its purpose: {goal}"},
     ]
     text = await _complete(
-        api_key=api_key, messages=messages, ai_config=ai_config, client=client
+        api_key=api_key, messages=messages, ai_config=ai_config, client=client, **_sink(usage_sink)
     )
     return " ".join(split_burst(text))
 
@@ -427,6 +455,7 @@ async def summarize_conversation(
     subject_name: str = "",
     ai_config: dict[str, Any],
     client: Optional[httpx.AsyncClient] = None,
+    usage_sink: Optional[UsageSink] = None,
 ) -> str:
     """Condense a chat into a brief another chat can be answered with.
 
@@ -457,6 +486,7 @@ async def summarize_conversation(
         ],
         ai_config=summary_config,
         client=client,
+        **_sink(usage_sink),
     )
     if text.strip().upper().strip(".") == _NO_SUMMARY:
         return ""
@@ -470,6 +500,7 @@ async def extract_booking(
     tz_name: str,
     ai_config: dict[str, Any],
     client: Optional[httpx.AsyncClient] = None,
+    usage_sink: Optional[UsageSink] = None,
 ) -> Optional[dict[str, Any]]:
     """Whether the client has settled on a specific appointment time.
 
@@ -494,6 +525,7 @@ async def extract_booking(
         ],
         ai_config=extract_config,
         client=client,
+        **_sink(usage_sink),
     )
     return bookings.parse_extraction(text)
 
@@ -504,6 +536,7 @@ async def extract_arrival(
     history: list[dict[str, str]],
     ai_config: dict[str, Any],
     client: Optional[httpx.AsyncClient] = None,
+    usage_sink: Optional[UsageSink] = None,
 ) -> bool:
     """Whether the client's latest message says they are at the meeting place."""
     import bookings
@@ -519,6 +552,7 @@ async def extract_arrival(
         ],
         ai_config={**ai_config, "max_tokens": 30, "temperature": 0.0},
         client=client,
+        **_sink(usage_sink),
     )
     return bookings.parse_arrival(text)
 
@@ -529,8 +563,13 @@ async def _complete(
     messages: list[dict[str, str]],
     ai_config: dict[str, Any],
     client: Optional[httpx.AsyncClient] = None,
+    usage_sink: Optional[UsageSink] = None,
 ) -> str:
-    """One DeepSeek chat completion, with retry/backoff and safe error text."""
+    """One DeepSeek chat completion, with retry/backoff and safe error text.
+
+    `usage_sink(model, usage)` is awaited with the token counts of a
+    successful call (llm_usage.parse_usage). A metering failure is logged
+    and never costs the caller its reply."""
     if not api_key:
         raise AIResponderError("DEEPSEEK_API_KEY is not set.")
 
@@ -561,7 +600,10 @@ async def _complete(
                 )
             else:
                 if response.status_code == 200:
-                    return _parse_reply(response, api_key)
+                    content = _parse_reply(response, api_key)
+                    if usage_sink is not None:
+                        await _report_usage(usage_sink, payload["model"], response)
+                    return content
 
                 detail = _clip(_redact(response.text, api_key))
                 if response.status_code == 429:
@@ -592,6 +634,21 @@ async def _complete(
     finally:
         if owns_client:
             await http.aclose()
+
+
+async def _report_usage(usage_sink: UsageSink, model: str, response: httpx.Response) -> None:
+    import llm_usage
+
+    try:
+        await usage_sink(model, llm_usage.parse_usage(response.json()))
+    except Exception:
+        log.exception("Recording LLM usage failed; the reply is unaffected.")
+
+
+def _sink(usage_sink: Optional[UsageSink]) -> dict[str, Any]:
+    """Pass usage_sink on only when there is one, so a stand-in _complete
+    with the old signature (the tests use several) keeps working."""
+    return {"usage_sink": usage_sink} if usage_sink is not None else {}
 
 
 def _parse_reply(response: httpx.Response, api_key: str) -> str:

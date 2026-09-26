@@ -334,8 +334,8 @@ async def test_a_reply_is_drafted_with_the_linked_chat_s_context(app, db, monkey
     monkeypatch.setattr(app, "go_online_for", nothing)
     monkeypatch.setattr(app, "mark_read", nothing)
     monkeypatch.setattr(app, "schedule_go_offline", lambda chat_id: None)
-    app.config["timing"]["min_delay_seconds"] = 0
-    app.config["timing"]["max_delay_seconds"] = 0
+    app.config["reply_delay"] = {"min_s": 0, "max_s": 0, "distribution": "uniform"}
+    app.config["context_link"]["enabled"] = True  # off by default for tenants
 
     await seed(db, 1, "Anna Keller", (DIR_IN, "can we move friday?"))
     await seed(db, 2, "Anna Keller", (DIR_IN, "hey, me again on my new number"))
@@ -371,8 +371,8 @@ async def test_an_unlinked_chat_drafts_with_no_borrowed_context(app, db, monkeyp
     monkeypatch.setattr(app, "go_online_for", nothing)
     monkeypatch.setattr(app, "mark_read", nothing)
     monkeypatch.setattr(app, "schedule_go_offline", lambda chat_id: None)
-    app.config["timing"]["min_delay_seconds"] = 0
-    app.config["timing"]["max_delay_seconds"] = 0
+    app.config["reply_delay"] = {"min_s": 0, "max_s": 0, "distribution": "uniform"}
+    app.config["context_link"]["enabled"] = True  # off by default for tenants
 
     await seed(db, 1, "Anna", (DIR_IN, "hi"))
     await app.draft_worker(1)
