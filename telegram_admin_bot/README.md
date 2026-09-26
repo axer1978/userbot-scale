@@ -49,8 +49,8 @@ stored login becomes unreadable** and each account has to be signed in again.
 ## Deploy on a server
 
 ```bash
-git clone https://github.com/axer1978/userbot.git
-cd userbot/telegram_admin_bot
+git clone https://github.com/axer1978/userbot-scale.git
+cd userbot-scale/telegram_admin_bot
 ```
 
 Create `.env` with freshly generated secrets. The one-liner is safe to paste,
@@ -139,8 +139,9 @@ panel and gets and renews a Let's Encrypt certificate automatically.
 Once you use the profile, include `--profile public` in every `docker compose
 up`, or add `COMPOSE_PROFILES=public` to `.env` so plain commands include it.
 
-With this on, the panel's only protection is the shared admin password.
-After 5 wrong passwords from one IP within 15 minutes, that IP is refused
+With this on, the panel is protected by the admin password (plus an
+authenticator code if you turn on two-factor login — see "Hardening a public
+panel" below). After 5 wrong passwords from one IP within 15 minutes, that IP is refused
 (even with the right password) until the oldest attempt is 15 minutes old;
 panel logins also expire after 12 hours. That slows guessing from one
 address, not from many, so **use a long admin password**, like the
