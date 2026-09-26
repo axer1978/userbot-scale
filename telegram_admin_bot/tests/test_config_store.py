@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 import config_store
+from conftest import seed_session
 
 
 def test_blank_config_gets_full_defaults():
@@ -94,10 +95,7 @@ def test_identity_blank_fields_fall_back_to_defaults():
 @pytest.mark.requires_pg
 @pytest.mark.asyncio
 async def test_saving_normalises_and_persists(pg_pool):
-    async with pg_pool.acquire() as con:
-        await con.execute(
-            "INSERT INTO telegram_sessions (session_id, is_active) VALUES ($1, TRUE)", "acct01"
-        )
+    await seed_session(pg_pool, "acct01")
     saved = await config_store.save(pg_pool, "acct01", {"safety": {"daily_send_limit": "abc"}})
     assert saved["safety"]["daily_send_limit"] == 150
 
@@ -108,10 +106,7 @@ async def test_saving_normalises_and_persists(pg_pool):
 @pytest.mark.requires_pg
 @pytest.mark.asyncio
 async def test_load_seeds_defaults_for_a_session_with_no_row_yet(pg_pool):
-    async with pg_pool.acquire() as con:
-        await con.execute(
-            "INSERT INTO telegram_sessions (session_id, is_active) VALUES ($1, TRUE)", "acct01"
-        )
+    await seed_session(pg_pool, "acct01")
     loaded = await config_store.load(pg_pool, "acct01")
     assert loaded["safety"]["daily_send_limit"] == 150
     async with pg_pool.acquire() as con:
@@ -122,10 +117,7 @@ async def test_load_seeds_defaults_for_a_session_with_no_row_yet(pg_pool):
 @pytest.mark.requires_pg
 @pytest.mark.asyncio
 async def test_a_stale_revision_is_rejected_not_silently_overwritten(pg_pool):
-    async with pg_pool.acquire() as con:
-        await con.execute(
-            "INSERT INTO telegram_sessions (session_id, is_active) VALUES ($1, TRUE)", "acct01"
-        )
+    await seed_session(pg_pool, "acct01")
     _, rev1 = await config_store.save_with_revision(pg_pool, "acct01", {})
     # Someone else saves in between.
     await config_store.save(pg_pool, "acct01", {"persona": {"tone": "friendly"}})

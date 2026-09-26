@@ -95,15 +95,25 @@ async def pg_pool():
             await admin.close()
 
 
+async def seed_session(pool, session_id: str, *, active: bool = True, name: str = "", industry_id: int = 1) -> int:
+    """A telegram_sessions row plus the tenant that owns it, the way
+    SessionRegistry.create makes them. Returns the tenant id."""
+    async with pool.acquire() as con:
+        await con.execute(
+            "INSERT INTO telegram_sessions (session_id, is_active) VALUES ($1, $2)", session_id, active
+        )
+        return await con.fetchval(
+            "INSERT INTO tenants (name, industry_id, session_id, legacy_imported_at) "
+            "VALUES ($1, $2, $3, now()) RETURNING id",
+            name or session_id, industry_id, session_id,
+        )
+
+
 @pytest_asyncio.fixture
 async def db(pg_pool):
     """A `Database` bound to session_id "test", with its telegram_sessions
-    row already seeded so foreign keys resolve."""
-    async with pg_pool.acquire() as con:
-        await con.execute(
-            "INSERT INTO telegram_sessions (session_id, is_active) VALUES ($1, TRUE)",
-            "test",
-        )
+    row and tenant already seeded so foreign keys resolve."""
+    await seed_session(pg_pool, "test")
     database = Database(pg_pool, "test")
     await database.connect()
     yield database

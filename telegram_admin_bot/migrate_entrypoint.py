@@ -13,7 +13,7 @@ exits 0 (or non-zero on failure). docker-compose's
 `condition: service_completed_successfully` makes panel/manager wait on this
 exit code before they ever open a connection.
 
-Requires DATABASE_URL. Nothing else.
+Requires DATABASE_URL, and USERBOT_MASTER_KEY for the customer_ref backfill.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import os
 import sys
 
 import pg
+import tenants
 
 
 async def main() -> int:
@@ -34,6 +35,9 @@ async def main() -> int:
     pool = await pg.create_pool(dsn, min_size=1, max_size=2)
     try:
         applied = await pg.apply_migrations(pool)
+        # Data steps that need Python (the master key, schema validation), so
+        # they can't live in a .sql migration. Idempotent: a no-op once done.
+        backfilled = await tenants.backfill(pool)
     finally:
         await pool.close()
 
@@ -41,6 +45,14 @@ async def main() -> int:
         print(f"migrate_entrypoint: applied migrations {applied}")
     else:
         print("migrate_entrypoint: database already at latest schema version")
+    for item in backfilled["imported"]:
+        print(
+            f"migrate_entrypoint: tenant {item['tenant_id']}: imported settings "
+            f"{sorted(item['config'])}, persona sections {item['prompt_sections']}"
+            + (f", dropped {item['dropped']}" if item["dropped"] else "")
+        )
+    if backfilled["customer_refs"]:
+        print(f"migrate_entrypoint: set customer_ref on {backfilled['customer_refs']} conversation(s)")
     return 0
 
 
