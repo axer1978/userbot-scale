@@ -172,6 +172,65 @@ the first address in that header as the client, so nginx's usual
 `$proxy_add_x_forwarded_for` (which appends to whatever the visitor sent)
 would let anyone fake their IP and dodge the login rate limit.
 
+### Hardening a public panel
+
+Do these once the panel has a public address. In order of how much they
+protect:
+
+**1. Two-factor login.** With `ADMIN_TOTP_SECRET` set, signing in takes the
+password *and* the current 6-digit code from an authenticator app (Google
+Authenticator, Authy, 1Password, ...). A leaked or guessed password alone
+gets nowhere, and each code works only once.
+
+```bash
+umask 077; docker compose exec -T panel python totp.py > /tmp/totp.txt   # secret + app link, only you can read it
+head -1 /tmp/totp.txt >> .env                                   # ADMIN_TOTP_SECRET=...
+sudo apt install -y qrencode && tail -1 /tmp/totp.txt | qrencode -t ansiutf8   # scan with the app
+rm /tmp/totp.txt
+docker compose up -d --force-recreate panel
+```
+
+No QR scanner? Add the account in the app by typing the `ADMIN_TOTP_SECRET`
+value (`grep ADMIN_TOTP_SECRET .env`) as a time-based key. Sign in once in a
+private window before closing your current session, to confirm the code is
+accepted. Lost the phone? Remove the line from `.env` and recreate the
+panel; then set up a new secret.
+
+**2. nginx rate limits and scanner catch-all.** `deploy/nginx-panel.conf`
+already limits logins to 10 a minute per IP (on top of the panel's own
+5-wrong-in-15-minutes lockout), caps connections, cuts off slow clients and
+sends security headers. Add the catch-all so requests by bare IP, not by the
+panel's name, get dropped without a response:
+
+```bash
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo cp deploy/nginx-default-deny.conf /etc/nginx/sites-available/default-deny
+sudo ln -sf /etc/nginx/sites-available/default-deny /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**3. fail2ban.** Bans an address at the firewall for an hour after 10 failed
+or refused logins within 10 minutes:
+
+```bash
+sudo apt install -y fail2ban
+sudo cp deploy/fail2ban/userbot-panel.conf /etc/fail2ban/filter.d/
+sudo cp deploy/fail2ban/userbot-panel.local /etc/fail2ban/jail.d/
+sudo systemctl restart fail2ban
+sudo fail2ban-client status userbot-panel
+```
+
+Banned yourself: `sudo fail2ban-client set userbot-panel unbanip <your-ip>`.
+
+**4. The server itself.**
+- In the cloud firewall (e.g. AWS security group), allow SSH (22) only from
+  your own IP, and nothing inbound besides 22, 80 and 443.
+- Keep security updates automatic:
+  `sudo apt install -y unattended-upgrades && sudo dpkg-reconfigure -plow unattended-upgrades`.
+- Log in to the server with keys only (the AWS default); don't enable
+  password SSH.
+- Back up `.env`. Everyone who can read it can decrypt every stored login.
+
 ## Add a Telegram account
 
 Open the account picker at the top left and choose **+ Add account**. With no

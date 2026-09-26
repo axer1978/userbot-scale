@@ -1,0 +1,12 @@
+# fail2ban jail: 10 failed/refused admin logins within 10 minutes bans the
+# address at the firewall for an hour — longer and wider than the panel's
+# own lockout, and it covers the whole server, not just the login page.
+# Unban yourself with: sudo fail2ban-client set userbot-panel unbanip <ip>
+[userbot-panel]
+enabled  = true
+port     = http,https
+filter   = userbot-panel
+logpath  = /var/log/nginx/userbot-panel.access.log
+maxretry = 10
+findtime = 10m
+bantime  = 1h
