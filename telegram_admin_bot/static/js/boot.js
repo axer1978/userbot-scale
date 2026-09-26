@@ -2,26 +2,6 @@
 
 /* ----------------------------------------------------------------- boot */
 
-$("open-settings").addEventListener("click", () => {
-  if (state.config) fillSettings(state.config);
-  $("settings").classList.add("open");
-});
-$("close-settings").addEventListener("click", () => $("settings").classList.remove("open"));
-$("settings").addEventListener("click", (ev) => {
-  if (ev.target === $("settings")) $("settings").classList.remove("open");
-});
-
-$("settings-form").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  try {
-    const saved = await sApi("PUT", "/config", collectSettings());
-    applyConfig(saved);
-    fillSettings(saved);
-    $("settings").classList.remove("open");
-    toast("Settings saved.", "info");
-  } catch (err) { toast(err.message); }
-});
-
 $("global-pause").addEventListener("click", async () => {
   const next = !(state.config && state.config.behavior.global_pause);
   try {

@@ -251,7 +251,6 @@ async function loadSessionData(sessionId) {
     const cfg = await sApi("GET", "/config", undefined, sessionId);
     if (sessionId !== state.sessionId) return;
     applyConfig(cfg);
-    fillSettings(cfg);
   } catch (err) { toast("Could not load config: " + err.message); }
 
   try {
@@ -275,6 +274,7 @@ async function selectSession(sessionId) {
   state.messages = [];
   state.activeChatId = null;
   state.config = null;
+  state.tenantConfig = null;
   state.status = null;
   state.drafting = new Set();
   state.links = [];

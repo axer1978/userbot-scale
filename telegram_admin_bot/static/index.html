@@ -25,7 +25,8 @@
   <button id="open-outreach" class="btn needs-login">Outreach</button>
   <button id="open-media" class="btn">Media</button>
   <button id="open-style" class="btn">Style</button>
-  <button id="open-settings" class="btn">Settings</button>
+  <button id="open-settings" class="btn" title="How this client's bot behaves: config, prompt, versions">Settings</button>
+  <button id="open-platform" class="btn" title="All clients, industries and the platform rules">Clients</button>
   <button id="logout" class="btn">Log out</button>
 </header>
 
@@ -123,206 +124,18 @@
   </section>
 </main>
 
-<div id="settings">
-  <div class="sheet">
-    <h2>Settings</h2>
-    <p class="hint">Saved straight to <code>config.json</code> — no restart needed. Persona fields start blank;
-      fill them in before expecting useful replies.</p>
-    <form id="settings-form">
-      <fieldset>
-        <legend>Persona</legend>
-        <div class="field"><label for="p-purpose">Purpose — what is this assistant for?</label>
-          <textarea id="p-purpose" rows="3"></textarea></div>
-        <div class="field"><label for="p-tone">Tone &amp; style</label>
-          <textarea id="p-tone" rows="3"></textarea></div>
-        <div class="field"><label for="p-languages">Languages</label>
-          <textarea id="p-languages" rows="2"></textarea></div>
-        <div class="field"><label for="p-boundaries">Boundaries — hard rules it must never break</label>
-          <textarea id="p-boundaries" rows="3"></textarea></div>
-        <div class="field"><label for="p-signature">Sign-off behaviour</label>
-          <textarea id="p-signature" rows="2"></textarea></div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Timing</legend>
-        <div class="row">
-          <div class="field"><label for="t-min">Min delay (seconds)</label>
-            <input id="t-min" type="number" min="0" step="1"></div>
-          <div class="field"><label for="t-max">Max delay (seconds)</label>
-            <input id="t-max" type="number" min="0" step="1"></div>
-        </div>
-        <div class="field check">
-          <input id="t-hours-on" type="checkbox">
-          <label for="t-hours-on">Only draft replies during active hours</label>
-        </div>
-        <div class="row">
-          <div class="field"><label for="t-start">Active from</label><input id="t-start" type="time"></div>
-          <div class="field"><label for="t-end">Active until</label><input id="t-end" type="time"></div>
-          <div class="field"><label for="t-tz">Timezone (IANA, e.g. Europe/Berlin)</label>
-            <input id="t-tz" type="text" placeholder="UTC"></div>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Behaviour</legend>
-        <div class="field check">
-          <input id="b-auto" type="checkbox">
-          <label for="b-auto">Auto-send AI replies without my approval</label>
-        </div>
-        <div class="field check">
-          <input id="b-log" type="checkbox">
-          <label for="b-log">Log all messages to the database</label>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Sounding human</legend>
-        <div class="field check">
-          <input id="h-adaptive" type="checkbox">
-          <label for="h-adaptive">Match how each person writes (length, emoji, formality, language)</label>
-        </div>
-        <div class="field check">
-          <input id="h-typing" type="checkbox">
-          <label for="h-typing">Show “typing…” before sending</label>
-        </div>
-        <div class="field check">
-          <input id="h-read" type="checkbox">
-          <label for="h-read">Mark their message read, so they get the second tick</label>
-        </div>
-        <div class="row">
-          <div class="field"><label for="h-cps">Typing speed (characters/second)</label>
-            <input id="h-cps" type="number" min="1" max="100" step="1"></div>
-          <div class="field"><label for="h-tmax">Longest it will ever type (s)</label>
-            <input id="h-tmax" type="number" min="1" max="300" step="1"></div>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Presence</legend>
-        <div class="field check">
-          <input id="pr-on" type="checkbox">
-          <label for="pr-on">Go offline between conversations, online only around replying</label>
-        </div>
-        <p class="hint" style="margin:4px 0 12px">Coming online happens some time before it opens the
-          chat, and going offline again happens some time after sending — never at the exact moment
-          a message is sent.</p>
-        <div class="row">
-          <div class="field"><label for="pr-on-min">Delay before coming online (s, min)</label>
-            <input id="pr-on-min" type="number" min="0" max="120" step="1"></div>
-          <div class="field"><label for="pr-on-max">…max</label>
-            <input id="pr-on-max" type="number" min="0" max="120" step="1"></div>
-        </div>
-        <div class="row">
-          <div class="field"><label for="pr-off-min">Delay before going offline again (s, min)</label>
-            <input id="pr-off-min" type="number" min="0" max="3600" step="1"></div>
-          <div class="field"><label for="pr-off-max">…max</label>
-            <input id="pr-off-max" type="number" min="0" max="3600" step="1"></div>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Context between chats</legend>
-        <div class="field check">
-          <input id="cl-on" type="checkbox">
-          <label for="cl-on">Let a chat answer with what a linked chat already knows</label>
-        </div>
-        <div class="field check">
-          <input id="cl-auto" type="checkbox">
-          <label for="cl-auto">Link chats automatically when they are clearly the same
-            person (same @username, or the same full name)</label>
-        </div>
-        <div class="row">
-          <div class="field"><label for="cl-sources">Linked chats used per reply</label>
-            <input id="cl-sources" type="number" min="1" max="5" step="1"></div>
-          <div class="field"><label for="cl-history">Messages summarised from each</label>
-            <input id="cl-history" type="number" min="5" max="300" step="5"></div>
-          <div class="field"><label for="cl-refresh">Rebuild after this many new messages</label>
-            <input id="cl-refresh" type="number" min="1" max="200" step="1"></div>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>AI</legend>
-        <div class="row">
-          <div class="field"><label for="a-model">Model</label><input id="a-model" type="text"></div>
-          <div class="field"><label for="a-tokens">Max tokens</label>
-            <input id="a-tokens" type="number" min="1" max="8192" step="1"></div>
-          <div class="field"><label for="a-temp">Temperature</label>
-            <input id="a-temp" type="number" min="0" max="2" step="0.1"></div>
-          <div class="field"><label for="a-concurrency">Parallel replies</label>
-            <input id="a-concurrency" type="number" min="1" max="32" step="1"
-                   title="How many chats may be drafted at the same time. Higher answers a busy inbox faster; too high can trip the API rate limit."></div>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Bookings</legend>
-        <p class="hint">When a client settles on a date and time in chat, the request
-          is sent to the provider's Telegram account, who replies <b>YES</b> or
-          <b>NO</b>; the client is then told in the usual reply flow. Times are read
-          in the timezone set under Timing.</p>
-        <div class="row">
-          <label class="check"><input id="bk-on" type="checkbox">
-            Detect appointments and ask the provider to confirm</label>
-        </div>
-        <div class="row">
-          <div class="field"><label for="bk-provider">Provider account</label>
-            <input id="bk-provider" type="text" placeholder="@username or numeric id"
-                   title="The Telegram account (a person or a bot) that confirms or declines. The AI never replies to this account."></div>
-          <div class="field"><label for="bk-duration">Default length (min)</label>
-            <input id="bk-duration" type="number" min="5" max="1440" step="5"></div>
-          <div class="field"><label for="bk-scan">Messages checked</label>
-            <input id="bk-scan" type="number" min="2" max="100" step="1"
-                   title="How many recent messages are read when looking for an agreed time."></div>
-        </div>
-        <div class="row">
-          <div class="field"><label for="bk-remind">Check in this long before (min)</label>
-            <input id="bk-remind" type="number" min="0" max="10080" step="15"
-                   title="Before a confirmed appointment the client is asked whether they are still coming. 0 = off."></div>
-        </div>
-        <div class="row">
-          <div class="field"><label for="bk-arrival">Arrival instructions</label>
-            <textarea id="bk-arrival" rows="3"
-              placeholder="Sent word for word when the client says they have arrived: address, floor, door code, how to get in."></textarea></div>
-        </div>
-        <div class="row">
-          <div class="field"><label for="bk-calendar">Google Calendar ID (optional)</label>
-            <input id="bk-calendar" type="text" placeholder="e.g. abc123@group.calendar.google.com"
-                   title="Requests appear as tentative events; YES confirms, NO removes. Needs GOOGLE_SERVICE_ACCOUNT_FILE in .env — see google_calendar.py."></div>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Account safety</legend>
-        <p class="hint">Limits that protect the Telegram account itself. Telegram
-          does not publish its thresholds — these are deliberately low. Raising
-          them raises the chance of the number being limited or banned.</p>
-        <div class="row">
-          <div class="field"><label for="s-daily">Messages per day</label>
-            <input id="s-daily" type="number" min="1" max="10000" step="1"
-                   title="Total messages sent per day, replies included."></div>
-          <div class="field"><label for="s-peers">People per day</label>
-            <input id="s-peers" type="number" min="1" max="10000" step="1"
-                   title="How many different people may be written to in a day. Breadth looks like spam much faster than depth."></div>
-          <div class="field"><label for="s-flood">Max wait (s)</label>
-            <input id="s-flood" type="number" min="0" max="86400" step="1"
-                   title="A Telegram rate limit longer than this stops the account instead of being slept through."></div>
-        </div>
-        <div class="row">
-          <label class="check"><input id="s-halt" type="checkbox">
-            Stop everything if Telegram flags this account as spammy</label>
-        </div>
-        <div class="row">
-          <label class="check"><input id="s-known" type="checkbox">
-            Only message people in contacts or who wrote first</label>
-        </div>
-      </fieldset>
-
-      <div class="sheet-actions">
-        <button type="button" id="close-settings" class="btn">Cancel</button>
-        <button type="submit" class="btn primary">Save settings</button>
-      </div>
-    </form>
+<div id="platform">
+  <div class="pf-shell">
+    <div class="pf-top">
+      <h2>Clients</h2>
+      <span class="muted" id="pf-crumb"></span>
+      <span class="spacer"></span>
+      <button type="button" id="pf-close" class="btn">Close</button>
+    </div>
+    <div class="pf-body">
+      <nav id="pf-tree"></nav>
+      <section id="pf-detail"></section>
+    </div>
   </div>
 </div>
 
@@ -380,18 +193,8 @@
     <p class="hint">Two ways to shape how it writes: samples that apply everywhere, and
       per-contact overrides for timing, length and tone.</p>
 
-    <fieldset>
-      <legend>General writing samples</legend>
-      <p class="hint" style="margin:0 0 10px">Paste real messages this account has sent
-        before (any format — a chat export, or just pasted lines). Used to learn phrasing
-        and tone for every conversation, alongside the persona in Settings.</p>
-      <div class="field">
-        <textarea id="fs-samples" rows="8" placeholder="e.g.&#10;haha yeah for sure&#10;lmk when you're free&#10;omw, 5 min"></textarea>
-      </div>
-      <div class="sheet-actions">
-        <button type="button" id="fs-save" class="btn primary">Save writing samples</button>
-      </div>
-    </fieldset>
+    <p class="hint">Writing samples for every conversation are part of the client's prompt now:
+      <b>Settings → Prompt → Examples of how we write</b>.</p>
 
     <fieldset>
       <legend>Per-contact style</legend>
@@ -462,25 +265,11 @@
 
     <div id="m-grid" class="media-grid"></div>
 
-    <fieldset style="margin-top:16px">
-      <legend>Rules</legend>
-      <div class="row">
-        <label class="check"><input id="m-enabled" type="checkbox">
-          Let the AI send these when asked</label>
-      </div>
-      <div class="row">
-        <label class="check"><input id="m-ask-video" type="checkbox">
-          Videos only after asking — the AI first asks whether they want it, and sends it once they say yes</label>
-      </div>
-      <div class="row">
-        <label class="check"><input id="m-video-approve" type="checkbox">
-          A reply with a video always waits for my approval, even with auto-send on</label>
-      </div>
-    </fieldset>
+    <p class="hint" style="margin-top:16px">Whether the AI may send these, and the video rules, are in
+      <b>Settings → Config</b> under <code>media</code>.</p>
 
     <div class="sheet-actions">
       <button type="button" id="m-close" class="btn">Close</button>
-      <button type="button" id="m-save" class="btn primary">Save rules</button>
     </div>
   </div>
 </div>
@@ -495,6 +284,7 @@
 <script src="/js/media.js"></script>
 <script src="/js/socket.js"></script>
 <script src="/js/accounts.js"></script>
+<script src="/js/platform.js"></script>
 <script src="/js/boot.js"></script>
 </body>
 </html>

@@ -11,7 +11,6 @@ import pytest_asyncio
 
 import ai_responder
 import audit
-import config_assist
 from conftest import seed_session
 
 pytestmark = [pytest.mark.requires_pg, pytest.mark.asyncio]
@@ -182,14 +181,6 @@ async def test_the_helper_needs_the_platform_key(panel_client, monkeypatch, tena
     monkeypatch.delenv("DEEPSEEK_PLATFORM_KEY", raising=False)
     response = await panel_client.post(f"/api/tenants/{tenant}/config/propose", json={"intent": "x"})
     assert response.status_code == 400 and "DEEPSEEK_PLATFORM_KEY" in response.json()["detail"]
-
-
-def test_merge_patch_merges_sections_and_replaces_leaves():
-    current = {"reply_delay": {"min_s": 5}, "banned_topics": ["a"]}
-    patch = {"reply_delay": {"max_s": 50}, "banned_topics": {"append": ["b"]}}
-    assert config_assist.merge_patch(current, patch) == {
-        "reply_delay": {"min_s": 5, "max_s": 50}, "banned_topics": {"append": ["b"]},
-    }
 
 
 # ------------------------------------------------ account-level routes

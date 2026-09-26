@@ -55,7 +55,7 @@ function handleEvent(data) {
       state.media = data.media || [];
       if ($("media").classList.contains("open")) renderMedia();
       applyConfig(data.config);
-      fillSettings(data.config);
+      applyTenantConfig(data.tenant_config);
       applyStatus(data.status);
       renderSidebar();
       break;
@@ -78,7 +78,11 @@ function handleEvent(data) {
 
     case "config":
       applyConfig(data.config);
-      if (!$("settings").classList.contains("open")) fillSettings(data.config);
+      break;
+
+    // The tenant's config changed (Settings / Clients, or the industry).
+    case "tenant_config":
+      applyTenantConfig(data.config);
       break;
 
     case "status":
@@ -157,7 +161,7 @@ function applyStatus(status) {
     if (status.telegram_error) toast(status.telegram_error);
   }
   if (status.persona_configured === false) {
-    $("mode").textContent = "persona not configured — open Settings";
+    $("mode").textContent = "no business details in the prompt yet — open Settings";
   }
 }
 

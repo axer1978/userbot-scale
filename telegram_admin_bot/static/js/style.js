@@ -131,19 +131,8 @@ $("cs-reset").addEventListener("click", async () => {
   } catch (err) { toast(err.message); }
 });
 
-$("fs-save").addEventListener("click", async () => {
-  try {
-    const cfg = JSON.parse(JSON.stringify(state.config));
-    cfg.finetune = cfg.finetune || { writing_samples: "" };
-    cfg.finetune.writing_samples = $("fs-samples").value;
-    applyConfig(await sApi("PUT", "/config", cfg));
-    toast("Writing samples saved.", "info");
-  } catch (err) { toast(err.message); }
-});
-
 $("open-style").addEventListener("click", async () => {
   $("style").classList.add("open");
-  $("fs-samples").value = state.config && state.config.finetune ? state.config.finetune.writing_samples : "";
   $("cs-form").style.display = "none";
   $("cs-select").value = "";
   styleState.activeChatId = null;

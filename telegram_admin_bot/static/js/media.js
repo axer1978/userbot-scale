@@ -72,16 +72,8 @@ async function uploadFiles(files) {
   progress.textContent = "";
 }
 
-function fillMediaRules() {
-  const m = (state.config && state.config.media) || {};
-  $("m-enabled").checked = m.enabled !== false;
-  $("m-ask-video").checked = m.ask_before_video !== false;
-  $("m-video-approve").checked = m.videos_need_approval !== false;
-}
-
 $("open-media").addEventListener("click", async () => {
   $("media").classList.add("open");
-  fillMediaRules();
   renderMedia();
   try { state.media = await sApi("GET", "/media"); renderMedia(); }
   catch (err) { toast(err.message); }
@@ -89,18 +81,6 @@ $("open-media").addEventListener("click", async () => {
 $("m-close").addEventListener("click", () => $("media").classList.remove("open"));
 $("media").addEventListener("click", (ev) => {
   if (ev.target === $("media")) $("media").classList.remove("open");
-});
-$("m-save").addEventListener("click", async () => {
-  try {
-    const cfg = JSON.parse(JSON.stringify(state.config));
-    cfg.media = {
-      enabled: $("m-enabled").checked,
-      ask_before_video: $("m-ask-video").checked,
-      videos_need_approval: $("m-video-approve").checked,
-    };
-    applyConfig(await sApi("PUT", "/config", cfg));
-    toast("Media rules saved.", "info");
-  } catch (err) { toast(err.message); }
 });
 $("m-files").addEventListener("change", async (ev) => {
   await uploadFiles(Array.from(ev.target.files || []));

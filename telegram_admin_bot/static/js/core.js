@@ -6,7 +6,10 @@ const state = {
   conversations: [],
   messages: [],
   activeChatId: null,
+  // This account's own settings (pause switch, per-contact styles), and the
+  // effective config of the tenant it belongs to (see settings.js).
   config: null,
+  tenantConfig: null,
   status: null,
   auth: null,
   drafting: new Set(),
