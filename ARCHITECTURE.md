@@ -8,15 +8,15 @@ Code lives in `telegram_admin_bot/`; module names below are files there.
 ```
  browser ──SSH tunnel / HTTPS──▶ panel (panel.py + platform_api.py)
                                     │  reads/writes Postgres directly
-                                    │  commands + live events over Redis
+                                    │  commands + live events over Valkey
                                     ▼
  Postgres ◀──────────────▶ manager (manager.py)
  (all state)                  └─ worker processes, each running up to N
- Redis                           SessionRuntime (session_runtime.py) =
+ Valkey                          SessionRuntime (session_runtime.py) =
  (command bus, events)           one live Telegram client per account
 ```
 
-- **panel** is the control plane and holds no Telegram connection. Anything that needs a live client (send, approve a draft) goes over Redis to the worker holding that account's lease.
+- **panel** is the control plane and holds no Telegram connection. Anything that needs a live client (send, approve a draft) goes over Valkey (Redis-compatible) to the worker holding that account's lease.
 - **manager** runs workers. A worker must hold an account's **lease** in Postgres (leasing.py) before connecting, so one account never runs twice.
 - **migrate** is a one-shot job: SQL migrations, then `tenants.backfill()` (the Python-side data steps).
 

@@ -15,17 +15,17 @@ account.
  browser ──SSH tunnel (or optional HTTPS)──▶ panel ──┐
                                                      ├──▶ Postgres  (sessions, messages, config, leases)
                                      manager ────────┤
-                               (worker processes     └──▶ Redis     (command bus + live events)
+                               (worker processes     └──▶ Valkey    (command bus + live events)
                                 holding Telegram
                                 clients)
 ```
 
 | Service | What it does |
 |---|---|
-| `panel` | The admin UI and API (`panel.py`). Control plane only: it **holds no Telegram connections**. It reads and writes Postgres directly. Anything that needs a live client, like sending a message or approving a draft, goes over Redis to whichever worker runs that account. |
+| `panel` | The admin UI and API (`panel.py`). Control plane only: it **holds no Telegram connections**. It reads and writes Postgres directly. Anything that needs a live client, like sending a message or approving a draft, goes over Valkey to whichever worker runs that account. |
 | `manager` | Starts `WORKER_COUNT` worker processes (`manager.py`). Each one runs up to `SESSIONS_PER_WORKER` accounts, one `SessionRuntime` per account with its own live Telethon client. It restarts a worker that dies. Every ~15 s each worker picks up newly activated accounts that nothing is running yet. |
 | `postgres` | The source of truth: accounts (with credentials encrypted), conversations, messages, per-account settings, outreach queue, and the leases. |
-| `redis` | The command bus (panel → worker) and live-event fan-out (worker → open panel tabs). It stores nothing that outlives a request. |
+| `valkey` | Valkey (Redis-compatible): the command bus (panel → worker) and live-event fan-out (worker → open panel tabs). It stores nothing that outlives a request. |
 | `migrate` | A one-shot job that applies database migrations and exits. `panel` and `manager` wait for it. |
 | `caddy` | Optional. Serves the panel over public HTTPS. Off unless you enable it. See below. |
 
@@ -76,8 +76,8 @@ docker compose up -d --build
 docker compose ps -a
 ```
 
-`userbot-postgres`, `userbot-redis`, `userbot-panel` and `userbot-manager`
-should be `Up` (Postgres and Redis report `healthy`). `userbot-migrate` should
+`userbot-postgres`, `userbot-valkey`, `userbot-panel` and `userbot-manager`
+should be `Up` (Postgres and Valkey report `healthy`). `userbot-migrate` should
 show `Exited (0)`, because it is a one-shot job. It only appears with `-a`.
 Anything else means a failed migration: check `docker compose logs migrate`.
 
@@ -480,7 +480,7 @@ PG_TEST_DSN=postgresql://user:password@localhost:5432/userbot_test python -m pyt
 Each Postgres-backed test creates its own throwaway schema, migrates it and
 drops it afterwards, so the target database is left as it was. Without
 `PG_TEST_DSN`, the Postgres tests are skipped (reported as skipped, not
-passed) and the rest still run. Redis is replaced by `fakeredis`, so no Redis
+passed) and the rest still run. Valkey is replaced by `fakeredis`, so no Valkey
 is needed.
 
 ## Troubleshooting
@@ -549,7 +549,7 @@ reference only. Don't use them to deploy.
 ## Files
 
 ```
-docker-compose.yml     the stack: postgres, redis, migrate, panel, manager, optional caddy
+docker-compose.yml     the stack: postgres, valkey, migrate, panel, manager, optional caddy
 Dockerfile             one image for panel, manager and migrate
 Caddyfile              optional public HTTPS front door (profile "public")
 panel.py               admin panel + API; control plane, no Telegram connections
@@ -557,7 +557,7 @@ manager.py             spawns worker processes, restarts dead ones, adopts new a
 session_runtime.py     one Telegram account: client, drafting, sending, safety, outreach, bookings
 login_flow.py          phone -> code -> 2FA sign-in behind "Add account"
 leasing.py             one-worker-per-account leases in Postgres
-commands.py            Redis command bus (panel -> worker) and live events (worker -> panel)
+commands.py            Valkey command bus (panel -> worker) and live events (worker -> panel)
 database.py            Postgres access: SessionRegistry (accounts) and the tenant-scoped Database
 tenants.py             tenants, industries, prompt versions; one-off import of pre-platform settings
 tenant_config.py       the per-client config schema and its platform <- industry <- client layers

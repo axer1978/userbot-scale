@@ -38,6 +38,7 @@ Please read this list before deploying.
 4. **Context-link is off.**
 5. **The Settings sheet is replaced by the Clients view.** Writing samples and the media rules moved there.
 6. **Files move.** On first start, the account's folder moves from `data/<account-id>/` to `data/tenants/<id>/`.
+7. **Valkey replaces Redis** (`valkey/valkey:8-alpine`, service `valkey`). It only carries commands and live events, so nothing needs copying; `--remove-orphans` below removes the old `userbot-redis` container.
 
 ## Deploying: rehearse on a copy first
 
@@ -60,7 +61,7 @@ docker compose run --rm --no-deps migrate sh -c 'DATABASE_URL="${DATABASE_URL%/*
 
 # 3. Throw the copy away, then deploy for real
 docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" upgrade_check'
-docker compose up -d
+docker compose up -d --remove-orphans
 ```
 
 To use **Ask AI**, add `DEEPSEEK_PLATFORM_KEY=` to `.env` yourself, then run
@@ -77,11 +78,12 @@ To use **Ask AI**, add `DEEPSEEK_PLATFORM_KEY=` to `.env` yourself, then run
 
 ## Open decisions for you
 
-1. **AI disclosure.** The base rules have the bot admit being automated when sincerely asked. Should it also say so up front, e.g. with a configurable first-message line? I recommend yes, given the EU AI Act transparency rule.
-2. **"I want the booking number to be specific per person."** I didn't understand this well enough to build it. Do you mean a per-customer sequence (Anna's #1, #2), a short unique code instead of a global counter, or the customer's name in the owner's `YES` reply? I need the answer before phase 2.
-3. **The base rules are my draft.** Edit them under **Clients → Platform rules**; each edit is versioned.
-4. **Industries.** Only *General* exists. Which industries should I set up, or will you create them in the panel?
-5. **Prices.** The `llm_prices` values (DeepSeek USD per 1M tokens, `usd_to_eur` 0.86) are what I knew when writing the migration. Verify them before phase 3 enforces caps.
-6. **Changing a client's phone number** isn't supported: a new number is a new account and a new tenant. Should a tenant be able to move to a new account and keep its history?
-7. **Postgres row-level security** as a fourth isolation layer. It would mean setting the tenant on every connection; I held off because it adds per-query overhead and complexity. Want it?
-8. **Policy holds vs blocks.** A failing reply is held for you, never dropped. Keep that, or block some categories outright (wallets, for instance)?
+Answered: the platform rules, industries and anything about what the bot
+says are configured by you in the panel or the JSON; the code doesn't ship
+opinions about them.
+
+1. **"I want the booking number to be specific per person."** Still open; needed before phase 2.
+2. **Prices.** The `llm_prices` values (DeepSeek USD per 1M tokens, `usd_to_eur` 0.86) are what I knew when writing the migration. Verify them before phase 3 enforces caps.
+3. **Changing a client's phone number** isn't supported: a new number is a new account and a new tenant. Should a tenant be able to move to a new account and keep its history?
+4. **Postgres row-level security** as a fourth isolation layer. It would mean setting the tenant on every connection; I held off because it adds per-query overhead and complexity. Want it?
+5. **Policy holds vs blocks.** A failing reply is held for you, never dropped. Keep that, or block some categories outright (wallets, for instance)?

@@ -6,7 +6,7 @@ x-app-image: &app-image
   depends_on:
     postgres:
       condition: service_healthy
-    redis:
+    valkey:
       condition: service_healthy
     migrate:
       condition: service_completed_successfully
@@ -73,12 +73,14 @@ services:
   # a given session's lease — see commands.py. Holds no data that outlives a
   # single command's round trip or a websocket's lifetime; Postgres remains
   # the only thing anything here is actually persisted to.
-  redis:
-    image: redis:7-alpine
-    container_name: userbot-redis
+  # Valkey speaks the Redis protocol; the code uses only PUBLISH/SUBSCRIBE
+  # through redis-py, so REDIS_URL keeps its name.
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: userbot-valkey
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -109,7 +111,7 @@ services:
   # account in the fleet instead of one panel per account. Holds no live
   # Telegram connections itself — it reads/writes Postgres and this
   # session's local files directly, and reaches a session's actual live
-  # client (held by whichever manager worker leased it) over the redis
+  # client (held by whichever manager worker leased it) over the valkey
   # command bus. See panel.py's module docstring for why it's built this
   # way instead of running its own SessionRuntimes.
   panel:
@@ -118,7 +120,7 @@ services:
     command: ["python", "panel.py"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://valkey:6379/0
       DATA_DIR: /app/data
       USERBOT_MASTER_KEY: ${USERBOT_MASTER_KEY:?USERBOT_MASTER_KEY must be set — see comment above}
       # SECURITY-SENSITIVE: no default on purpose. panel.py requires this
@@ -201,7 +203,7 @@ services:
     command: ["python", "manager.py"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://valkey:6379/0
       DATA_DIR: /app/data
       USERBOT_MASTER_KEY: ${USERBOT_MASTER_KEY:?USERBOT_MASTER_KEY must be set — see comment above}
       # How many SessionRuntime workers this manager replica runs, and how
