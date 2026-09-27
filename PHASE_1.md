@@ -33,10 +33,10 @@ and message flow.
 Please read this list before deploying.
 
 1. **Its prompt changes.** The old header ("write as that person … never say you're an AI") is replaced by the platform rules. Rule 1 has the bot say it is the business's automated assistant if someone sincerely asks. The old persona fields become its client sections (purpose → About, tone, boundaries, sign-off, writing samples). Check **Clients → the account → Rendered prompt** right after deploying.
-2. **Quiet hours instead of active hours.** The old window becomes its inverse. A message that arrives at night is now answered in the morning; before, it was skipped.
-3. **Policy holds.** With auto-send on, a reply containing a link, phone number, e-mail or price the config doesn't allow now waits as a draft. Fill `allowed_link_domains`, `shareable_contacts` and `price_floors` for the account.
-4. **Context-link is off.**
-5. **The Settings sheet is replaced by the Clients view.** Writing samples and the media rules moved there.
+1. **Quiet hours instead of active hours.** The old window becomes its inverse. A message that arrives at night is now answered in the morning; before, it was skipped.
+2. **Policy holds.** With auto-send on, a reply containing a link, phone number, e-mail or price the config doesn't allow now waits as a draft. Fill `allowed_link_domains`, `shareable_contacts` and `price_floors` for the account.
+3. **Context-link is off.**
+4. **The Settings sheet is replaced by the Clients view.** Writing samples and the media rules moved there.
 6. **Files move.** On first start, the account's folder moves from `data/<account-id>/` to `data/tenants/<id>/`.
 7. **Valkey replaces Redis** (`valkey/valkey:8-alpine`, service `valkey`). It only carries commands and live events, so nothing needs copying; `--remove-orphans` below removes the old `userbot-redis` container.
 
@@ -82,7 +82,9 @@ Answered: the platform rules, industries and anything about what the bot
 says are configured by you in the panel or the JSON; the code doesn't ship
 opinions about them.
 
-1. **"I want the booking number to be specific per person."** Still open; needed before phase 2.
+Booking numbers: a plain count per business, each starting at 1. Phase 2 keeps
+that when bookings move into Postgres (numbered per tenant).
+
 2. **Prices.** The `llm_prices` values (DeepSeek USD per 1M tokens, `usd_to_eur` 0.86) are what I knew when writing the migration. Verify them before phase 3 enforces caps.
 3. **Changing a client's phone number** isn't supported: a new number is a new account and a new tenant. Should a tenant be able to move to a new account and keep its history?
 4. **Postgres row-level security** as a fourth isolation layer. It would mean setting the tenant on every connection; I held off because it adds per-query overhead and complexity. Want it?
