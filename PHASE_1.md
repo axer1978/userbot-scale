@@ -85,7 +85,7 @@ opinions about them.
 Booking numbers: a plain count per business, each starting at 1. Phase 2 keeps
 that when bookings move into Postgres (numbered per tenant).
 
-2. **Prices.** The `llm_prices` values (DeepSeek USD per 1M tokens, `usd_to_eur` 0.86) are what I knew when writing the migration. Verify them before phase 3 enforces caps.
-3. **Changing a client's phone number** isn't supported: a new number is a new account and a new tenant. Should a tenant be able to move to a new account and keep its history?
-4. **Postgres row-level security** as a fourth isolation layer. It would mean setting the tenant on every connection; I held off because it adds per-query overhead and complexity. Want it?
-5. **Policy holds vs blocks.** A failing reply is held for you, never dropped. Keep that, or block some categories outright (wallets, for instance)?
+1. **Prices.** The `llm_prices` values (DeepSeek USD per 1M tokens, `usd_to_eur` 0.86) are what I knew when writing the migration. Verify them before phase 3 enforces caps.
+2. **Changing a client's phone number** isn't supported: a new number is a new account and a new tenant. Should a tenant be able to move to a new account and keep its history?
+3. **Postgres row-level security** as a fourth isolation layer. It would mean setting the tenant on every connection; I held off because it adds per-query overhead and complexity. Want it?
+4. **Policy holds vs blocks.** A failing reply is held for you, never dropped. Keep that, or block some categories outright (wallets, for instance)?
