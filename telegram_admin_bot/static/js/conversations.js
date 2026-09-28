@@ -32,7 +32,13 @@ function renderSidebar() {
 
     const meta = el("div", "conv-meta");
     if (conv.is_bot) meta.appendChild(el("span", "badge bot", "bot"));
-    if (conv.automation_paused) meta.appendChild(el("span", "badge paused", "paused"));
+    if (conv.automation_paused) {
+      const escalated = (conv.paused_reason || "").startsWith("escalation");
+      const badge = el("span", "badge " + (escalated ? "escalated" : "paused"), escalated ? "escalated" : "paused");
+      badge.title = conv.paused_reason || "paused by hand";
+      meta.appendChild(badge);
+    }
+    if (takeoverActive(conv)) meta.appendChild(el("span", "badge takeover", "you're handling"));
     if (conv.unread > 0) meta.appendChild(el("span", "unread", String(conv.unread)));
 
     const spacer = el("span"); spacer.style.flex = "1";
@@ -57,6 +63,11 @@ function renderSidebar() {
 }
 
 /* ---------------------------------------------------------------- thread */
+
+// Someone wrote in this chat by hand; the bot stays quiet until then.
+function takeoverActive(conv) {
+  return !!(conv && conv.human_takeover_until && new Date(conv.human_takeover_until) > new Date());
+}
 
 function conversationById(chatId) {
   return state.conversations.find((c) => c.chat_id === chatId) || null;
@@ -89,8 +100,23 @@ function renderThreadHeader() {
 
   header.appendChild(state.linkOptions ? linkPicker(conv) : linkButton(conv));
 
+  if (takeoverActive(conv)) {
+    const until = new Date(conv.human_takeover_until);
+    const back = el("button", "btn small", "Hand back to the bot");
+    back.title = "Someone wrote here by hand, so the bot is quiet until " +
+      until.toLocaleString([], { dateStyle: "short", timeStyle: "short" }) + ". It then carries on by itself.";
+    back.addEventListener("click", async () => {
+      try { upsertConversation(await sApi("POST", `/conversations/${conv.chat_id}/takeover`, { active: false })); }
+      catch (err) { toast(err.message); }
+    });
+    header.appendChild(el("span", "badge takeover", "bot quiet until " +
+      until.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })));
+    header.appendChild(back);
+  }
+
   const toggle = el("button", "btn small" + (conv.automation_paused ? " on" : ""),
                     conv.automation_paused ? "Automation paused" : "Pause automation");
+  if (conv.paused_reason) toggle.title = conv.paused_reason;
   toggle.addEventListener("click", async () => {
     try {
       await sApi("POST", `/conversations/${conv.chat_id}/pause`,

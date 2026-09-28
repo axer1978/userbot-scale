@@ -20,6 +20,8 @@ import asyncpg
 ADMIN = "admin"
 BOT = "bot"
 SYSTEM = "system"
+# The person using the account's own Telegram (the business owner or staff).
+OWNER = "owner"
 MIGRATION = "migration"
 
 # Events
@@ -50,6 +52,19 @@ REMINDER_SENT = "reminder_sent"
 # the tenant's own no-reply instruction.
 REPLY_SKIPPED = "reply_skipped"
 AI_LIMIT_REACHED = "ai_limit_reached"
+# Soft-off (controls.py): payload.kind says which hold was added or lifted.
+TENANT_SOFT_OFF = "tenant_soft_off"
+TENANT_RESUMED = "tenant_resumed"
+GLOBAL_STOP = "global_stop"
+GLOBAL_RESUMED = "global_resumed"
+# The account's Telegram session was logged out and its key deleted.
+HARD_OFF = "hard_off"
+BILLING_CHANGED = "billing_changed"
+# payload.trigger: new_login, volume or tripwire (anomaly.py).
+ANOMALY_DETECTED = "anomaly_detected"
+ESCALATED = "escalated"
+HUMAN_TAKEOVER = "human_takeover"
+TAKEOVER_ENDED = "takeover_ended"
 
 Executor = Union[asyncpg.Pool, asyncpg.Connection]
 

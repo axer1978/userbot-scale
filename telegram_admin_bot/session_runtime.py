@@ -26,6 +26,16 @@ are written to deferred_replies and picked up by that tick, so a restart
 overnight loses nothing. AI usage and reply limits (ai_limits.py) are
 checked before every reply.
 
+Safety (phase 3): the kill switches live in controls.py. While the
+tenant is soft-off (`paused()`), nothing is sent on its own; every send by
+the bot is checked against the switches and the send-volume anomaly right
+before it goes out, so a switch thrown elsewhere takes effect at once. A
+customer message with an escalation keyword pauses that chat and pings the
+owner; a message written by hand in a chat (on the phone, or from the
+panel) makes the bot keep quiet there for `takeover_hours`. The account
+reports its health (health.py) and checks its Telegram logins for new ones
+(anomaly.py).
+
 `media.MediaLibrary` is still files, kept per tenant under
 DATA_DIR/tenants/<tenant id> (tenants.tenant_data_dir).
 """
@@ -48,12 +58,14 @@ import httpx
 from telethon import TelegramClient, errors, events
 from telethon.crypto import AuthKey
 from telethon.sessions import MemorySession
-from telethon.tl.functions.account import UpdateStatusRequest
+from telethon.tl.functions.account import GetAuthorizationsRequest, UpdateStatusRequest
 from telethon.tl.functions.contacts import GetContactsRequest
 from telethon.tl.types import InputPeerUser, User
 
 import ai_limits
 import ai_responder
+import alerts
+import anomaly
 import audit
 import booking_flow
 import booking_store
@@ -61,7 +73,9 @@ import bookings
 import commands
 import config_store
 import context_link
+import controls
 import device_profiles
+import health
 import humanlike
 import leasing
 import llm_usage
@@ -91,6 +105,10 @@ from database import (
 )
 
 log = logging.getLogger("session_runtime")
+
+# Telegram's own service account: login codes and "new login" notices come
+# from it. Never answered; a message from it triggers a login check.
+TELEGRAM_SERVICE_ID = 777000
 
 
 class NeedsLogin(RuntimeError):
@@ -272,6 +290,13 @@ class SessionRuntime:
         self.REMINDER_TICK_SECONDS = 60
         # The last AI limit reported, so the panel hears about it once.
         self._limit_reported = ""
+        # Why this tenant is soft-off (controls.py), "" while it may send.
+        self.off_reason = ""
+        # Set once this runtime is done for good (stopped, fenced, logged
+        # out, hard-off); the worker then drops it (manager.py).
+        self.finished = False
+        self.LOGINS_CHECK_SECONDS = 300
+        self._logins_checked_at = 0.0
 
         self._ai_gate: Optional[asyncio.Semaphore] = None
         self._ai_gate_size = 0
@@ -368,7 +393,10 @@ class SessionRuntime:
             await self.db.close()
 
     async def stop(self) -> None:
+        if self._stopping:
+            return
         self._stopping = True
+        self.finished = True
         await self._stop_telegram()
         if self._lease_keeper is not None:
             await self._lease_keeper.stop()
@@ -392,14 +420,20 @@ class SessionRuntime:
         needs the live Telethon client. Anything that only needs Postgres or
         local files, the panel does directly and this is never reached."""
         if action == "send":
-            return await self.send_as_me(
+            row = await self.send_as_me(
                 args["chat_id"], args["text"], actor=audit.ADMIN, reason="sent by hand from the panel",
             )
+            await self.start_takeover(args["chat_id"], how="A message was sent by hand from the panel",
+                                      actor=audit.ADMIN)
+            return row
 
         if action == "send_media":
-            return await self.send_media_as_me(
+            row = await self.send_media_as_me(
                 args["chat_id"], args["media_id"], actor=audit.ADMIN, reason="sent by hand from the panel",
             )
+            await self.start_takeover(args["chat_id"], how="A file was sent by hand from the panel",
+                                      actor=audit.ADMIN)
+            return row
 
         if action == "list_contacts":
             return await self.list_contacts()
@@ -416,9 +450,27 @@ class SessionRuntime:
             return {"ok": True}
 
         if action == "scheduler_tick":
+            await self.refresh_controls()
+            await self.release_spend_cap()
+            await self.check_volume()
+            if time.monotonic() - self._logins_checked_at >= self.LOGINS_CHECK_SECONDS:
+                await self.check_logins()
             await self.run_deferred()
             await self.flow.tick()
-            return {"ok": True}
+            return {"ok": True, "off": self.off_reason}
+
+        if action == "reload_controls":
+            return {"off": await self.refresh_controls()}
+
+        if action == "owner_notice":
+            # A platform notice to the owner (billing.py), from this account.
+            row = await self.flow.send_owner(str(args["text"]), reason=str(args.get("reason") or "notice to the owner"))
+            return {"sent": row is not None, "error": "" if row is not None else (
+                f"sending is off ({self.off_reason})" if self.off_reason else
+                "the owner could not be reached (booking.provider)")}
+
+        if action == "hard_off":
+            return await self.hard_off(str(args.get("reason") or ""))
 
         if action == "reload_config":
             # The panel wrote the new config straight to Postgres (it holds
@@ -495,12 +547,13 @@ class SessionRuntime:
 
     async def _on_lease_lost(self, session_id: str) -> None:
         """The renewal loop confirmed (or fears) another worker now owns this
-        session. Disconnect immediately — continuing would risk exactly the
-        two-workers-mutating-one-session AUTH_KEY_UNREGISTERED failure the
-        leasing module exists to prevent."""
+        session, or the account was deactivated. Disconnect immediately —
+        continuing would risk exactly the two-workers-mutating-one-session
+        AUTH_KEY_UNREGISTERED failure the leasing module exists to prevent."""
         log.error(
             "Lease lost for session %s; disconnecting to avoid a double-run.", session_id
         )
+        self.finished = True
         await self._stop_telegram()
 
     # ------------------------------------------------------------------
@@ -545,6 +598,7 @@ class SessionRuntime:
             imported = await self.booking_store.import_legacy_file(self.data_dir / "bookings.json")
             if imported:
                 log.info("[%s] Imported %s bookings from bookings.json.", self.session_id, imported)
+            self.off_reason = await controls.off_reason(self.pool, self.tenant_id)
         self._bound_at = time.monotonic()
 
     def utcnow(self) -> datetime:
@@ -559,23 +613,228 @@ class SessionRuntime:
         now_local = datetime.now(bookings.tzinfo_for(self.config["timezone"]))
         reason = await ai_limits.limit_reached(self.pool, self.tenant_id, self.config, now_local)
         if reason and reason != self._limit_reported:
-            await self.push_error(None, f"AI paused for this client: {reason}. Messages are still received.")
+            await self.push_error(None, f"Sending is off for this client: {reason}. Messages are still received.")
             await self.write_audit(audit.AI_LIMIT_REACHED, actor=audit.SYSTEM, reason=reason)
         self._limit_reported = reason
+        if reason and await controls.add_hold(self.pool, self.tenant_id, controls.SPEND_CAP, reason,
+                                              actor=audit.SYSTEM):
+            # Soft-off until the period rolls over or the limit is raised
+            # (release_spend_cap, on the scheduler's tick).
+            await alerts.raise_alert(
+                self.pool, tenant_id=self.tenant_id, kind="spend_cap", severity=alerts.WARNING,
+                message=f"{reason}. The client is soft-off until the period rolls over or the limit is raised.",
+            )
+            await self.refresh_controls()
         return reason
+
+    async def release_spend_cap(self) -> None:
+        """Lift the spend_cap hold once no AI limit is reached any more."""
+        if "AI limit" not in self.off_reason:
+            return
+        now_local = datetime.now(bookings.tzinfo_for(self.config["timezone"]))
+        if await ai_limits.limit_reached(self.pool, self.tenant_id, self.config, now_local):
+            return
+        if await controls.remove_hold(self.pool, self.tenant_id, controls.SPEND_CAP, actor=audit.SYSTEM,
+                                      reason="the AI limit is no longer reached"):
+            self._limit_reported = ""
+            await alerts.resolve(self.pool, tenant_id=self.tenant_id, kind="spend_cap", by="system: limit cleared")
+            await self.refresh_controls()
+
+    # ------------------------------------------------------------------
+    # Kill switches (controls.py) and anomalies (anomaly.py)
+    # ------------------------------------------------------------------
+
+    async def refresh_controls(self) -> str:
+        """Re-read the switches. Entering soft-off drops what was waiting to
+        go out, so resuming replays nothing."""
+        reason = await controls.off_reason(self.pool, self.tenant_id)
+        was, self.off_reason = self.off_reason, reason
+        if reason and not was:
+            log.warning("[%s] Soft-off: %s", self.session_id, reason)
+            # Not the task asking (a draft that just tripped an anomaly
+            # still has to store itself as held).
+            current = asyncio.current_task()
+            for chat_id, task in list(self.draft_tasks.items()):
+                if task is not current:
+                    self.cancel_draft(chat_id)
+            await scheduler.clear_all_deferred(self.pool, self.tenant_id)
+        elif was and not reason:
+            log.info("[%s] Resumed (was: %s).", self.session_id, was)
+            if self.config["outreach"]["enabled"]:
+                self.ensure_outreach_worker()
+        if reason != was:
+            await self.hub.broadcast({"type": "controls", "off_reason": reason})
+            await self.hub.broadcast({"type": "status", "status": self.status()})
+        return reason
+
+    async def ensure_may_send(self, actor: str) -> None:
+        """Right before anything goes out: the kill switches and the
+        send-volume anomaly. A person sending by hand from the panel is
+        not stopped by them."""
+        if actor == audit.ADMIN:
+            return
+        reason = await self.refresh_controls()
+        if reason:
+            raise SendBlocked(f"Sending is off for this client ({reason}).")
+        spike = await self.check_volume()
+        if spike:
+            raise SendBlocked(f"Sending is off for this client: {spike}.")
+
+    async def suspend_for_anomaly(self, trigger: str, detail: str, payload: Optional[dict[str, Any]] = None) -> None:
+        """Soft-off with an alert. Every trigger is audited, even when the
+        client is already off for an earlier one."""
+        await self.write_audit(audit.ANOMALY_DETECTED, actor=audit.SYSTEM, reason=detail,
+                               payload={"trigger": trigger, **(payload or {})})
+        added = await controls.add_hold(self.pool, self.tenant_id, controls.ANOMALY, detail, actor=audit.SYSTEM)
+        await alerts.raise_alert(
+            self.pool, tenant_id=self.tenant_id, kind=f"anomaly:{trigger}", severity=alerts.CRITICAL,
+            message=f"{detail}. " + ("The client is soft-off until you resume it." if added else
+                                     "The client was already soft-off for an anomaly."),
+            payload={"trigger": trigger, **(payload or {})},
+        )
+        await self.push_error(None, f"Automatic soft-off: {detail}.")
+        await self.refresh_controls()
+
+    async def check_volume(self) -> str:
+        spike = await anomaly.volume_spike(self.pool, self.tenant_id, self.config["anomaly"])
+        if spike and "anomaly" not in self.off_reason:
+            await self.suspend_for_anomaly(anomaly.VOLUME, spike)
+        return spike
+
+    async def check_logins(self) -> list[dict[str, Any]]:
+        """Compare the account's Telegram logins with the last check. A new
+        one is an anomaly (anomaly.new_login_suspend)."""
+        self._logins_checked_at = time.monotonic()
+        if self.client is None or not self.telegram_state["connected"]:
+            return []
+        try:
+            result = await self.client(GetAuthorizationsRequest())
+        except Exception as exc:
+            log.warning("[%s] Could not list the account's logins: %s", self.session_id, type(exc).__name__)
+            return []
+        current = [anomaly.login_record(a) for a in getattr(result, "authorizations", [])]
+        known = await health.known_logins(self.pool, self.tenant_id)
+        fresh = anomaly.new_logins(known, current)
+        await health.save_logins(self.pool, self.tenant_id, self.session_id, current)
+        if fresh and self.config["anomaly"]["new_login_suspend"]:
+            described = "; ".join(anomaly.describe_login(f) for f in fresh)
+            await self.suspend_for_anomaly(
+                anomaly.NEW_LOGIN, f"A new Telegram login appeared on the account ({described})",
+                {"logins": fresh},
+            )
+        elif fresh:
+            await alerts.raise_alert(
+                self.pool, tenant_id=self.tenant_id, kind="anomaly:new_login", severity=alerts.WARNING,
+                message="A new Telegram login appeared on the account: "
+                        + "; ".join(anomaly.describe_login(f) for f in fresh),
+                payload={"logins": fresh},
+            )
+        return fresh
+
+    async def hard_off(self, reason: str) -> dict[str, Any]:
+        """Log this account's session out of Telegram and stop. The caller
+        (controls.hard_off) deletes the key and deactivates the account."""
+        logged_out = False
+        if self.client is not None:
+            try:
+                logged_out = bool(await self.client.log_out())
+            except Exception as exc:
+                log.error("[%s] Log out failed: %s", self.session_id, type(exc).__name__)
+        log.error("[%s] HARD-OFF (%s); logged out: %s", self.session_id, reason, logged_out)
+        self.finished = True
+        # Stop after this command has answered; stopping closes the bus.
+        asyncio.get_running_loop().call_later(1.0, lambda: asyncio.ensure_future(self.stop()))
+        return {"logged_out": logged_out}
+
+    # ------------------------------------------------------------------
+    # Per chat: escalation and human takeover
+    # ------------------------------------------------------------------
+
+    def takeover_until(self, conversation: Optional[dict[str, Any]]) -> Optional[datetime]:
+        raw = (conversation or {}).get("human_takeover_until")
+        if not raw:
+            return None
+        until = datetime.fromisoformat(raw)
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
+        return until if until > self.utcnow() else None
+
+    def silenced(self, conversation: Optional[dict[str, Any]]) -> str:
+        """Why the bot must not act in this chat, or ""."""
+        if conversation is None:
+            return ""
+        if conversation.get("automation_paused"):
+            return conversation.get("paused_reason") or "paused in the panel"
+        until = self.takeover_until(conversation)
+        if until is not None:
+            local = until.astimezone(bookings.tzinfo_for(self.config["timezone"]))
+            return f"a person is handling this chat until {local:%d.%m %H:%M}"
+        return ""
+
+    async def start_takeover(self, chat_id: int, *, how: str, actor: str) -> None:
+        """Someone wrote in this chat by hand: the bot keeps quiet here for
+        takeover_hours, then carries on by itself."""
+        hours = float(self.config.get("takeover_hours") or 0)
+        if hours <= 0 or chat_id in (TELEGRAM_SERVICE_ID, self.me_info.get("id")):
+            return
+        conversation = await self.db.get_conversation(chat_id)
+        if conversation is None:
+            return
+        already = self.takeover_until(conversation) is not None
+        until = self.utcnow() + timedelta(hours=hours)
+        conversation = await self.db.set_takeover(chat_id, until)
+        self.cancel_draft(chat_id)
+        self.flow.cancel_scan(chat_id)
+        await self.clear_deferred(chat_id)
+        local = until.astimezone(bookings.tzinfo_for(self.config["timezone"]))
+        if not already:
+            await self.post_note(chat_id, f"✋ {how}, so the bot stays quiet in this chat until {local:%d.%m %H:%M}.")
+            await self.write_audit(audit.HUMAN_TAKEOVER, actor=actor, reason=how,
+                                   payload={"chat_id": chat_id, "until": until.isoformat(timespec="seconds")})
+        await self.hub.broadcast({"type": "conversation", "conversation": conversation})
+
+    async def escalate(self, chat_id: int, name: str, text: str, keyword: str) -> None:
+        """A customer wrote an escalation keyword: pause the chat, tell the
+        owner and the panel."""
+        conversation = await self.db.set_paused(chat_id, True, reason=f"escalation: the customer wrote “{keyword}”")
+        self.cancel_draft(chat_id)
+        self.flow.cancel_scan(chat_id)
+        await self.clear_deferred(chat_id)
+        excerpt = text if len(text) <= 300 else text[:299] + "…"
+        row = await self.flow.send_owner(
+            f"⚠️ {name} needs a person: their message contains “{keyword}”. The bot has stopped answering "
+            f"them until the chat is switched back on in the panel.\n\n“{excerpt}”",
+            reason="escalation to the owner",
+        )
+        told = row is not None
+        await self.post_note(chat_id, f"⚠️ Escalated (“{keyword}”): the bot stopped answering in this chat. "
+                             + ("The owner was told." if told else
+                                "The owner could NOT be told (check booking.provider)."))
+        await self.write_audit(audit.ESCALATED, actor=audit.SYSTEM, reason=f"keyword “{keyword}”",
+                               payload={"chat_id": chat_id, "keyword": keyword, "owner_told": told})
+        if not told:
+            await alerts.raise_alert(
+                self.pool, tenant_id=self.tenant_id, kind="escalation_unrouted", severity=alerts.WARNING,
+                message=f"{name} needs a person (“{keyword}”) but the owner could not be told. The chat is paused.",
+                payload={"chat_id": chat_id},
+            )
+        await self.hub.broadcast({"type": "conversation", "conversation": conversation})
+        await self.hub.broadcast({"type": "escalation", "chat_id": chat_id, "keyword": keyword, "name": name})
 
     async def clear_deferred(self, chat_id: int) -> None:
         await scheduler.clear_deferred(self.pool, self.tenant_id, chat_id)
 
     async def run_deferred(self) -> None:
-        """Replies that quiet hours held back and whose time has come."""
+        """Replies that quiet hours held back and whose time has come. While
+        soft-off they are taken and dropped: resuming replays nothing."""
         for chat_id in await scheduler.take_due_deferred(self.pool, self.tenant_id, self.utcnow()):
             if not self.paused():
                 self.schedule_draft(chat_id)
 
     def paused(self) -> bool:
-        """The account-wide pause (panel "Pause all", or halt_everything)."""
-        return bool(self.account["behavior"].get("global_pause"))
+        """Soft-off: a hold on the tenant or the global stop (controls.py).
+        "Pause all" in the panel is the manual hold."""
+        return bool(self.off_reason)
 
     def usage_sink(self, purpose: str) -> ai_responder.UsageSink:
         """Meters every LLM call against this tenant (llm_usage.py)."""
@@ -613,25 +872,17 @@ class SessionRuntime:
         should look at it before this account starts sending again.
         """
         log.error("[%s] HALTING ALL AUTOMATION: %s", self.session_id, reason)
-        if not self.paused():
-            await self.save_account(
-                {**self.account, "behavior": {**self.account["behavior"], "global_pause": True}}
-            )
+        await controls.add_hold(self.pool, self.tenant_id, controls.TELEGRAM, reason, actor=audit.SYSTEM)
         await self.write_audit(audit.ACCOUNT_HALTED, actor=audit.SYSTEM, reason=reason)
+        await self.refresh_controls()
         for chat_id in list(self.draft_tasks):
             self.cancel_draft(chat_id)
         await self.db.cancel_queued_outreach()
-        await self.hub.broadcast({"type": "config", "config": self.account})
         await self.hub.broadcast({"type": "halted", "reason": reason})
         await self.push_error(None, f"Automation halted: {reason}")
-        try:
-            (self.data_dir / "last_halt.txt").write_text(
-                f"{datetime.now(timezone.utc).isoformat(timespec='seconds')}  {reason}\n",
-                encoding="utf-8",
-            )
-        except OSError:
-            pass
-        await self.registry.set_state(self.session_id, "halted", reason)
+        await health.error(self.pool, self.tenant_id, self.session_id, reason)
+        await alerts.raise_alert(self.pool, tenant_id=self.tenant_id, kind="telegram", severity=alerts.CRITICAL,
+                                 message=f"Stopped: {reason}")
 
     async def check_daily_quota(self) -> None:
         safety = self.config["safety"]
@@ -640,18 +891,37 @@ class SessionRuntime:
         sent = await self.db.sent_since(since)
         limit = int(self.config["daily_message_cap"])
         if sent >= limit:
+            await self.cap_reached(f"daily send limit reached ({sent}/{limit} messages today)")
             raise SendBlocked(
                 f"Daily send limit reached ({sent}/{limit} messages today). "
                 "Sending resumes tomorrow; raise daily_message_cap in the tenant config if this is wrong."
             )
 
+        hourly = int(self.config.get("hourly_message_cap") or 0)
+        if hourly:
+            hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds")
+            sent_hour = await self.db.sent_since(hour_ago)
+            if sent_hour >= hourly:
+                await self.cap_reached(f"hourly send limit reached ({sent_hour}/{hourly} in the last hour)")
+                raise SendBlocked(
+                    f"Hourly send limit reached ({sent_hour}/{hourly} in the last hour). "
+                    "Sending resumes as the hour moves on; see hourly_message_cap."
+                )
+
         peers = await self.db.distinct_peers_since(since)
         peer_limit = int(safety["daily_peer_cap"])
         if peers >= peer_limit:
+            await self.cap_reached(f"daily limit on distinct people reached ({peers}/{peer_limit} today)")
             raise SendBlocked(
                 f"Daily limit on distinct people reached ({peers}/{peer_limit} today). "
                 "Writing to many different people in one day is the strongest spam signal."
             )
+
+    async def cap_reached(self, what: str) -> None:
+        """A send cap stopped a message. The operator hears once, until they
+        acknowledge the alert."""
+        await alerts.raise_alert(self.pool, tenant_id=self.tenant_id, kind="send_cap", severity=alerts.WARNING,
+                                 message=f"Messages are being held back: {what}.")
 
     async def handle_send_failure(self, chat_id: Optional[int], exc: BaseException) -> bool:
         """Translate a Telegram error into the right defensive action.
@@ -675,6 +945,7 @@ class SessionRuntime:
 
         if isinstance(exc, (errors.UserDeactivatedBanError, errors.AuthKeyUnregisteredError,
                             errors.SessionRevokedError)):
+            await self.registry.set_state(self.session_id, "needs_login", type(exc).__name__)
             await self.halt_everything(
                 f"Telegram rejected the session ({type(exc).__name__}). The account "
                 "may be banned or the session revoked. Automation is stopped."
@@ -685,6 +956,7 @@ class SessionRuntime:
             wait = int(getattr(exc, "seconds", 0) or 0)
             cap = int(safety.get("max_flood_wait_seconds", 300))
             log.warning("[%s] Telegram asked us to wait %ss before sending again.", self.session_id, wait)
+            await health.rate_limited(self.pool, self.tenant_id, self.session_id, wait)
             await self.push_error(
                 chat_id, f"Telegram rate limit: it asked for a {wait}s pause. Backing off."
             )
@@ -919,6 +1191,7 @@ class SessionRuntime:
         """Send one text message as this account. Every send writes an
         audit row saying who caused it (`actor`) and why (`reason`);
         `llm_model` / `prompt_version` mark an AI-written message."""
+        await self.ensure_may_send(actor)
         if guard:
             await self.check_daily_quota()
         peer = await self.resolve_peer(chat_id)
@@ -976,6 +1249,7 @@ class SessionRuntime:
         path = self.media_library.path(item_id)
         if item is None or path is None:
             raise ValueError(f"Media #{item_id} is no longer in the library.")
+        await self.ensure_may_send(actor)
         if guard:
             await self.check_daily_quota()
         peer = await self.resolve_peer(chat_id)
@@ -1094,10 +1368,11 @@ class SessionRuntime:
                 await self.defer_reply(chat_id, left + humanlike.sample_reply_delay(self.config["reply_delay"]))
                 return
 
-            if self.paused():
+            # The switches may have been thrown while waiting.
+            if await self.refresh_controls():
                 return
             conversation = await self.db.get_conversation(chat_id)
-            if conversation is None or conversation["automation_paused"]:
+            if conversation is None or self.silenced(conversation):
                 return
 
             history = await self.db.get_history_for_ai(chat_id, limit=30)
@@ -1257,6 +1532,11 @@ class SessionRuntime:
             await self.post_note(chat_id, "Held for approval: the reply " + "; ".join(verdict.reasons) + ".")
             await self.write_audit(audit.POLICY_HOLD, reason="; ".join(verdict.reasons),
                              payload={"reasons": verdict.reasons})
+        if verdict.tripwire and self.config["anomaly"]["tripwire_suspend"]:
+            await self.suspend_for_anomaly(
+                anomaly.TRIPWIRE, "A reply the bot wrote tripped the outbound trip-wire: " + "; ".join(verdict.tripwire),
+                {"chat_id": chat_id, "reasons": verdict.tripwire},
+            )
         return verdict
 
     # ------------------------------------------------------------------
@@ -1413,13 +1693,16 @@ class SessionRuntime:
 
     async def reminder_loop(self) -> None:
         """Backstop for a missed reload_config: pick up config and prompt
-        changes (an industry template edit, say) every few minutes. Booking
-        work runs on the scheduler's tick."""
+        changes (an industry template edit, say) every few minutes, and tell
+        the health watchdog the account is connected (health.seen) once a
+        minute. Booking work runs on the scheduler's tick."""
         try:
             while True:
                 try:
                     if time.monotonic() - self._bound_at > self.REBIND_SECONDS:
                         await self.bind_tenant()
+                    if self.telegram_state["connected"]:
+                        await health.seen(self.pool, self.tenant_id, self.session_id)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -1524,7 +1807,14 @@ class SessionRuntime:
         log.info("[%s] DM from %s%s (chat %s): %s", self.session_id, name, " [bot]" if is_bot else "", chat_id,
                  f"{len(text)} chars" if has_text else "non-text message")
 
+        if chat_id == TELEGRAM_SERVICE_ID:
+            # Login codes and "new login" notices: never answered, and a
+            # reason to look at the account's logins now.
+            await self.check_logins()
+            return
+
         is_provider = self.flow.enabled() and chat_id == await self.flow.provider_chat_id()
+        quiet = self.silenced(conversation)
         if is_provider:
             if has_photo and await self.save_owner_photo(event, text):
                 return
@@ -1533,7 +1823,7 @@ class SessionRuntime:
                 return
             log.info("[%s]   message from the booking owner; replying as usual.", self.session_id)
 
-        if has_photo and not is_provider and not self.paused():
+        if has_photo and not is_provider and not self.paused() and not quiet:
             seen = await self.read_photo(chat_id, event)
             if seen is not None and row is not None:
                 label = f"{text}\n{seen}" if has_text else seen
@@ -1546,15 +1836,26 @@ class SessionRuntime:
         if not has_text:
             log.info("[%s]   no text to reply to — skipping.", self.session_id)
             return
-        if self.paused():
-            log.info("[%s]   automation is globally paused — skipping.", self.session_id)
+        # Checked even while soft-off, so the chat stays paused afterwards.
+        keyword = "" if is_provider or quiet else policy.escalation_match(text, self.config["escalation_keywords"])
+        if keyword:
+            log.info("[%s]   escalation keyword — the chat is paused and the owner pinged.", self.session_id)
+            await self.escalate(chat_id, name, text, keyword)
+            return
+        # Off in memory: make sure it still is (a resume may not have
+        # reached this runtime yet).
+        if self.paused() and await self.refresh_controls():
+            log.info("[%s]   soft-off (%s) — not answering.", self.session_id, self.off_reason)
+            return
+        if quiet:
+            log.info("[%s]   not answering in this chat: %s.", self.session_id, quiet)
             return
 
         if self.flow.enabled() and not is_provider:
             await self.flow.on_customer_message(chat_id, text)
 
         conversation = await self.db.get_conversation(chat_id)
-        if conversation and conversation["automation_paused"]:
+        if self.silenced(conversation):
             log.info("[%s]   this conversation is paused — skipping.", self.session_id)
             return
         # Quiet hours do not skip the reply; draft_worker holds it until
@@ -1582,8 +1883,13 @@ class SessionRuntime:
         row = await self.db.record_message(
             chat_id, DIR_OUT, STATUS_SENT, text or "[non-text message]", telegram_id=event.message.id,
         )
-        if row is not None:
-            await self.push_message(row)
+        if row is None:
+            return  # already stored: one of this runtime's own sends
+        await self.push_message(row)
+        # Written by hand on the account's own Telegram: a person has taken
+        # this chat over. Not the owner's booking chat or Saved Messages.
+        if chat_id != await self.flow.provider_chat_id():
+            await self.start_takeover(chat_id, how="Someone wrote here by hand in Telegram", actor=audit.OWNER)
 
     # ------------------------------------------------------------------
     # Runners
@@ -1653,8 +1959,14 @@ class SessionRuntime:
                         "probably ended from Settings -> Devices. Sign in again."
                     )
                     log.error("[%s] %s", self.session_id, notice)
-                    await self.registry.set_state(self.session_id, "needs_login", notice)
                     await self.registry.clear_auth(self.session_id)
+                    await self.registry.set_state(self.session_id, "needs_login", notice)
+                    await health.error(self.pool, self.tenant_id, self.session_id, notice)
+                    await alerts.raise_alert(self.pool, tenant_id=self.tenant_id, kind="health:logged_out",
+                                             severity=alerts.CRITICAL, message=notice)
+                    # Nothing more to run; the worker drops this runtime and
+                    # its lease.
+                    self.finished = True
                     return
 
                 me = await self.client.get_me()
@@ -1673,16 +1985,13 @@ class SessionRuntime:
                     self.session_id, self.me_info["name"],
                 )
                 if self.paused():
-                    last = ""
-                    with suppress(OSError):
-                        last = (self.data_dir / "last_halt.txt").read_text(encoding="utf-8").strip()
                     log.warning(
-                        "[%s] Automation is GLOBALLY PAUSED — incoming messages will NOT be "
-                        "answered. Resume from the panel.%s",
-                        self.session_id, f" Last automatic halt: {last}" if last else "",
+                        "[%s] Soft-off (%s) — incoming messages will NOT be answered. Resume from the panel.",
+                        self.session_id, self.off_reason,
                     )
                 await self.hub.broadcast({"type": "status", "status": self.status()})
                 await self.registry.set_state(self.session_id, "running", "")
+                await health.seen(self.pool, self.tenant_id, self.session_id)
 
                 await self.client.run_until_disconnected()
                 self.telegram_state["connected"] = False
@@ -1694,6 +2003,8 @@ class SessionRuntime:
                 self.telegram_state["error"] = f"{type(exc).__name__}: {exc}"
                 log.error("[%s] Telegram client error: %s", self.session_id, self.telegram_state["error"])
                 await self.hub.broadcast({"type": "status", "status": self.status()})
+                with suppress(Exception):
+                    await health.error(self.pool, self.tenant_id, self.session_id, self.telegram_state["error"])
 
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 120)
@@ -1705,12 +2016,42 @@ class SessionRuntime:
             "telegram_error": self.telegram_state["error"],
             "me": self.me_info,
             "global_pause": self.paused(),
+            "off_reason": self.off_reason,
             "auto_send": self.config["auto_send"],
             "tenant_id": self.tenant_id,
             # Kept under its old name for the panel: true once the business
             # sections of the prompt say anything at all.
             "persona_configured": bool(self.bundle and self.bundle.prompt.business_text.strip()),
         }
+
+
+async def log_out_session(pool: asyncpg.Pool, session_id: str) -> bool:
+    """Hard-off for an account no worker is running: take its lease (so no
+    worker starts it meanwhile), connect with the stored key, log out.
+    True when Telegram confirmed. The caller deletes the key either way."""
+    worker_id = f"hard-off:{socket.gethostname()}"
+    lease = await leasing.acquire(pool, session_id, worker_id)
+    if lease is None:
+        raise leasing.LeaseLost(f"session {session_id!r} is running somewhere; ask that worker instead")
+    client = None
+    try:
+        registry = SessionRegistry(pool)
+        auth = await registry.load_auth(session_id)
+        if not auth or not auth.get("auth_key"):
+            return False
+        account = await config_store.load(pool, session_id)
+        identity = dict(account.get("identity") or {}) if account.get("identity", {}).get("device_model") \
+            else device_profiles.derive(session_id)
+        client = _client_from_auth(auth, await registry.load_proxy(session_id), 60, identity)
+        await client.connect()
+        if not await client.is_user_authorized():
+            return False
+        return bool(await client.log_out())
+    finally:
+        if client is not None:
+            with suppress(Exception):
+                await client.disconnect()
+        await leasing.release(pool, session_id, worker_id)
 
 
 if __name__ == "__main__":

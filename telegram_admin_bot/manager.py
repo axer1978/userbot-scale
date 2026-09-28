@@ -160,6 +160,18 @@ async def _worker_async_main(
         next_adopt = time.monotonic() + ADOPT_INTERVAL_SECONDS
         while not stop_event.is_set():
             await loop.run_in_executor(None, stop_event.wait, 1.0)
+            # A runtime that is done for good (deactivated, hard-off, logged
+            # out by Telegram, fenced) lets go of its lease here, so the
+            # account can be signed in again and picked up without a
+            # manager restart.
+            for session_id, runtime in list(runtimes.items()):
+                if runtime.finished:
+                    try:
+                        await runtime.stop()
+                    except Exception:
+                        wlog.exception("[%s] Error while stopping a finished runtime", session_id)
+                    runtimes.pop(session_id, None)
+                    wlog.info("[%s] Stopped: no longer runnable here.", session_id)
             if stop_event.is_set() or time.monotonic() < next_adopt:
                 continue
             next_adopt = time.monotonic() + ADOPT_INTERVAL_SECONDS

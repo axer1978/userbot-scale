@@ -634,7 +634,7 @@ class BookingFlow:
         if self.rt.paused():
             return
         conversation = await self.rt.db.get_conversation(chat_id)
-        if conversation is None or conversation["automation_paused"]:
+        if conversation is None or self.rt.silenced(conversation):
             return
         self.rt.schedule_draft(chat_id)
 
@@ -842,9 +842,12 @@ class BookingFlow:
                 continue
             chat_id = booking["chat_id"]
             conversation = await self.rt.db.get_conversation(chat_id)
-            if self.rt.paused() or conversation is None or conversation["automation_paused"]:
-                await self.rt.post_note(chat_id, f"⏰ Reminder for booking #{booking['number']} not sent: "
-                                                 "automation is paused.")
+            why = (f"sending is off ({self.rt.off_reason})" if self.rt.paused() else
+                   "unknown chat" if conversation is None else self.rt.silenced(conversation))
+            if why:
+                # Claimed above, so it is skipped for good: nothing is
+                # replayed later.
+                await self.rt.post_note(chat_id, f"⏰ Reminder for booking #{booking['number']} not sent: {why}.")
                 continue
             self.add_line(chat_id, bookings.reminder_line(booking, reminder.get("instruction", ""), now,
                                                           self.page_url(booking)))
@@ -858,7 +861,7 @@ class BookingFlow:
             if entry["offered_starts_at"] > now:
                 await self.offer_to_next(entry["offered_starts_at"], exclude_entry=entry["id"])
 
-        for booking in await self.store.unsent():
+        for booking in [] if self.rt.paused() else await self.store.unsent():
             last = self._submit_attempts.get(booking["id"], 0.0)
             if loop_now - last >= self.RESUBMIT_SECONDS:
                 await self.submit(booking)

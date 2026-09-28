@@ -326,13 +326,17 @@ changes until you press **Apply**. It uses `DEEPSEEK_PLATFORM_KEY` from `.env`.
 | `burst` | up to 4 messages, 0.6–2.2 s apart | A reply may go out as several short messages. |
 | `language_policy` | `mirror` | Or `fixed:lv` / `fixed:ru` / `fixed:en`. |
 | `daily_message_cap` | 150 | All messages the account sends per day, replies included. |
+| `hourly_message_cap` | 0 (none) | The same per hour. At either cap messages are held back and you get an alert. |
 | `safety.daily_peer_cap` | 30 | Distinct people written to per day. |
 | `price_floors` | none | Service → lowest price (EUR) a reply may quote. |
 | `allowed_link_domains`, `shareable_contacts` | none | Links, phone numbers and e-mail addresses a reply may contain. |
 | `banned_topics` | none | A reply mentioning one is held for approval. |
-| `api_spend_cap_eur` | 10 | AI spend per calendar month, in EUR. At the limit the bot stops replying for that client (messages are still received). 0 = no limit. |
+| `api_spend_cap_eur` | 10 | AI spend per calendar month, in EUR. At the limit the client is **soft-off** with an alert (messages are still received) until the month rolls over or the cap is raised; then it resumes by itself. 0 = no limit. |
 | `limits.*` | no limits | Tokens per day and per month, and EUR per day, for the same purpose. |
 | `replies.*` | no limits | Bot messages per chat per hour/day, least gap between them, not answering bare "ok"/"thanks", and your own *when not to reply* instruction. |
+| `escalation_keywords` | none | A customer message containing one pauses that chat and pings the owner (`booking.provider`). |
+| `takeover_hours` | 12 | After someone writes in a chat by hand (phone or panel), the bot keeps quiet there this long. 0 = off. |
+| `anomaly.*` | all on | Automatic soft-off with an alert on a new Telegram login, a send-volume spike (`volume_multiplier` × the usual hour, at least `volume_min_messages`), or a trip-wire match in a reply. |
 | `ai.*` | `deepseek-chat`, 400 tokens, 1.0 | DeepSeek request parameters |
 
 **Account safety** (`safety.*`) protects the number itself. Telegram does not
@@ -351,21 +355,78 @@ business has not offered in its own prompt text. A reply that fails is kept as
 a draft with the reasons shown in the chat, and the hold is audited. Customers
 will try to talk the model out of its rules; these checks don't listen.
 
-### Pausing and "Automation halted"
+### Safety: switching a client off, and alerts
 
-- **Pause / Resume** on a conversation stops AI drafting for that chat, for when you take it over by hand. Any draft in progress is cancelled.
-- **Pause all** in the top bar pauses every chat on the selected account. The button then reads **Automation paused**. Click it again to resume. Both are audited.
-- **Automation halted** means the account paused itself. This happens when Telegram returned `PeerFloodError`, asked for a wait longer than `max_flood_wait_seconds`, or rejected the session (banned or revoked). The reason appears as an error in the panel and in `docker compose logs manager` (`HALTING ALL AUTOMATION: ...`). Queued outreach is cancelled. **Resuming is manual on purpose:** find out why before you click *Automation paused* to resume. Sending straight through a flood warning is how numbers get banned.
+Open **Safety** in the top bar. The number next to it counts open alerts.
+
+- **Soft-off** stops a client's account from sending anything on its own:
+  replies, reminders, owner messages and outreach. Messages keep arriving and
+  are stored and shown. **Resuming replays nothing**: messages that arrived
+  meanwhile get no automatic answer, and reminders that fell due are skipped.
+  You can still send by hand from the panel.
+  A client can be off for several reasons at once, and each is lifted on its own:
+  - **paused**: *Pause all* in the top bar, or *Soft-off* in Safety.
+  - **suspended (billing)**: see Billing below.
+  - **AI limit reached**: see `api_spend_cap_eur` and `limits.*`. This one lifts by itself.
+  - **anomaly**: see below. A person resumes it.
+  - **stopped after a Telegram error**: `PeerFloodError`, a FloodWait longer
+    than `max_flood_wait_seconds`, or a banned or revoked session. Find out why
+    before resuming; sending straight through a flood warning is how numbers
+    get banned.
+
+  The red chip in the top bar says why the selected client is off.
+- **Global stop** (Safety → All clients) switches every client off at once. It
+  needs a reason and is audited. If the panel is unreachable, run it from the
+  server: `docker compose exec panel python controls.py stop "reason"`, and
+  `... resume` to lift it.
+- **Hard-off** (Safety → a client) is for a hijacked or leaked session. It
+  logs this server's Telegram session out, deletes its key and deactivates
+  the account. You confirm by typing the account id. It does not touch the
+  owner's phone or their other logins. Signing the number in again is a new
+  login.
+- **Anomalies** switch a client off by themselves (`anomaly.*`):
+  - a Telegram login appears on the account that wasn't there before
+    (checked every 5 minutes, and at once when Telegram's own "new login"
+    message arrives);
+  - the account sends far more in an hour than it usually does (every
+    outgoing message counts, including ones typed on a phone);
+  - a reply the bot wrote links to a domain nobody allowed, or contains a
+    wallet address or an IBAN.
+- **Billing**: set a client's next due date in Safety. The day after it, if no
+  payment was recorded, the client goes into **grace**. The owner gets a
+  message from the client's own account (the text is under Safety → Billing
+  notice) and you get an alert. After 48 hours it is **suspended**, which is a
+  soft-off; nothing is deleted. *Record payment* makes it active again. You can
+  also set the status by hand at any time, with a reason.
+- **Health**: the scheduler checks every account once a minute. You get an
+  alert within about 4 minutes when an account is not running, not connected
+  to Telegram, logged out or rate-limited, and a "back to normal" when it
+  recovers. A red banner shows if the scheduler itself stops.
+- **Alerts** are listed under Safety → Alerts. With `ALERT_EMAIL` (plus the
+  `SMTP_*` settings) or `ALERT_WEBHOOK_URL` in `.env`, each new one is also sent
+  there. A repeat of an open alert is counted, not re-sent.
+
+**In a single chat:**
+
+- **Pause / Resume** on a conversation stops the bot in that chat until you
+  resume it.
+- **Escalation keywords** (`escalation_keywords`): a customer message
+  containing one pauses the chat (the badge reads *escalated*) and the owner
+  gets a message quoting it.
+- **Human takeover**: when someone writes in a chat by hand, on the phone or
+  from the panel, the bot keeps quiet in that chat for `takeover_hours` and
+  then carries on by itself. The chat header shows until when, with *Hand back
+  to the bot* to end it sooner.
 
 ## What it does with a message
 
 - It handles **private messages only**. Group and channel traffic is ignored. Messages from **bot accounts are included**, so conversations that run through a bot's interface are handled like any other DM.
 - Every message is stored in Postgres and pushed live to any open panel tab.
-- For each incoming text message it checks the global pause and the per-chat pause. If either says stop, no draft is made.
+- For each incoming text message it checks, in order: an escalation keyword (pauses the chat and pings the owner), whether the client is soft-off, and whether the chat is paused or taken over by a person. If any says stop, no draft is made. Messages from Telegram's own service account (login codes) are never answered.
 - Otherwise it waits the reply delay (and, if the reply would land in quiet hours, until they end), builds the last ~30 messages of the chat into the prompt under the client's rendered prompt, and asks DeepSeek for a reply. The reply is checked by the policy layer. With auto-send off, or if a check fails, it is saved as a draft for the panel. With auto-send on and all checks passed, it is sent.
 - Every message the account sends is recorded in the audit log with who caused it (the bot, or you from the panel) and why. AI-written messages also record the model and the prompt versions used (e.g. `b1/i1v3/c2`). Every DeepSeek call is metered per client.
 - **If a newer message arrives while a draft is still being prepared, that draft is cancelled and restarted**, so the reply always answers the latest state of the conversation. Sending a message yourself from the panel also cancels any draft in progress for that chat.
-- Messages you send from your phone or Telegram Desktop also appear in the panel, so the thread stays complete.
+- Messages you send from your phone or Telegram Desktop also appear in the panel, so the thread stays complete. They also start a human takeover of that chat (see *Safety*).
 - Before writing a reply it checks the client's AI limits (`limits.*`, `api_spend_cap_eur`) and the per-chat reply limits (`replies.*`). A reply not written for either reason is noted in the chat and the audit log. Booking news (a confirmation, a reminder) is never held back by the reply limits.
 - A reply held back by quiet hours is stored in Postgres and sent by the scheduler when they end, so a restart during the night does not lose it.
 - DeepSeek failures (network, timeout, 429, malformed response) are retried with backoff that honours `Retry-After`, then shown as a red error in the conversation. A bad key (401/403) fails at once. Telegram disconnects are reconnected automatically with backoff.
@@ -485,22 +546,21 @@ git pull && docker compose up -d --build  # update; migrate runs before panel/ma
 up. Change both in `.env` and run `docker compose up -d`.
 
 **Backups.** Everything that matters is in three places: the Postgres volume,
-`./data` (per client under `./data/tenants/<client id>`: media and the last
-halt reason), and `.env`. Bookings are in Postgres.
+`./data` (per client under `./data/tenants/<client id>`: media), and `.env`. Bookings are in Postgres.
 To dump the database:
 
 ```bash
 docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > userbot-$(date +%F).sql
 ```
 
-**Taking an account out of rotation.** The panel has no stop button yet. Mark
-the account inactive in the database, then restart the manager:
+**Taking an account out of rotation.** To stop it sending, use *Soft-off*
+(Safety). To disconnect it altogether, mark it inactive in the database; its
+worker lets go within about 10 seconds, with no restart needed:
 
 ```bash
 docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 #   UPDATE telegram_sessions SET is_active = false WHERE session_id = 'tg34600123456';
 #   \q
-docker compose restart manager
 ```
 
 To bring the account back, set `is_active = true` again. A worker picks it up
@@ -569,27 +629,26 @@ out for a while ("Too many wrong passwords"). Wait and try again.
 - Nothing about it at all: all worker slots may be full (see *Capacity*).
 
 **Account dot is red**: a worker holds the account but it isn't connected,
-halted, or needs a new login. The reason is in the manager logs. If the
-session was ended from Telegram (Settings → Devices), the log says so. Run
-`docker compose restart manager` so the worker releases the account, then sign
-the number in again with **+ Add account**. After a halt, the dot can stay red
-even after you resume. `docker compose restart manager` clears it.
+or it needs a new login. Safety shows the reason, and so do the manager logs.
+If the session was ended from Telegram (Settings → Devices), the worker lets
+go of it by itself; sign the number in again with **+ Add account**.
 
 **Drafts appear but nothing is sent**: auto-send is off, which is the
 default. Approve drafts by hand, or turn on `auto_send` in the client's
 Config. With auto-send on, a draft with a *"Held for approval"* note above it
 failed a policy check; the note says which.
 
-**No reply at all**: first check that the account isn't paused (top bar and
-conversation), whether it is inside the client's quiet hours (the reply then
+**No reply at all**: first check the red chip in the top bar (the client is
+soft-off), the chat's badges (paused, escalated, "you're handling"), whether it
+is inside the client's quiet hours (the reply then
 waits until they end), and that the message was private and had text. Then check `docker compose logs manager` for
 `DeepSeek` errors (bad key, no balance, rate limit) or other errors for that
 account. DeepSeek errors also show up red in the conversation.
 
-**"Automation halted"**: a Telegram flood limit tripped (`PeerFloodError`, or
-a FloodWait longer than `max_flood_wait_seconds`) or the session was rejected. Read the
-reason in the panel or the manager logs, wait and work out what caused it,
-then resume by clicking *Automation paused*.
+**"Stopped after a Telegram error"**: a Telegram flood limit tripped
+(`PeerFloodError`, or a FloodWait longer than `max_flood_wait_seconds`) or the
+session was rejected. Read the reason in Safety or the manager logs, wait and
+work out what caused it, then resume that hold in Safety.
 
 ## Legacy files
 
@@ -608,7 +667,13 @@ docker-compose.yml     the stack: postgres, valkey, migrate, panel, manager, sch
 Dockerfile             one image for panel, manager, scheduler, migrate and the booking pages
 Caddyfile              optional public HTTPS front door for the panel (profile "public")
 Caddyfile.booking      optional public HTTPS for the booking pages (profile "booking-pages")
-scheduler.py           the one background scheduler; replies held back by quiet hours
+scheduler.py           the one background scheduler; replies held back by quiet hours; watchdog, billing
+controls.py            kill switches: soft-off holds, the global stop (also a shell command), hard-off
+alerts.py              alerts for the operator: stored, shown in Safety, e-mailed / webhooked
+health.py              what each account reports, and the watchdog that turns it into alerts
+anomaly.py             new Telegram logins and send-volume spikes
+billing.py             active -> grace -> suspended, the owner's notice, payments
+safety_api.py          admin API behind the Safety view
 public_app.py          the public booking pages: calendar feed and read-only page per booking
 panel.py               admin panel + API; control plane, no Telegram connections
 manager.py             spawns worker processes, restarts dead ones, adopts new accounts
@@ -635,7 +700,7 @@ ai_limits.py           AI usage limits per client and reply limits per chat
 vision.py              photos through an OpenAI-compatible vision model
 mailer.py              the booking e-mail record over SMTP
 ics.py                 calendar files (the feed and e-mail attachments)
-config_store.py        per-account state: pause switch, device identity, per-contact styles
+config_store.py        per-account state: device identity, per-contact styles
 crypto.py              AES-GCM encryption of stored secrets under USERBOT_MASTER_KEY
 device_profiles.py     stable per-account device identity
 pg.py                  connection pool and migration runner

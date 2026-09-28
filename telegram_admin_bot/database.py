@@ -484,14 +484,30 @@ class Database:
             )
         return [_conversation(r) for r in rows]
 
-    async def set_paused(self, chat_id: int, paused: bool) -> Optional[dict[str, Any]]:
+    async def set_paused(self, chat_id: int, paused: bool, reason: str = "") -> Optional[dict[str, Any]]:
+        """`reason` says why ("" = by hand); it is cleared on unpause."""
         tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             await con.execute(
-                "UPDATE conversations SET automation_paused = $3 WHERE tenant_id = $1 AND chat_id = $2",
+                "UPDATE conversations SET automation_paused = $3, paused_reason = $4 "
+                "WHERE tenant_id = $1 AND chat_id = $2",
                 tid,
                 chat_id,
                 bool(paused),
+                reason if paused else "",
+            )
+        return await self.get_conversation(chat_id)
+
+    async def set_takeover(self, chat_id: int, until: Optional[datetime]) -> Optional[dict[str, Any]]:
+        """Human takeover: the bot stays quiet in this chat until `until`
+        (None ends it)."""
+        tid = await self.tenant_id()
+        async with self._pool.acquire() as con:
+            await con.execute(
+                "UPDATE conversations SET human_takeover_until = $3 WHERE tenant_id = $1 AND chat_id = $2",
+                tid,
+                chat_id,
+                until,
             )
         return await self.get_conversation(chat_id)
 
@@ -1136,6 +1152,10 @@ def _conversation(row: asyncpg.Record) -> dict[str, Any]:
         "username": row["username"],
         "is_bot": bool(row["is_bot"]),
         "automation_paused": bool(row["automation_paused"]),
+        # Why automation is paused here ("" = by hand in the panel).
+        "paused_reason": row["paused_reason"],
+        # A person wrote here by hand; the bot is quiet until then.
+        "human_takeover_until": _iso(row["human_takeover_until"]),
         "unread": row["unread"],
         "last_message_at": _iso(row["last_message_at"]),
         "last_message_preview": row["last_message_preview"],

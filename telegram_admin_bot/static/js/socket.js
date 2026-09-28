@@ -89,6 +89,21 @@ function handleEvent(data) {
       applyStatus(data.status);
       break;
 
+    // A kill switch changed for this client (controls.py).
+    case "controls":
+      applyControls(data);
+      sfPoll();
+      break;
+
+    case "halted":
+      toast("Stopped after a Telegram error: " + data.reason);
+      sfPoll();
+      break;
+
+    case "escalation":
+      toast(`${data.name || "A customer"} wrote “${data.keyword}”: the chat is paused and the owner was pinged.`);
+      break;
+
     case "drafting":
       state.drafting.add(data.chat_id);
       if (data.chat_id === state.activeChatId) renderThread();
@@ -149,7 +164,8 @@ function handleEvent(data) {
 
 function applyStatus(status) {
   if (!status) return;
-  state.status = status;
+  state.status = { ...(state.status || {}), ...status };
+  applyControls(status);
   // Several instances can be open in separate tabs; name this one.
   if (status.instance) {
     $("brand-instance").textContent = status.instance;

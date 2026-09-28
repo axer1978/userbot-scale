@@ -66,9 +66,11 @@ import booking_store
 import commands
 import config_store
 import context_link
+import controls
 import media
 import pg
 import platform_api
+import safety_api
 import tenants
 import totp
 from database import (
@@ -539,8 +541,23 @@ async def api_status(session_id: str) -> dict[str, Any]:
         "telegram_connected": live and row.get("state") == "running",
         "telegram_error": row.get("state_reason") if row.get("state") == "error" else None,
         "state": row.get("state"),
-        "global_pause": (await config_store.load(pool, session_id))["behavior"].get("global_pause", False),
+        **(await _controls_status(session_id)),
         **(await _tenant_status(session_id)),
+    }
+
+
+async def _controls_status(session_id: str) -> dict[str, Any]:
+    """The kill switches for the top bar (controls.py). `global_pause` is
+    the manual hold, i.e. the "Pause all" button."""
+    tenant = await tenants.TenantStore(pool).by_session(session_id)
+    if tenant is None:
+        return {"global_pause": False, "off_reason": "", "holds": []}
+    holds = await controls.holds(pool, tenant["id"])
+    return {
+        "global_pause": any(h["kind"] == controls.MANUAL for h in holds),
+        "off_reason": await controls.off_reason(pool, tenant["id"]),
+        "holds": holds,
+        "billing_status": tenant["status"],
     }
 
 
@@ -695,26 +712,47 @@ async def api_pause(session_id: str, chat_id: int, body: PauseBody) -> dict[str,
 
 @app.post("/api/sessions/{session_id}/global-pause", dependencies=[Depends(require_auth)])
 async def api_global_pause(session_id: str, body: GlobalPauseBody) -> dict[str, Any]:
-    current = await config_store.load(pool, session_id)
-    new_config = await config_store.save(
-        pool, session_id,
-        {**current, "behavior": {**current["behavior"], "global_pause": body.global_pause}},
-    )
-    await best_effort_dispatch(session_id, "reload_config")
+    """"Pause all": the tenant's manual soft-off hold (controls.py). It
+    lifts only the manual hold; a billing, anomaly or other hold stays."""
     tenant = await tenants.TenantStore(pool).by_session(session_id)
-    await audit.record(
-        pool, tenant_id=tenant["id"] if tenant else None, actor=audit.ADMIN,
-        event=audit.ACCOUNT_PAUSED if body.global_pause else audit.ACCOUNT_RESUMED,
-        reason="Pause all, from the panel" if body.global_pause else "Resumed from the panel",
-        payload={"session_id": session_id},
-    )
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
     if body.global_pause:
+        await controls.add_hold(pool, tenant["id"], controls.MANUAL, "Pause all, from the panel", actor=audit.ADMIN)
         log.warning("[%s] Automation PAUSED from the admin panel.", session_id)
-        await best_effort_dispatch(session_id, "cancel_all_drafts")
     else:
+        await controls.remove_hold(pool, tenant["id"], controls.MANUAL, actor=audit.ADMIN,
+                                   reason="Resumed from the panel")
         log.info("[%s] Automation resumed from the admin panel.", session_id)
-    await publish(session_id, {"type": "config", "config": new_config})
-    return {"global_pause": new_config["behavior"]["global_pause"]}
+    await best_effort_dispatch(session_id, "reload_controls")
+    state = await _controls_status(session_id)
+    await publish(session_id, {"type": "controls", **state})
+    return state
+
+
+class TakeoverBody(BaseModel):
+    active: bool
+
+
+@app.post(
+    "/api/sessions/{session_id}/conversations/{chat_id}/takeover",
+    dependencies=[Depends(require_auth)],
+)
+async def api_takeover(session_id: str, chat_id: int, body: TakeoverBody) -> dict[str, Any]:
+    """Hand a chat back to the bot before takeover_hours are over. (A
+    takeover starts by itself when someone writes in the chat by hand.)"""
+    if body.active:
+        raise HTTPException(status_code=400, detail="A takeover starts by writing in the chat.")
+    db = db_for(session_id)
+    before = await db.get_conversation(chat_id)
+    if before is None:
+        raise HTTPException(status_code=404, detail="Unknown conversation")
+    conversation = await db.set_takeover(chat_id, None)
+    if before.get("human_takeover_until"):
+        await audit.record(pool, tenant_id=await db.tenant_id(), actor=audit.ADMIN, event=audit.TAKEOVER_ENDED,
+                           reason="handed back to the bot from the panel", payload={"chat_id": chat_id})
+    await publish(session_id, {"type": "conversation", "conversation": conversation})
+    return conversation
 
 
 @app.post("/api/sessions/{session_id}/conversations/{chat_id}/send", dependencies=[Depends(require_auth)])
@@ -1003,6 +1041,9 @@ platform_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(platform_api.router, dependencies=[Depends(require_auth)])
 booking_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(booking_api.router, dependencies=[Depends(require_auth)])
+# Kill switches, billing, alerts and health: admin only, like everything here.
+safety_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(safety_api.router, dependencies=[Depends(require_auth)])
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 

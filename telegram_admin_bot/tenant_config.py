@@ -284,6 +284,22 @@ class Replies(_Strict):
     no_reply_instruction: str = Field("", max_length=2000)
 
 
+class Anomaly(_Strict):
+    """Switch the client off by itself, and alert the operator, when
+    something looks wrong (anomaly.py). A person resumes it."""
+    # A Telegram login appears on the account that was not there before.
+    new_login_suspend: bool = True
+    # Sent in the last hour at least this many times the account's own
+    # average hour over the last volume_baseline_days days. 0 = off.
+    volume_multiplier: float = Field(5.0, ge=0, le=100)
+    # ...and never below this many messages in the hour.
+    volume_min_messages: int = Field(30, ge=1, le=10_000)
+    volume_baseline_days: int = Field(7, ge=1, le=60)
+    # A reply the bot wrote links to a domain nobody allowed, or contains a
+    # wallet address or an IBAN (policy.py). The reply is held either way.
+    tripwire_suspend: bool = True
+
+
 class TenantConfig(_Strict):
     timezone: str = "Europe/Riga"
     # Off: every reply waits in the panel for approval. On: replies that pass
@@ -292,9 +308,13 @@ class TenantConfig(_Strict):
     reply_delay: ReplyDelay = Field(default_factory=ReplyDelay)
     burst: Burst = Field(default_factory=Burst)
     quiet_hours: QuietHours = Field(default_factory=QuietHours)
-    # Phase 3: a customer message containing one of these pauses the chat
-    # and pings the owner.
+    # A customer message containing one of these (a word or the start of
+    # one, any case) pauses that chat and pings the owner (booking.provider).
     escalation_keywords: list[str] = Field(default_factory=list, max_length=200)
+    # Someone wrote in a chat by hand (on the phone, or from the panel): the
+    # bot stays quiet in that chat for this many hours, then carries on by
+    # itself. 0 = off.
+    takeover_hours: float = Field(12, ge=0, le=720)
     # A reply that mentions one of these is held for approval (policy.py).
     banned_topics: list[str] = Field(default_factory=list, max_length=200)
     # Service name -> lowest price in EUR the bot may state for it.
@@ -306,6 +326,8 @@ class TenantConfig(_Strict):
     shareable_contacts: list[str] = Field(default_factory=list, max_length=50)
     # Every message the account sends per day, replies included.
     daily_message_cap: int = Field(150, ge=1, le=5000)
+    # Every message the account sends per hour. 0 = no limit.
+    hourly_message_cap: int = Field(0, ge=0, le=1000)
     # AI spend per calendar month (tenant timezone), in EUR. 0 = no limit.
     # See also `limits`.
     api_spend_cap_eur: float = Field(10.0, ge=0, le=10_000)
@@ -321,6 +343,7 @@ class TenantConfig(_Strict):
     vision: Vision = Field(default_factory=Vision)
     limits: Limits = Field(default_factory=Limits)
     replies: Replies = Field(default_factory=Replies)
+    anomaly: Anomaly = Field(default_factory=Anomaly)
 
     @field_validator("timezone")
     @classmethod

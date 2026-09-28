@@ -9,6 +9,12 @@ Telegram client; this process holds none). Every part is idempotent (a
 reminder is claimed by a unique row before it goes out, a deferred reply is
 deleted when taken), so a missed, doubled or late tick changes nothing.
 
+It also does the platform's own rounds (phase 3), which need no account
+running: the health watchdog (health.py: an account that is down, logged
+out or rate-limited raises an alert within a few minutes), billing grace
+and suspension (billing.py), and a heartbeat the panel shows, so a dead
+scheduler is visible too.
+
 Only one scheduler runs at a time: it holds a Postgres advisory lock for as
 long as it lives, and a second copy waits for the lock instead of ticking.
 
@@ -27,7 +33,9 @@ from typing import Optional
 
 import asyncpg
 
+import billing
 import commands
+import health
 import pg
 
 log = logging.getLogger("scheduler")
@@ -103,6 +111,20 @@ async def tick(pool: asyncpg.Pool, bus: commands.CommandBus) -> dict[str, str]:
     return dict(await asyncio.gather(*(one(s) for s in sessions)))
 
 
+async def platform_tick(pool: asyncpg.Pool, bus: commands.CommandBus) -> None:
+    """The rounds that don't go through an account. Each part is guarded
+    on its own, so one failing does not skip the others."""
+    await pool.execute(
+        "INSERT INTO platform_settings (key, value, updated_by) VALUES ('scheduler_heartbeat', to_jsonb(now()), "
+        "'scheduler') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"
+    )
+    for name, step in (("health", lambda: health.check_all(pool)), ("billing", lambda: billing.tick(pool, bus))):
+        try:
+            await step()
+        except Exception:
+            log.exception("Scheduler %s round failed", name)
+
+
 async def run(pool: asyncpg.Pool, bus: commands.CommandBus, stop: asyncio.Event,
               tick_seconds: float = TICK_SECONDS) -> None:
     async with pool.acquire() as lock_con:
@@ -117,6 +139,10 @@ async def run(pool: asyncpg.Pool, bus: commands.CommandBus, stop: asyncio.Event,
                     await tick(pool, bus)
                 except Exception:
                     log.exception("Scheduler tick failed")
+                try:
+                    await platform_tick(pool, bus)
+                except Exception:
+                    log.exception("Scheduler platform round failed")
                 if await _wait(stop, tick_seconds):
                     return
         finally:

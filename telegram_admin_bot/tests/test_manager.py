@@ -28,6 +28,7 @@ class FakeRuntime:
 
     def __init__(self, pool, session_id, *, data_dir, redis_url, worker_id):
         self.pool, self.session_id, self.worker_id = pool, session_id, worker_id
+        self.finished = False
 
     async def start(self):
         FakeRuntime.attempts.append(self.session_id)

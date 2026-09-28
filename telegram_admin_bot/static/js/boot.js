@@ -3,17 +3,19 @@
 /* ----------------------------------------------------------------- boot */
 
 $("global-pause").addEventListener("click", async () => {
-  const next = !(state.config && state.config.behavior.global_pause);
+  const next = !(state.status && state.status.global_pause);
   try {
-    await sApi("POST", "/global-pause", { global_pause: next });
+    applyControls(await sApi("POST", "/global-pause", { global_pause: next }));
   } catch (err) { toast(err.message); }
 });
+$("off-chip").addEventListener("click", () => openSafety("client", state.status && state.status.tenant_id));
 
 (async function boot() {
   try {
     const sessions = await fetchSessions();
     hideGate();
     await afterAuth(sessions);
+    sfPoll();
   } catch (err) {
     if (err && err.status === 401) {
       showGate();

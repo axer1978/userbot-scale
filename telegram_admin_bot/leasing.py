@@ -57,8 +57,12 @@ UPDATE telegram_sessions
    SET lease_expires_at = now() + make_interval(secs => $3),
        last_seen_at     = now()
  WHERE session_id = ANY($1) AND lease_worker_id = $2 AND lease_expires_at > now()
+   AND is_active
 RETURNING session_id, lease_worker_id, lease_epoch, lease_expires_at
 """
+# `AND is_active`: deactivating an account (or a hard-off) makes its next
+# renewal fail, so the worker running it fences and lets go within
+# RENEW_SECONDS instead of holding it until the manager restarts.
 
 _RELEASE_SQL = """
 UPDATE telegram_sessions

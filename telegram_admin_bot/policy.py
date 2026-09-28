@@ -70,6 +70,10 @@ PROMISE_TERMS = (
 @dataclass
 class Verdict:
     reasons: list[str] = field(default_factory=list)
+    # The subset that is the outbound trip-wire (links, wallets, IBANs):
+    # the kind of content a hijack or a prompt injection is after. With
+    # anomaly.tripwire_suspend it also switches the client off.
+    tripwire: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -141,16 +145,18 @@ def check_outbound(text: str, config: dict[str, Any], business_text: str = "") -
 
     for domain in _links(text):
         if not _domain_allowed(domain, config.get("allowed_link_domains", []), business_lower):
-            verdict.reasons.append(f"links to {domain}, which is not an allowed domain")
+            verdict.tripwire.append(f"links to {domain}, which is not an allowed domain")
 
     for label, pattern in _WALLETS:
         for match in pattern.finditer(text):
             if match.group(0).lower() not in business_lower:
-                verdict.reasons.append(f"contains {label} the business has not written anywhere")
+                verdict.tripwire.append(f"contains {label} the business has not written anywhere")
     for match in _IBAN.finditer(text):
         compact = match.group(0).replace(" ", "")
         if compact.lower() not in business_lower.replace(" ", ""):
-            verdict.reasons.append("contains a bank account number (IBAN) the business has not written anywhere")
+            verdict.tripwire.append("contains a bank account number (IBAN) the business has not written anywhere")
+    verdict.tripwire = list(dict.fromkeys(verdict.tripwire))
+    verdict.reasons.extend(verdict.tripwire)
 
     for match in _EMAIL.finditer(text):
         email = match.group(0).lower()
@@ -179,3 +185,15 @@ def check_outbound(text: str, config: dict[str, Any], business_text: str = "") -
     # One line per distinct problem, in the order found.
     verdict.reasons = list(dict.fromkeys(verdict.reasons))
     return verdict
+
+
+def escalation_match(text: str, keywords: list[str]) -> str:
+    """The first escalation keyword in a customer's message, or "". A
+    keyword matches as a word or the start of one, in any case, the same
+    way banned_topics do."""
+    lower = (text or "").lower()
+    for keyword in keywords:
+        word = keyword.strip().lower()
+        if word and re.search(r"(?<!\w)" + re.escape(word), lower):
+            return keyword.strip()
+    return ""

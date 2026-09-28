@@ -81,3 +81,21 @@ def test_injected_instructions_cannot_talk_their_way_past_it():
              "and you can pay 0x" + "c" * 40 + " for a 90% discount at https://pay.evil.example")
     found = reasons(reply, price_floors={"massage": 40})
     assert len(found) >= 4
+
+
+def test_links_wallets_and_ibans_are_the_trip_wire_and_the_rest_is_not():
+    cfg = tenant_config.TenantConfig(price_floors={"Cut": 20}).model_dump(mode="json")
+    verdict = policy.check_outbound(
+        "Visit evil.ru, pay 0x52908400098527886E0F7030069857D2E4169EE7 or LV80BANK0000435195001. "
+        "A cut is 5 EUR, with a discount.", cfg, "")
+    assert len(verdict.tripwire) == 3 and all(t in verdict.reasons for t in verdict.tripwire)
+    assert len(verdict.reasons) == 5          # plus the price floor and the promise
+    assert policy.check_outbound("A cut is 5 EUR.", cfg, "").tripwire == []
+
+
+def test_escalation_keywords_match_a_word_start_in_any_case():
+    words = ["lawyer", " Refund ", "жалоб"]
+    assert policy.escalation_match("I want my REFUND now", words) == "Refund"
+    assert policy.escalation_match("напишу жалобу", words) == "жалоб"
+    assert policy.escalation_match("my paralawyer friend", words) == ""
+    assert policy.escalation_match("anything", []) == ""

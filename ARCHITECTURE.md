@@ -1,12 +1,12 @@
 # Architecture
 
-State as of phase 2 of the multi-tenant platform (branch `platform/phase-1`).
+State as of phase 3 of the multi-tenant platform (branch `platform/phase-1`).
 Code lives in `telegram_admin_bot/`; module names below are files there.
 
 ## Processes
 
 ```
- browser ──SSH tunnel / HTTPS──▶ panel (panel.py + platform_api.py + booking_api.py)
+ browser ──SSH tunnel / HTTPS──▶ panel (panel.py + platform_api.py + booking_api.py + safety_api.py)
                                     │  reads/writes Postgres directly
                                     │  commands + live events over Valkey
                                     ▼
@@ -17,6 +17,8 @@ Code lives in `telegram_admin_bot/`; module names below are files there.
       ▲                              + BookingFlow (booking_flow.py)
       │ scheduler_tick, once a minute, to every account with a live lease
  scheduler (scheduler.py, one at a time: Postgres advisory lock)
+      + health watchdog (health.py), billing (billing.py), heartbeat
+      └──▶ alerts (alerts.py) ──▶ Postgres, panel, ALERT_EMAIL, ALERT_WEBHOOK_URL
 
  internet ──HTTPS (caddy-booking)──▶ booking-pages (public_app.py)
       /cal/<tenant token>.ics, /b/<booking token>   (optional profile)
@@ -25,7 +27,7 @@ Code lives in `telegram_admin_bot/`; module names below are files there.
 - **panel** is the control plane and holds no Telegram connection. Anything that needs a live client (send, approve a draft) goes over Valkey (Redis-compatible) to the worker holding that account's lease.
 - **manager** runs workers. A worker must hold an account's **lease** in Postgres (leasing.py) before connecting, so one account never runs twice.
 - **migrate** is a one-shot job: SQL migrations, then `tenants.backfill()` (the Python-side data steps).
-- **scheduler** holds no Telegram connection. It only sends `scheduler_tick` to every running account; each account then does its own timed work idempotently (see "Timed work").
+- **scheduler** holds no Telegram connection. It sends `scheduler_tick` to every running account; each account then does its own timed work idempotently (see "Timed work"). It also runs the platform's own rounds, which need no account: the health watchdog, billing, and a heartbeat the panel watches.
 - **booking-pages** (optional) is a separate small FastAPI app with no admin routes. It reads Postgres by unguessable token and passes a customer's cancel / "I'm coming" to the running account over the bus. GET never changes anything, because messaging apps fetch link previews.
 
 ## Tenancy
@@ -46,18 +48,21 @@ The public tokens (`tenants.calendar_token`, `bookings.customer_token`) are 244 
 
 ## Data model (Postgres)
 
-Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `0003_bookings.sql` (bookings).
+Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `0003_bookings.sql` (bookings), `0004_safety.sql` (safety and control).
 
 | Table | Key columns | Notes |
 |---|---|---|
 | `industries` | id, name, template_version, default_config, config_revision | `template_version` points at the live industry prompt version |
-| `tenants` | id, name, industry_id, status (active/grace/suspended), channel (telegram/whatsapp), session_id, config_json, config_revision, prompt_version, prompt_pin_version, billing_next_due | `config_json` = client-layer config overrides; `prompt_version` = client prompt version in use; `prompt_pin_version` pins an industry template version |
+| `tenants` | id, name, industry_id, status (active/grace/suspended), channel (telegram/whatsapp), session_id, config_json, config_revision, prompt_version, prompt_pin_version, billing_next_due, grace_until, billing_notice_sent_at | `config_json` = client-layer config overrides; `prompt_version` = client prompt version in use; `prompt_pin_version` pins an industry template version. Billing: see "Safety and control" |
+| `tenant_holds` | tenant_id, kind (manual/billing/spend_cap/anomaly/telegram), reason, created_by | Soft-off: the tenant sends nothing on its own while it has any hold. One row per cause, each lifted on its own |
 | `prompt_versions` | layer (base/industry/client), ref_id, tenant_id (client rows), version, content, note, created_by, created_at | Immutable; unique (layer, ref_id, version) |
-| `platform_settings` | key, value | `base_prompt_version`, `llm_prices` |
+| `platform_settings` | key, value | `base_prompt_version`, `llm_prices`, `global_stop`, `billing` (grace hours, owner notice), `scheduler_heartbeat` |
+| `alerts` | tenant_id (NULL = platform), kind, severity, message, count, last_at, acknowledged_at/by | For the operator. At most one open alert per (tenant, kind); a repeat counts, it is not re-sent |
+| `sessions_health` | tenant_id, session_id, status, last_seen_at, last_error, rate_limited_until, known_session_ids_json | What the running account reports and the watchdog's verdict. `known_session_ids_json` = the account's Telegram logins (hash, device, app, country; no IP) |
 | `audit_log` | tenant_id (NULL = platform), actor, event, reason, payload, created_at | Append-only: UPDATE, DELETE and TRUNCATE are refused by triggers |
 | `llm_usage` | tenant_id (NULL = platform), purpose, model, cache-hit / cache-miss / completion tokens, cost_eur | One row per LLM call |
 | `telegram_sessions` | session_id, encrypted credentials, is_active, state, lease_* | One per Telegram account |
-| `conversations` | tenant_id, session_id, chat_id, customer_ref, display_name, automation_paused, … | |
+| `conversations` | tenant_id, session_id, chat_id, customer_ref, display_name, automation_paused, paused_reason, human_takeover_until, … | `paused_reason` = why (an escalation keyword, or "" = by hand); `human_takeover_until` = a person wrote here by hand, the bot is quiet until then |
 | `messages` | id, tenant_id, session_id, chat_id, direction, status, text, llm_model, prompt_version | `prompt_version` e.g. `b1/i1v3/c2` |
 | `bookings` | id, tenant_id, session_id, number, chat_id, customer_ref, customer_name, service, starts_at, ends_at, blocked_until, tz, state, proposed_*, customer_notice, customer_token, arrival fields, legacy | `number` counts per tenant from 1 (`booking_counters`). An exclusion constraint refuses two live bookings of one tenant whose `[starts_at, blocked_until)` overlap; `blocked_until` = end + the gap after it |
 | `booking_events` | tenant_id, booking_id, from_state, to_state, action, actor, reason, payload | Every transition, besides its audit_log row |
@@ -66,14 +71,14 @@ Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `
 | `waitlist` | tenant_id, session_id, customer_ref, chat_id, wanted_from, wanted_to, state, offered_starts_at | One live entry per customer |
 | `deferred_replies` | tenant_id, session_id, chat_id, due_at | A reply held back by quiet hours, one per chat |
 | `outreach`, `chat_links`, `chat_summaries`, `session_media`, `session_counters`, `session_halts`, `telegram_peers`, `session_update_state` | tenant_id, session_id, … | Pre-platform tables, now tenant-scoped. `session_media` is not used yet (files are) |
-| `session_config` | tenant_id, session_id, config | Now only the account's own state: pause switch, device identity, per-contact style overrides |
+| `session_config` | tenant_id, session_id, config | Now only the account's own state: device identity, per-contact style overrides. The old pause switch became the `manual` hold (migration 0004) |
 | `worker_heartbeats`, `panel_sessions`, `schema_migrations` | | Operational, not tenant data |
 
-Not built yet (later phases): `customer_flags`, `unanswered_queue`, `review_batches`, `review_items`, `sessions_health`, `conversations.language`, `conversations.human_takeover_until`.
+Not built yet (later phases): `customer_flags`, `unanswered_queue`, `review_batches`, `review_items`, `conversations.language`.
 
 ## Configuration: three layers
 
-`tenant_config.TenantConfig` (pydantic, `extra="forbid"`) is the whole schema: timing (`reply_delay`, `burst`, `quiet_hours`, `timezone`), `auto_send`, filters (`escalation_keywords`, `banned_topics`, `price_floors`, `allowed_link_domains`, `shareable_contacts`), caps (`daily_message_cap`, `api_spend_cap_eur`, `safety.*`), `language_policy`, AI usage `limits`, per-chat `replies` limits, `vision`, and the sections for sounding human, AI parameters, outreach, context link, media and bookings (`booking.reminders` is a list of objects, edited as JSON in the panel). There is no `auto_confirm`: only a person confirms a booking (migration 0003 removed the key from stored configs).
+`tenant_config.TenantConfig` (pydantic, `extra="forbid"`) is the whole schema: timing (`reply_delay`, `burst`, `quiet_hours`, `timezone`), `auto_send`, filters (`escalation_keywords`, `banned_topics`, `price_floors`, `allowed_link_domains`, `shareable_contacts`), caps (`daily_message_cap`, `api_spend_cap_eur`, `safety.*`), `language_policy`, AI usage `limits`, per-chat `replies` limits, `vision`, `hourly_message_cap`, `takeover_hours`, `anomaly.*`, and the sections for sounding human, AI parameters, outreach, context link, media and bookings (`booking.reminders` is a list of objects, edited as JSON in the panel). There is no `auto_confirm`: only a person confirms a booking (migration 0003 removed the key from stored configs).
 
 ```
 platform defaults (field defaults + hard limits in the schema)
@@ -114,8 +119,11 @@ PRECEDENCE: … follow the PLATFORM RULES.
 Telegram DM ─▶ SessionRuntime.on_incoming
    store message (always), upsert conversation (+ customer_ref)
    a photo: vision (arrival check or a short description) becomes its text
+   Telegram's service account (777000): check the account's logins, no reply
    the booking owner's chat: a booking command is handled, no reply
-   account paused / chat paused? ── yes ─▶ stop
+   escalation keyword? ─▶ chat paused (paused_reason), owner pinged, stop
+   soft-off (a hold or the global stop)? ─▶ stop (stored, never answered later)
+   chat paused / taken over by a person? ─▶ stop
    bookings on: BookingFlow scan (see Bookings)
    schedule draft (a newer message cancels and restarts it)
         │
@@ -133,8 +141,11 @@ Telegram DM ─▶ SessionRuntime.on_incoming
    media tags → attachments; split into ≤ burst.max_messages parts
    policy.check_outbound(text, config, business text)
         │
+   trip-wire in the reply (links, wallets, IBANs)? ─▶ also soft-off (anomaly)
+        │
         ├─ auto_send on, no video hold, policy OK ─▶ send_burst
-        │     check_daily_quota (daily_message_cap, daily_peer_cap)
+        │     every send: kill switches + send-volume anomaly, re-read from Postgres
+        │     check_daily_quota (daily_message_cap, hourly_message_cap, daily_peer_cap)
         │     typing indicator, burst gaps from config
         │     store as sent (llm_model, prompt_version)
         │     audit_log: message_sent, actor=bot, reason="automatic reply"
@@ -144,7 +155,9 @@ Telegram DM ─▶ SessionRuntime.on_incoming
               operator approves in the panel ─▶ send_burst, actor=admin
 ```
 
-Telegram errors (`PeerFloodError`, long `FloodWait`, revoked session) halt the account: it is paused, queued outreach is cancelled, and `account_halted` is audited. Resuming is manual.
+Telegram errors (`PeerFloodError`, long `FloodWait`, revoked session) halt the account: a `telegram` hold, queued outreach cancelled, `account_halted` audited, an alert. Resuming is manual.
+
+A message the account sends that this runtime did not (typed on a phone, or sent by hand from the panel) starts a **human takeover** of that chat: `human_takeover_until = now + takeover_hours`. The bot's own sends are told apart by their Telegram message id (already stored) or by being in flight.
 
 ## Bookings
 
@@ -174,11 +187,35 @@ booking page ─▶ public_app ─▶ bus: booking_customer_action
 
 The scheduler sends `scheduler_tick` to every account with a live lease once a minute. The account then:
 
-1. starts replies whose quiet-hours hold is due (`deferred_replies`, deleted as taken);
+0. re-reads its switches, lifts a `spend_cap` hold whose limit is no longer reached, checks send volume, and every 5 minutes its Telegram logins;
+1. starts replies whose quiet-hours hold is due (`deferred_replies`, deleted as taken; dropped while soft-off);
 2. lets requests nobody answered before their start lapse (`expire`);
 3. sends due reminders: each is claimed by inserting its `booking_reminders` row first, so a second tick, a restart or a second scheduler can't send it twice (at most once);
 4. moves on waitlist offers that were not taken in time;
-5. retries requests that could not reach the owner, every five minutes.
+5. retries requests that could not reach the owner, every five minutes (not while soft-off).
+
+Then, in the scheduler itself: the heartbeat, the health watchdog and the billing round, each guarded on its own.
+
+## Safety and control
+
+```
+controls.py   holds (soft-off per cause) + global stop + hard-off
+              off_reason(tenant) = global stop, else every hold
+anomaly.py    new login | volume spike | trip-wire  ──▶ 'anomaly' hold + audit + alert
+billing.py    active ─(due date passed, tenant tz)─▶ grace ─(grace_hours)─▶ suspended = 'billing' hold
+ai_limits.py  a limit reached ──▶ 'spend_cap' hold; lifted by the tick once no longer reached
+health.py     account reports (seen, errors, rate limit, logins) ──▶ watchdog ──▶ alerts
+alerts.py     one open alert per (tenant, kind) ──▶ panel, e-mail, webhook
+```
+
+- **Soft-off is enforced at the last step.** `SessionRuntime.ensure_may_send()` re-reads the switches and the send-volume check from Postgres before every send by the bot (actor bot or system), so a hold added by another process, or the global stop set from the shell, takes effect on the next send whether or not the running account was told. A person sending from the panel is not blocked. The cached `off_reason` only decides earlier exits (no drafting, no AI call); a cached "off" is re-read before a message is ignored, so a missed resume never costs a reply.
+- **Resuming replays nothing.** Entering soft-off cancels drafts in progress and deletes held quiet-hours replies; a reminder that falls due while off is claimed and noted as not sent; messages received while off are stored and never answered later.
+- **Global stop** is `platform_settings.global_stop`, reachable through the admin login only (and `python controls.py stop|resume` on the server). Phase 4's owner login must not get it.
+- **Hard-off** asks the running account to `log_out()` (Telegram invalidates the key), or, when nothing runs it, takes its lease and logs out directly; then the key is deleted, the account deactivated (`state = revoked`) and audited. Lease renewal requires `is_active`, so any deactivation fences the worker within `RENEW_SECONDS`, and the worker drops finished runtimes and their leases (`SessionRuntime.finished`).
+- **Anomalies.** New login: `account.getAuthorizations` every 5 minutes (and at once on a message from 777000), compared with `sessions_health.known_session_ids_json`; the first check only records. Volume: sent messages in the last hour against the tenant's own average hour over `volume_baseline_days`, tripping at `volume_multiplier` ×, never below `volume_min_messages`; checked before every bot send and on every tick (so hand-typed or hijacker sends count too). Trip-wire: `policy.Verdict.tripwire`. Every trigger writes `anomaly_detected` with the reason; the hold stays until a person resumes it.
+- **Billing.** The scheduler moves a tenant to grace the day after `billing_next_due` in its own timezone and asks its account to message the owner (`owner_notice`, to `booking.provider`), retrying each tick until sent. After `grace_hours` it is suspended. Recording a payment or setting the status by hand (with a reason) is always possible; every change is `billing_changed`.
+- **Health.** The account writes `last_seen_at` once a minute while connected (its own loop, not the scheduler's tick), errors, and Telegram's rate limits. The watchdog derives one status per tenant: `not_running` (no live lease for 3 minutes), `disconnected` (lease, but not connected for 3 minutes), `logged_out`, `rate_limited`, `ok`. A change to a bad status opens an alert `health:<status>`; back to `ok` closes it and sends "back to normal". FloodWaits Telethon sleeps through itself (under `max_flood_wait_seconds`) are not seen.
+- **Escalation and takeover** are per chat and in code: `policy.escalation_match` (word start, any case) pauses the chat with a `paused_reason` and pings the owner; a hand-written message sets `human_takeover_until`. Both keep the booking scan, replies and reminders out of that chat.
 
 ## Limits before every reply
 

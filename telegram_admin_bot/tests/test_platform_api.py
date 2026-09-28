@@ -188,9 +188,14 @@ async def test_the_helper_needs_the_platform_key(panel_client, monkeypatch, tena
 
 async def test_pausing_an_account_is_audited(panel_client, pg_pool, tenant):
     r = await panel_client.post("/api/sessions/acct/global-pause", json={"global_pause": True})
-    assert r.status_code == 200
-    [event] = await events(pg_pool, audit.ACCOUNT_PAUSED)
-    assert event["tenant_id"] == tenant
+    assert r.status_code == 200 and r.json()["global_pause"] is True
+    assert r.json()["off_reason"].startswith("paused")
+    [event] = await events(pg_pool, audit.TENANT_SOFT_OFF)
+    assert event["tenant_id"] == tenant and event["payload"] == {"kind": "manual"}
+    r = await panel_client.post("/api/sessions/acct/global-pause", json={"global_pause": False})
+    assert r.json() == {**r.json(), "global_pause": False, "off_reason": ""}
+    [event] = await events(pg_pool, audit.TENANT_RESUMED)
+    assert event["payload"] == {"kind": "manual"}
 
 
 async def test_outreach_is_refused_while_it_is_off(panel_client, tenant):
