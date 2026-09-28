@@ -61,7 +61,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import audit
-import bookings as bookings_module
+import booking_api
+import booking_store
 import commands
 import config_store
 import context_link
@@ -140,8 +141,7 @@ _last_totp_step = -1
 def db_for(session_id: str) -> Database:
     """A `Database` facade is just (pool, session_id) — cheap to construct
     per request, no connection of its own to hold open. Its `.connect()` is
-    for seeding booking/media *id counters*, which this file never touches
-    (bookings/media are still local files here, not Postgres rows), so it's
+    for seeding id counters, which this file never touches, so it's
     correctly skipped."""
     return Database(pool, session_id)
 
@@ -154,8 +154,11 @@ async def tenant_dir(session_id: str) -> Path:
     return tenants.tenant_data_dir(DATA_DIR, tenant["id"], session_id)
 
 
-async def booking_store_for(session_id: str) -> bookings_module.BookingStore:
-    return bookings_module.BookingStore(await tenant_dir(session_id) / "bookings.json")
+async def booking_store_for(session_id: str) -> booking_store.BookingStore:
+    tenant = await tenants.TenantStore(pool).by_session(session_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    return booking_store.BookingStore(pool, tenant["id"], session_id)
 
 
 async def media_library_for(session_id: str) -> media.MediaLibrary:
@@ -751,35 +754,6 @@ async def api_reject(session_id: str, draft_id: int) -> dict[str, Any]:
     return row or {}
 
 
-@app.get("/api/sessions/{session_id}/bookings", dependencies=[Depends(require_auth)])
-async def api_bookings(session_id: str) -> list[dict[str, Any]]:
-    return [b.to_dict() for b in (await booking_store_for(session_id)).all()]
-
-
-@app.post(
-    "/api/sessions/{session_id}/conversations/{chat_id}/booking-scan",
-    dependencies=[Depends(require_auth)],
-)
-async def api_booking_scan(session_id: str, chat_id: int) -> dict[str, Any]:
-    return await _dispatch_live(session_id, "booking_scan", {"chat_id": chat_id})
-
-
-@app.post("/api/sessions/{session_id}/bookings/{booking_id}/confirm", dependencies=[Depends(require_auth)])
-async def api_booking_confirm(session_id: str, booking_id: int) -> dict[str, Any]:
-    return await _dispatch_live(
-        session_id, "booking_decide", {"booking_id": booking_id, "confirmed": True},
-        not_found_detail="Unknown booking",
-    )
-
-
-@app.post("/api/sessions/{session_id}/bookings/{booking_id}/decline", dependencies=[Depends(require_auth)])
-async def api_booking_decline(session_id: str, booking_id: int) -> dict[str, Any]:
-    return await _dispatch_live(
-        session_id, "booking_decide", {"booking_id": booking_id, "confirmed": False},
-        not_found_detail="Unknown booking",
-    )
-
-
 @app.get("/api/sessions/{session_id}/contacts", dependencies=[Depends(require_auth)])
 async def api_contacts(session_id: str) -> list[dict[str, Any]]:
     return await _dispatch_live(session_id, "list_contacts", {}, timeout=LIVE_ACTION_TIMEOUT)
@@ -888,6 +862,24 @@ async def api_media_describe(session_id: str, item_id: int, body: MediaDescribeB
     return item
 
 
+class MediaRoleBody(BaseModel):
+    role: Optional[str] = Field(None, pattern="^arrival_reference$")
+
+
+@app.patch("/api/sessions/{session_id}/media/{item_id}/role", dependencies=[Depends(require_auth)])
+async def api_media_role(session_id: str, item_id: int, body: MediaRoleBody) -> dict[str, Any]:
+    """Mark a photo as the entrance reference for the arrival photo check."""
+    library = await media_library_for(session_id)
+    try:
+        item = library.set_role(item_id, body.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    if item is None:
+        raise HTTPException(status_code=404, detail="Unknown media item")
+    await publish(session_id, {"type": "media", "media": library.all()})
+    return item
+
+
 @app.delete("/api/sessions/{session_id}/media/{item_id}", dependencies=[Depends(require_auth)])
 async def api_media_delete(session_id: str, item_id: int) -> dict[str, Any]:
     library = await media_library_for(session_id)
@@ -964,7 +956,7 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
             "config": await config_store.load(pool, session_id),
             "tenant_config": (await tenants.TenantStore(pool).bundle_for_session(session_id)).config,
             "status": await api_status(session_id),
-            "bookings": [b.to_dict() for b in (await booking_store_for(session_id)).all()],
+            "bookings": [booking_store.public(b) for b in await (await booking_store_for(session_id)).awaiting_owner()],
             "media": (await media_library_for(session_id)).all(),
         })
     except Exception:
@@ -1009,6 +1001,8 @@ async def unhandled(_request, exc: Exception) -> JSONResponse:
 # Industries, tenants, prompt layers, the config helper and the audit log.
 platform_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(platform_api.router, dependencies=[Depends(require_auth)])
+booking_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(booking_api.router, dependencies=[Depends(require_auth)])
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 

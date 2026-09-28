@@ -12,7 +12,7 @@ const TABS = {
   tenant: [["config", "Config"], ["prompt", "Prompt"], ["versions", "Versions"],
            ["preview", "Rendered prompt"], ["assist", "Ask AI"], ["audit", "Audit log"]],
   industry: [["template", "Template"], ["config", "Default config"], ["versions", "Versions"], ["clients", "Clients"]],
-  base: [["rules", "Rules"], ["versions", "Versions"]],
+  base: [["rules", "Rules"], ["versions", "Versions"], ["prices", "AI prices"]],
 };
 
 async function openPlatform(node) {
@@ -119,7 +119,7 @@ function renderDetail() {
               preview: tenantPreviewTab, assist: tenantAssistTab, audit: tenantAuditTab },
     industry: { template: industryTemplateTab, config: industryConfigTab, versions: industryVersionsTab,
                 clients: industryClientsTab },
-    base: { rules: baseRulesTab, versions: baseVersionsTab },
+    base: { rules: baseRulesTab, versions: baseVersionsTab, prices: basePricesTab },
   }[n.kind][platform.tab];
   render(body);
 }
@@ -207,6 +207,7 @@ function setPath(obj, path, value) {
 }
 
 function valueText(kind, value) {
+  if (kind === "json") return JSON.stringify(value === undefined ? null : value, null, 2);
   if (kind === "list") return (value || []).join("\n");
   if (kind === "map") return Object.entries(value || {}).map(([k, v]) => `${k} = ${v}`).join("\n");
   return value === null || value === undefined ? "" : String(value);
@@ -216,6 +217,11 @@ function parseValue(kind, input) {
   if (kind === "bool") return input.checked;
   if (kind === "int" || kind === "float") return input.value.trim() === "" ? null : Number(input.value);
   if (kind === "list") return input.value.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (kind === "json") {
+    // Left as text when it doesn't parse: the save is then refused with
+    // the schema's message next to the field.
+    try { return JSON.parse(input.value); } catch (_) { return input.value; }
+  }
   if (kind === "map") {
     const out = {};
     for (const line of input.value.split("\n")) {
@@ -241,6 +247,13 @@ function fieldInput(field, value) {
       o.value = c;
       o.selected = c === value;
       input.appendChild(o);
+    }
+  } else if (field.kind === "json" || field.kind === "longtext") {
+    input = el("textarea", field.kind === "json" ? "mono" : null);
+    input.value = valueText(field.kind, value);
+    input.rows = Math.min(12, Math.max(3, input.value.split("\n").length));
+    if (field.kind === "json") {
+      input.placeholder = '[{"minutes_before": 1440, "instruction": "what this reminder should say"}]';
     }
   } else if (field.kind === "list" || field.kind === "map") {
     input = el("textarea");
@@ -744,3 +757,37 @@ $("open-settings").addEventListener("click", () => {
 });
 $("pf-close").addEventListener("click", closePlatform);
 $("platform").addEventListener("click", (ev) => { if (ev.target === $("platform")) closePlatform(); });
+
+/* ------------------------------------------------------------ AI prices */
+// llm_prices: what each model costs per 1M tokens, used for every client's
+// spend limits. A model missing here (the vision model, say) is costed at
+// the highest listed rate.
+
+function basePricesTab(box) {
+  box.appendChild(el("p", "pf-note",
+    "Per 1M tokens, in the currency below. Every client's AI spend and its limits are worked out from " +
+    "these. Add a row for the vision model; one that is missing is costed at the highest listed rate."));
+  const area = el("textarea", "mono");
+  area.rows = 16;
+  area.value = "Loading…";
+  const errors = el("div", "pf-errors");
+  const save = el("button", "btn primary", "Save prices");
+  const actions = el("div", "pf-actions");
+  actions.appendChild(save);
+  box.append(area, errors, actions);
+  api("GET", "/api/platform/prices")
+    .then((prices) => { area.value = JSON.stringify(prices, null, 2); })
+    .catch((err) => { errors.textContent = err.message; });
+  save.addEventListener("click", async () => {
+    errors.textContent = "";
+    let body;
+    try { body = JSON.parse(area.value); } catch (_) { errors.textContent = "That is not valid JSON."; return; }
+    save.disabled = true;
+    try {
+      const saved = await api("PUT", "/api/platform/prices", body);
+      area.value = JSON.stringify(saved, null, 2);
+      toast("Prices saved.", "info");
+    } catch (err) { errors.textContent = err.message; }
+    finally { save.disabled = false; }
+  });
+}

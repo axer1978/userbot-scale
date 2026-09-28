@@ -19,6 +19,20 @@ function renderMedia() {
     desc.value = item.description;
     card.appendChild(desc);
 
+    if (item.kind === "photo") {
+      // The entrance photo the arrival check compares customers' photos with.
+      const label = el("label", "entrance");
+      const box = el("input");
+      box.type = "checkbox";
+      box.checked = item.role === "arrival_reference";
+      box.addEventListener("change", async () => {
+        try { await sApi("PATCH", `/media/${item.id}/role`, { role: box.checked ? "arrival_reference" : null }); }
+        catch (err) { box.checked = !box.checked; toast(err.message); }
+      });
+      label.append(box, el("span", null, "Entrance (for the arrival photo check)"));
+      card.appendChild(label);
+    }
+
     const actions = el("div", "actions");
     const save = el("button", "btn small primary", "Save");
     save.addEventListener("click", async () => {

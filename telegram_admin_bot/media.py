@@ -27,6 +27,11 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".3gp"}
 
 INDEX_NAME = "library.json"
 
+# A photo of the business's entrance. booking.arrival_photo_check compares a
+# customer's arrival photo with these (vision.compare_to_reference).
+ARRIVAL_REFERENCE = "arrival_reference"
+ROLES = (ARRIVAL_REFERENCE,)
+
 # `[send 3]`, `[send: 3]`, `[SEND #3]`, `[send photo 3]`, `[[send 3]]` — the
 # model is asked for the first form and produces all of them.
 # `[sent photo #3: the beach]` is the history placeholder for a file already
@@ -98,6 +103,8 @@ class MediaLibrary:
                 "kind": kind,
                 "description": str(item.get("description") or "").strip(),
             }
+            if item.get("role") in ROLES and kind == PHOTO:
+                self._items[item_id]["role"] = item["role"]
         next_id = raw.get("next_id") if isinstance(raw, dict) else None
         if self._items:
             self._next_id = max(self._items) + 1
@@ -168,6 +175,10 @@ class MediaLibrary:
     def __len__(self) -> int:
         return len(self._items)
 
+    def references(self) -> list[dict[str, Any]]:
+        """Photos marked as the entrance reference."""
+        return [item for item in self.all() if item.get("role") == ARRIVAL_REFERENCE]
+
     # ---------------------------------------------------------- changes
 
     def unique_name(self, filename: str) -> str:
@@ -181,7 +192,7 @@ class MediaLibrary:
             counter += 1
         return candidate
 
-    def add_file(self, filename: str, description: str = "") -> dict[str, Any]:
+    def add_file(self, filename: str, description: str = "", role: Optional[str] = None) -> dict[str, Any]:
         """Register a file that has just been written into the folder."""
         name = safe_filename(filename)
         kind = kind_for(name)
@@ -199,6 +210,10 @@ class MediaLibrary:
             "kind": kind,
             "description": (description or "").strip(),
         }
+        if role is not None:
+            if role not in ROLES or kind != PHOTO:
+                raise ValueError("Only a photo can be an entrance reference.")
+            item["role"] = role
         self._items[item["id"]] = item
         self._next_id += 1
         self.save()
@@ -209,6 +224,19 @@ class MediaLibrary:
         if item is None:
             return None
         item["description"] = (description or "").strip()
+        self.save()
+        return dict(item)
+
+    def set_role(self, item_id: int, role: Optional[str]) -> Optional[dict[str, Any]]:
+        item = self._items.get(item_id)
+        if item is None:
+            return None
+        if role is None:
+            item.pop("role", None)
+        elif role not in ROLES or item["kind"] != PHOTO:
+            raise ValueError("Only a photo can be an entrance reference.")
+        else:
+            item["role"] = role
         self.save()
         return dict(item)
 

@@ -38,6 +38,18 @@ LEGACY_IMPORTED = "legacy_imported"
 ACCOUNT_PAUSED = "account_paused"
 ACCOUNT_RESUMED = "account_resumed"
 ACCOUNT_HALTED = "account_halted"
+BOOKING_CREATED = "booking_created"
+# payload.action says which transition (booking_states.py).
+BOOKING_CHANGED = "booking_changed"
+BOOKINGS_IMPORTED = "bookings_imported"
+AVAILABILITY_CHANGED = "availability_changed"
+WAITLIST_CHANGED = "waitlist_changed"
+ARRIVAL_PHOTO_CHECKED = "arrival_photo_checked"
+REMINDER_SENT = "reminder_sent"
+# The bot did not answer a message: a reply limit, an acknowledgement, or
+# the tenant's own no-reply instruction.
+REPLY_SKIPPED = "reply_skipped"
+AI_LIMIT_REACHED = "ai_limit_reached"
 
 Executor = Union[asyncpg.Pool, asyncpg.Connection]
 

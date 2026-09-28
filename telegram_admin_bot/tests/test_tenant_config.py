@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import tenant_config
 import tenant_config as tc
 import tenants
 
@@ -100,3 +101,59 @@ def test_field_catalog_marks_inherited_and_overridden_fields():
 ])
 def test_legacy_language_mapping(text, policy, note):
     assert tenants.legacy_language(text) == (policy, note)
+
+
+# ------------------------------------------------------------ phase 2 fields
+
+
+def test_auto_confirm_is_gone():
+    with pytest.raises(tenant_config.ConfigError, match="auto_confirm"):
+        tenant_config.resolve(None, {"auto_confirm": True})
+
+
+def test_reminders_are_a_validated_list_sorted_earliest_first():
+    cfg = tenant_config.resolve(None, {"booking": {"reminders": [
+        {"minutes_before": 120, "instruction": "Mention parking."}, {"minutes_before": 2880}]}}).as_dict()
+    assert [r["minutes_before"] for r in cfg["booking"]["reminders"]] == [2880, 120]
+    assert tenant_config.resolve(None, None).as_dict()["booking"]["reminders"] == [
+        {"minutes_before": 1440, "instruction": ""}, {"minutes_before": 120, "instruction": ""}]
+    for bad in ([{"minutes_before": 60}, {"minutes_before": 60}], [{"minutes_before": 1}],
+                [{"minutes_before": 60, "extra": 1}], [{"minutes_before": m} for m in range(10, 70, 10)]):
+        with pytest.raises(tenant_config.ConfigError):
+            tenant_config.resolve(None, {"booking": {"reminders": bad}})
+
+
+def test_closed_dates_and_owner_email_are_checked():
+    cfg = tenant_config.resolve(None, {"booking": {"closed_dates": ["2026-12-25", " 2026-12-24", "2026-12-25"],
+                                                   "owner_email": "owner@salon.lv"}}).as_dict()
+    assert cfg["booking"]["closed_dates"] == ["2026-12-24", "2026-12-25"]
+    with pytest.raises(tenant_config.ConfigError, match="closed_dates"):
+        tenant_config.resolve(None, {"booking": {"closed_dates": ["25.12.2026"]}})
+    with pytest.raises(tenant_config.ConfigError, match="owner_email"):
+        tenant_config.resolve(None, {"booking": {"owner_email": "not an address"}})
+
+
+def test_limits_and_replies_default_to_no_limit():
+    cfg = tenant_config.resolve(None, None).as_dict()
+    assert cfg["limits"] == {"daily_tokens": 0, "monthly_tokens": 0, "daily_spend_eur": 0.0}
+    assert cfg["replies"]["max_messages_per_chat_per_hour"] == 0
+    assert cfg["replies"]["no_reply_instruction"] == ""
+    assert cfg["vision"] == {"enabled": False, "model": "", "describe_photos": True}
+    with pytest.raises(tenant_config.ConfigError):
+        tenant_config.resolve(None, {"limits": {"daily_tokens": -1}})
+
+
+def test_the_panel_edits_reminders_as_json_and_long_texts_in_a_box():
+    resolved = tenant_config.resolve(None, None)
+    kinds = {f["path"]: f["kind"] for f in tenant_config.field_catalog(resolved, resolved.as_dict())}
+    assert kinds["booking.reminders"] == "json"
+    assert kinds["booking.arrival_instructions"] == "longtext"
+    assert kinds["replies.no_reply_instruction"] == "longtext"
+    assert kinds["booking.closed_dates"] == "list"
+
+
+def test_the_old_single_reminder_is_imported_as_a_list():
+    import tenants
+    assert tenants._legacy_booking({"enabled": True, "reminder_minutes_before": 120})["reminders"] == [
+        {"minutes_before": 120, "instruction": ""}]
+    assert tenants._legacy_booking({"reminder_minutes_before": 0})["reminders"] == []

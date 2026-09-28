@@ -205,7 +205,7 @@ function renderThread() {
 function messageNode(msg) {
   if (msg.status === "note") {
     const node = el("div", "msg note");
-    node.appendChild(el("div", "label", "booking"));
+    node.appendChild(el("div", "label", "note"));
     node.appendChild(el("div", null, msg.text));
     node.appendChild(el("div", "time", fmtTime(msg.created_at)));
     return node;

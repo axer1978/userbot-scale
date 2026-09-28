@@ -1,16 +1,18 @@
 """The runtime on the platform: the tenant's rendered prompt and config drive
 drafting, the policy layer holds bad replies, every send is audited and
-metered, and quiet hours delay rather than drop a reply."""
+metered, and quiet hours delay rather than drop a reply (the held reply is
+written to Postgres and picked up by the scheduler's tick)."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
 
 import ai_responder
 import audit
+import scheduler
 import session_runtime
 import tenants
 from database import DIR_IN, STATUS_RECEIVED
@@ -73,7 +75,7 @@ def clock(app, monkeypatch):
         state["now"] += timedelta(seconds=seconds)
 
     monkeypatch.setattr(session_runtime.asyncio, "sleep", fake_sleep)
-    monkeypatch.setattr(app, "local_now", lambda: state["now"])
+    monkeypatch.setattr(app, "utcnow", lambda: state["now"].astimezone(timezone.utc))
     return state
 
 
@@ -154,7 +156,7 @@ async def test_approving_a_held_draft_is_audited_as_the_admin(app, db, pg_pool, 
     assert (sent["actor"], sent["reason"]) == ("admin", "draft approved in the panel")
 
 
-async def test_a_message_in_quiet_hours_is_answered_when_they_end(app, db, model, outbox, clock):
+async def test_a_message_in_quiet_hours_is_answered_when_they_end(app, db, model, outbox, clock, pg_pool):
     app.config["auto_send"] = True
     app.config["quiet_hours"] = {"enabled": True, "start": "21:00", "end": "09:00"}
     app.config["reply_delay"] = {"min_s": 30, "max_s": 30, "distribution": "uniform"}
@@ -164,25 +166,63 @@ async def test_a_message_in_quiet_hours_is_answered_when_they_end(app, db, model
 
     await app.draft_worker(7)
 
-    # Not dropped: sent after the night, a fresh 30 s delay after 09:00.
+    # Not sent at night, not dropped: written down for after the night, a
+    # fresh 30 s delay after 09:00. In Postgres, so a restart keeps it.
+    assert outbox == [] and model["calls"] == []
+    [held] = await scheduler.deferred_for(pg_pool, app.tenant_id)
+    riga = ZoneInfo("Europe/Riga")
+    assert held["due_at"].astimezone(riga).isoformat() == "2026-10-01T09:00:30+03:00"
+
+    # A tick before then does nothing.
+    clock["now"] = datetime(2026, 10, 1, 8, 0, tzinfo=riga)
+    await app.handle_command("scheduler_tick", {})
+    assert 7 not in app.draft_tasks and outbox == []
+
+    clock["now"] = datetime(2026, 10, 1, 9, 0, 31, tzinfo=riga)
+    await app.handle_command("scheduler_tick", {})
+    await app.draft_tasks[7]
     assert outbox == ["Good morning! Yes, we can."]
-    assert clock["now"].time().isoformat() == "09:00:30"
-    assert sum(clock["slept"]) == pytest.approx(10 * 3600 + 30)
+    assert await scheduler.deferred_for(pg_pool, app.tenant_id) == []
+
+    # Taken once: another tick does not answer again.
+    await app.handle_command("scheduler_tick", {})
+    assert outbox == ["Good morning! Yes, we can."]
 
 
-async def test_quiet_hours_switched_on_while_waiting_still_hold_the_reply(app, db, model, outbox, clock):
+async def test_quiet_hours_switched_on_while_waiting_still_hold_the_reply(app, db, model, outbox, clock, pg_pool):
     app.config["auto_send"] = True
     app.config["reply_delay"] = {"min_s": 60, "max_s": 60, "distribution": "uniform"}
-    clock["now"] = clock["now"].replace(hour=20, minute=59, second=30)
-    # Quiet hours start at 21:00, and the reply would land at 21:00:30.
-    app.config["quiet_hours"] = {"enabled": True, "start": "21:00", "end": "09:00"}
+    clock["now"] = clock["now"].replace(hour=20, minute=59, second=0)
     await incoming(db)
     model["reply"] = "ok"
+    original_sleep = session_runtime.asyncio.sleep
 
+    async def sleep_then_switch_on(seconds):
+        await original_sleep(seconds)
+        # The operator turns quiet hours on while the reply waits.
+        app.config["quiet_hours"] = {"enabled": True, "start": "21:00", "end": "09:00"}
+
+    session_runtime.asyncio.sleep = sleep_then_switch_on
+    try:
+        await app.draft_worker(7)
+    finally:
+        session_runtime.asyncio.sleep = original_sleep
+
+    assert outbox == []
+    [held] = await scheduler.deferred_for(pg_pool, app.tenant_id)
+    assert held["due_at"].astimezone(ZoneInfo("Europe/Riga")).hour == 9
+
+
+async def test_a_new_message_moves_the_held_reply_and_a_manual_cancel_drops_it(app, db, model, outbox, clock, pg_pool):
+    app.config["quiet_hours"] = {"enabled": True, "start": "21:00", "end": "09:00"}
+    clock["now"] = clock["now"].replace(hour=23, minute=0)
+    await incoming(db)
     await app.draft_worker(7)
-
-    assert outbox == ["ok"]
-    assert clock["now"].hour == 9
+    await incoming(db, "hello?")
+    await app.draft_worker(7)
+    assert len(await scheduler.deferred_for(pg_pool, app.tenant_id)) == 1
+    await app.handle_command("cancel_draft", {"chat_id": 7})
+    assert await scheduler.deferred_for(pg_pool, app.tenant_id) == []
 
 
 async def test_the_daily_cap_comes_from_the_tenant_config(app, db, pg_pool, outbox):

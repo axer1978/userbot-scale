@@ -319,8 +319,13 @@ async def generate_reply(
     language_locked: Optional[bool] = None,
     burst_max: int = MAX_BURST_MESSAGES,
     usage_sink: Optional[UsageSink] = None,
+    no_reply_instruction: str = "",
 ) -> str:
     """Return the draft reply text, or raise AIResponderError with a safe message.
+
+    `no_reply_instruction` is the tenant's own "when not to answer" text
+    (replies.no_reply_instruction). When given, the model may answer with
+    just NO_REPLY_MARKER; the caller checks with is_no_reply().
 
     The text may contain BURST_SEPARATOR; callers pass it through split_burst
     before sending. `booking_note` is the state of this chat's appointments
@@ -358,6 +363,8 @@ async def generate_reply(
     if (media_note or "").strip():
         sections.append(media_note.strip())
     sections.append(burst_note(burst_max))
+    if (no_reply_instruction or "").strip():
+        sections.append(no_reply_section(no_reply_instruction))
 
     messages = [{"role": "system", "content": "\n\n".join(sections)}]
     messages.extend(_merge_consecutive_turns(history))
@@ -367,6 +374,21 @@ async def generate_reply(
     return await _complete(
         api_key=api_key, messages=messages, ai_config=ai_config, client=client, **_sink(usage_sink)
     )
+
+
+NO_REPLY_MARKER = "[NO_REPLY]"
+
+
+def no_reply_section(instruction: str) -> str:
+    return (
+        "WHEN NOT TO REPLY (from the business): " + instruction.strip() + "\n"
+        f"If their latest message falls under this, answer with exactly {NO_REPLY_MARKER} "
+        "and nothing else. Otherwise reply normally."
+    )
+
+
+def is_no_reply(text: str) -> bool:
+    return (text or "").strip().strip("`\"'").upper().startswith(NO_REPLY_MARKER)
 
 
 async def generate_opener(
@@ -501,11 +523,14 @@ async def extract_booking(
     ai_config: dict[str, Any],
     client: Optional[httpx.AsyncClient] = None,
     usage_sink: Optional[UsageSink] = None,
+    state_note: str = "",
 ) -> Optional[dict[str, Any]]:
-    """Whether the client has settled on a specific appointment time.
+    """What the customer wants regarding a booking (bookings.INTENTS).
 
-    Returns the parsed JSON ({"booked", "start", ...}) when they have, else
-    None. Like summarising, this is extraction, not writing: cold and short.
+    Returns the parsed JSON ({"intent", "start", ...}), or None when there is
+    nothing to act on. `state_note` lists their current bookings so a "yes"
+    to a proposed time can be told apart from a new request. Like
+    summarising, this is extraction, not writing: cold and short.
     """
     import bookings
 
@@ -521,7 +546,7 @@ async def extract_booking(
         api_key=api_key,
         messages=[
             {"role": "system", "content": bookings.EXTRACT_SYSTEM_PROMPT},
-            {"role": "user", "content": bookings.extraction_prompt(transcript, tz_name)},
+            {"role": "user", "content": bookings.extraction_prompt(transcript, tz_name, state_note=state_note)},
         ],
         ai_config=extract_config,
         client=client,

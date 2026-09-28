@@ -138,6 +138,67 @@ services:
     ports:
       - "127.0.0.1:8787:8787"
 
+  # The one background scheduler: once a minute it nudges every running
+  # account to send due booking reminders, let unanswered requests lapse,
+  # move waitlist offers on and release replies that quiet hours held back
+  # (scheduler.py). Holds a Postgres advisory lock, so a second copy would
+  # only wait. No Telegram connection of its own.
+  scheduler:
+    <<: *app-image
+    container_name: userbot-scheduler
+    command: ["python", "scheduler.py"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
+      REDIS_URL: redis://valkey:6379/0
+
+  # OPTIONAL public pages for bookings: the calendar feed per client
+  # (/cal/<token>.ics) and a read-only page per booking (/b/<token>).
+  # Only started with
+  #     docker compose --profile booking-pages up -d
+  # It serves nothing else (not the panel) and is reached only through
+  # caddy-booking below. Set BOOKING_DOMAIN and PUBLIC_BASE_URL in .env.
+  booking-pages:
+    <<: *app-image
+    container_name: userbot-booking-pages
+    profiles: ["booking-pages"]
+    command: ["python", "public_app.py"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
+      REDIS_URL: redis://valkey:6379/0
+      PUBLIC_BIND: 0.0.0.0
+      PUBLIC_PORT: "8788"
+      PUBLIC_HOST: ${BOOKING_DOMAIN:-localhost}
+
+  # HTTPS for the booking pages, with its own Let's Encrypt certificate for
+  # BOOKING_DOMAIN (Caddyfile.booking). It uses ports 80/443 like `caddy`
+  # below, so run one of the two; to have both the panel and the booking
+  # pages public, add the booking site block to ./Caddyfile instead.
+  caddy-booking:
+    image: caddy:2-alpine
+    container_name: userbot-caddy-booking
+    profiles: ["booking-pages"]
+    restart: unless-stopped
+    depends_on:
+      - booking-pages
+    environment:
+      BOOKING_DOMAIN: ${BOOKING_DOMAIN:-}
+    command:
+      - sh
+      - -c
+      - >-
+        if [ -z "$$BOOKING_DOMAIN" ]; then
+        echo "BOOKING_DOMAIN must be set (in .env) for the booking-pages profile — see README" >&2;
+        exit 1; fi;
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.booking:/etc/caddy/Caddyfile:ro
+      - caddy_booking_data:/data
+      - caddy_booking_config:/config
+
   # OPTIONAL public HTTPS front door for the panel. Only started with
   #     docker compose --profile public up -d
   # — a plain `docker compose up -d` ignores it and the panel stays
@@ -221,3 +282,5 @@ volumes:
   # profile only; unused otherwise).
   caddy_data:
   caddy_config:
+  caddy_booking_data:
+  caddy_booking_config:

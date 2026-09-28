@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import copy
 import re
+from datetime import date
 from typing import Any, Literal, Optional, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -39,6 +40,7 @@ INDUSTRY = "industry"
 CLIENT = "client"
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 LanguagePolicy = Literal["mirror", "fixed:lv", "fixed:ru", "fixed:en"]
 
@@ -165,14 +167,121 @@ class Media(_Strict):
     videos_need_approval: bool = True
 
 
+class Reminder(_Strict):
+    """One reminder to the customer before a confirmed booking."""
+    minutes_before: int = Field(ge=5, le=30 * 24 * 60)
+    # What this reminder should say, as an instruction for the reply writer.
+    # Empty: a short check that they are still coming.
+    instruction: str = Field("", max_length=2000)
+
+
+def _default_reminders() -> list["Reminder"]:
+    return [Reminder(minutes_before=24 * 60), Reminder(minutes_before=120)]
+
+
 class Booking(_Strict):
     enabled: bool = False
+    # The owner's Telegram (username, phone or id). Requests go there from
+    # this account; the owner answers YES n, NO n or with a new time.
     provider: str = Field("", max_length=64)
+    # Where the e-mail record of each confirmation, change and cancellation
+    # goes. Needs SMTP_* in .env; empty = no e-mail.
+    owner_email: str = Field("", max_length=254)
     default_duration_minutes: int = Field(60, ge=5, le=24 * 60)
     scan_messages: int = Field(20, ge=2, le=100)
     google_calendar_id: str = Field("", max_length=256)
-    reminder_minutes_before: int = Field(120, ge=0, le=7 * 24 * 60)
+    reminders: list[Reminder] = Field(default_factory=_default_reminders, max_length=5)
+    # Earliest and latest a booking may start, counted from now.
+    min_notice_minutes: int = Field(60, ge=0, le=30 * 24 * 60)
+    max_days_ahead: int = Field(90, ge=1, le=730)
+    # Local dates (YYYY-MM-DD) with no bookings at all: holidays, days off.
+    closed_dates: list[str] = Field(default_factory=list, max_length=366)
+    # How many free times to offer when the requested one is taken.
+    offer_alternatives: int = Field(3, ge=0, le=10)
+    waitlist_enabled: bool = True
+    # How long a freed slot is held for the first person on the waitlist
+    # before it is offered to the next one.
+    waitlist_offer_hours: int = Field(12, ge=1, le=168)
+    # Sent word for word, once, when the customer has arrived.
     arrival_instructions: str = Field("", max_length=20_000)
+    # Compare a photo the customer sends on arrival with the entrance
+    # photos in the media library (marked as entrance reference). Needs
+    # vision.enabled.
+    arrival_photo_check: bool = False
+    # With the photo check on: saying "I'm here" is not enough, the
+    # arrival instructions wait for a photo that matches.
+    arrival_requires_photo: bool = False
+    arrival_photo_min_confidence: float = Field(0.7, ge=0.0, le=1.0)
+
+    @field_validator("reminders")
+    @classmethod
+    def _distinct_reminders(cls, value: list[Reminder]) -> list[Reminder]:
+        seen = set()
+        for reminder in value:
+            if reminder.minutes_before in seen:
+                raise ValueError(f"two reminders at {reminder.minutes_before} minutes before")
+            seen.add(reminder.minutes_before)
+        return sorted(value, key=lambda r: -r.minutes_before)
+
+    @field_validator("closed_dates")
+    @classmethod
+    def _iso_dates(cls, value: list[str]) -> list[str]:
+        out = []
+        for item in value:
+            item = item.strip()
+            try:
+                date.fromisoformat(item)
+            except ValueError:
+                raise ValueError(f"{item!r} is not a date (YYYY-MM-DD)") from None
+            if item not in out:
+                out.append(item)
+        return sorted(out)
+
+    @field_validator("owner_email")
+    @classmethod
+    def _email(cls, value: str) -> str:
+        value = value.strip()
+        if value and not _EMAIL.match(value):
+            raise ValueError("not an e-mail address")
+        return value
+
+
+class Vision(_Strict):
+    """Photos, through a separate vision model (DeepSeek cannot see images).
+    The endpoint and key are VISION_API_URL / VISION_API_KEY in .env."""
+    enabled: bool = False
+    model: str = Field("", max_length=64)
+    # Describe photos customers send so the reply can take them into account.
+    describe_photos: bool = True
+
+
+class Limits(_Strict):
+    """How much AI this client may use. 0 = no limit. At a limit the bot
+    stops writing replies (messages are still received and shown) until the
+    period ends or the limit is raised."""
+    daily_tokens: int = Field(0, ge=0, le=100_000_000)
+    monthly_tokens: int = Field(0, ge=0, le=1_000_000_000)
+    daily_spend_eur: float = Field(0.0, ge=0, le=10_000)
+
+
+class Replies(_Strict):
+    """Keeps the bot from answering too much. Counts AI-written messages
+    (each part of a burst is one), sent or waiting for approval. 0 = no limit."""
+    max_messages_per_chat_per_hour: int = Field(0, ge=0, le=200)
+    max_messages_per_chat_per_day: int = Field(0, ge=0, le=2000)
+    # Least time between two replies in one chat.
+    min_gap_seconds: int = Field(0, ge=0, le=86_400)
+    # Don't reply when the customer's message is only one of these
+    # (compared ignoring case, spaces and trailing punctuation).
+    skip_acknowledgements: bool = False
+    acknowledgements: list[str] = Field(
+        default_factory=lambda: ["ok", "okay", "thanks", "thank you", "paldies", "labi", "спасибо", "ок", "👍", "🙏"],
+        max_length=200,
+    )
+    # When the bot should not answer, in your own words. Empty = it always
+    # answers. When set, the reply writer may decline to answer a message
+    # that matches; each time is noted in the chat and in the audit log.
+    no_reply_instruction: str = Field("", max_length=2000)
 
 
 class TenantConfig(_Strict):
@@ -183,8 +292,6 @@ class TenantConfig(_Strict):
     reply_delay: ReplyDelay = Field(default_factory=ReplyDelay)
     burst: Burst = Field(default_factory=Burst)
     quiet_hours: QuietHours = Field(default_factory=QuietHours)
-    # Phase 2: a free slot is confirmed at once instead of waiting for the owner.
-    auto_confirm: bool = False
     # Phase 3: a customer message containing one of these pauses the chat
     # and pings the owner.
     escalation_keywords: list[str] = Field(default_factory=list, max_length=200)
@@ -199,7 +306,8 @@ class TenantConfig(_Strict):
     shareable_contacts: list[str] = Field(default_factory=list, max_length=50)
     # Every message the account sends per day, replies included.
     daily_message_cap: int = Field(150, ge=1, le=5000)
-    # Phase 3 enforces this; usage is metered from phase 1 (llm_usage.py).
+    # AI spend per calendar month (tenant timezone), in EUR. 0 = no limit.
+    # See also `limits`.
     api_spend_cap_eur: float = Field(10.0, ge=0, le=10_000)
     language_policy: LanguagePolicy = "mirror"
     human: Human = Field(default_factory=Human)
@@ -210,6 +318,9 @@ class TenantConfig(_Strict):
     context_link: ContextLink = Field(default_factory=ContextLink)
     media: Media = Field(default_factory=Media)
     booking: Booking = Field(default_factory=Booking)
+    vision: Vision = Field(default_factory=Vision)
+    limits: Limits = Field(default_factory=Limits)
+    replies: Replies = Field(default_factory=Replies)
 
     @field_validator("timezone")
     @classmethod
@@ -368,7 +479,7 @@ def field_catalog(resolved: Resolved, inherited: dict[str, Any]) -> list[dict[st
         field = _field_for(path)
         rows.append({
             "path": path,
-            "kind": _kind(field.annotation),
+            "kind": _kind(field.annotation, field),
             "choices": list(get_args(field.annotation)) if get_origin(field.annotation) is Literal else None,
             "value": get_path(effective, path),
             "inherited_value": get_path(inherited, path),
@@ -386,7 +497,7 @@ def _field_for(path: str):
     return model.model_fields[parts[-1]]
 
 
-def _kind(annotation: Any) -> str:
+def _kind(annotation: Any, field: Any = None) -> str:
     if annotation is bool:
         return "bool"
     if annotation is int:
@@ -396,7 +507,11 @@ def _kind(annotation: Any) -> str:
     if get_origin(annotation) is Literal:
         return "choice"
     if _is_list(annotation):
-        return "list"
+        # A list of objects (booking.reminders) is edited as JSON.
+        (item,) = get_args(annotation) or (str,)
+        return "json" if _submodel(item) is not None else "list"
     if get_origin(annotation) is dict:
         return "map"
+    if field is not None and any((getattr(m, "max_length", 0) or 0) > 256 for m in field.metadata):
+        return "longtext"
     return "text"

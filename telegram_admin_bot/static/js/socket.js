@@ -125,13 +125,18 @@ function handleEvent(data) {
 
     case "booking": {
       const b = data.booking;
-      const when = new Date(b.start).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
-      const what = { pending: "requested — waiting for the provider",
-                     confirmed: "confirmed", declined: "declined",
-                     superseded: "replaced by a newer request" }[b.status] || b.status;
-      toast(`Booking #${b.id} for ${b.client_name} on ${when}: ${what}`, "info");
+      const when = new Date(b.starts_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short", timeZone: b.tz });
+      const what = { requested: "requested — not sent to the owner yet", pending: "waiting for the owner",
+                     confirmed: "confirmed", cancelled: "cancelled", no_show: "marked as missed",
+                     completed: "done" }[b.state] || b.state;
+      toast(`Booking #${b.number} for ${b.customer_name || "a customer"} on ${when}: ${what}`, "info");
+      if ($("bookings").classList.contains("open")) bkLoad();
       break;
     }
+
+    case "waitlist":
+      if ($("bookings").classList.contains("open") && bk.tab === "waitlist") bkRender();
+      break;
 
     case "error":
       state.drafting.delete(data.chat_id);

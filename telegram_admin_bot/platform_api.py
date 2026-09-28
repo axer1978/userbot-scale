@@ -11,6 +11,7 @@ misses it picks the change up within SessionRuntime.REBIND_SECONDS anyway.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from typing import Any, Callable, Optional
@@ -255,6 +256,45 @@ async def api_rollback_base(body: VersionBody) -> dict[str, Any]:
     saved = await guarded(store().rollback_base(body.version, actor=ACTOR, reason=body.reason))
     await _reload_all()
     return saved
+
+
+class ModelPrice(BaseModel):
+    model_config = {"extra": "forbid"}
+    input_cache_hit: float = Field(ge=0, le=1000)
+    input_cache_miss: float = Field(ge=0, le=1000)
+    output: float = Field(ge=0, le=1000)
+
+
+class PricesBody(BaseModel):
+    """llm_prices: per 1M tokens, in `currency`. The vision model (a
+    different provider) needs its own row, or it is costed at the highest
+    listed rate."""
+    model_config = {"extra": "forbid"}
+    currency: str = Field("USD", pattern="^(USD|EUR)$")
+    usd_to_eur: float = Field(gt=0, le=10)
+    models: dict[str, ModelPrice] = Field(min_length=1, max_length=50)
+
+
+@router.get("/api/platform/prices")
+async def get_prices() -> dict[str, Any]:
+    llm_usage.reset_cache()
+    return await llm_usage.load_prices(_get_pool())
+
+
+@router.put("/api/platform/prices")
+async def put_prices(body: PricesBody) -> dict[str, Any]:
+    pool = _get_pool()
+    before = await llm_usage.load_prices(pool)
+    value = body.model_dump()
+    async with pool.acquire() as con, con.transaction():
+        await con.execute(
+            "INSERT INTO platform_settings (key, value) VALUES ('llm_prices', $1::jsonb) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", json.dumps(value),
+        )
+        await audit.record(con, tenant_id=None, actor=ACTOR, event=audit.CONFIG_CHANGED,
+                           reason="LLM prices changed", payload={"before": before, "after": value})
+    llm_usage.reset_cache()
+    return value
 
 
 @router.post("/api/industries")

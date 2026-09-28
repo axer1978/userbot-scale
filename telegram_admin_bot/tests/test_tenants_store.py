@@ -58,7 +58,7 @@ async def test_upgrade_from_schema_1_turns_each_account_into_a_tenant(pg_pool, t
         await con.execute("INSERT INTO messages (session_id, chat_id, direction, status, text) "
                           "VALUES ('tg1', 7, 'in', 'received', 'sveiki')")
 
-    assert await pg_module.apply_migrations(pg_pool) == [2]
+    assert await pg_module.apply_migrations(pg_pool) == [2, 3]
     report = await tenants.backfill(pg_pool)
 
     store = tenants.TenantStore(pg_pool)
@@ -205,3 +205,33 @@ async def test_base_rules_save_and_rollback(pg_pool, store):
     assert (await store.bundle(tid)).prompt.text.startswith(prompt_layers.BASE_HEADER + "\n\n1. Be kind.")
     await store.rollback_base(1, actor="admin")
     assert "Never claim or imply that you are a human" in (await store.bundle(tid)).prompt.text
+
+
+async def test_migration_3_moves_config_keys_that_changed(pg_pool, tmp_path):
+    """A tenant saved under phase 1 with auto_confirm and the single
+    reminder still resolves after 0003: auto_confirm is gone, the reminder
+    becomes a one-item list."""
+    async with pg_pool.acquire() as con:
+        schema = await con.fetchval("SELECT current_schema()")
+        await con.execute(f'DROP SCHEMA "{schema}" CASCADE; CREATE SCHEMA "{schema}"')
+    first_two = tmp_path / "m"
+    first_two.mkdir()
+    for name in ("0001_init.sql", "0002_tenants.sql"):
+        shutil.copy(pg_module.MIGRATIONS_DIR / name, first_two)
+    assert await pg_module.apply_migrations(pg_pool, first_two) == [1, 2]
+    await pg_pool.execute("INSERT INTO telegram_sessions (session_id) VALUES ('tg1'), ('tg2')")
+    await pg_pool.execute("INSERT INTO tenants (name, industry_id, session_id, config_json) VALUES "
+                          "('A', 1, 'tg1', '{\"auto_confirm\": true, \"booking\": {\"enabled\": true, "
+                          "\"reminder_minutes_before\": 90}}'), "
+                          "('B', 1, 'tg2', '{\"booking\": {\"reminder_minutes_before\": 0}}')")
+    await pg_pool.execute("UPDATE industries SET default_config = '{\"auto_confirm\": false}'")
+
+    assert await pg_module.apply_migrations(pg_pool) == [3]
+    store = tenants.TenantStore(pg_pool)
+    a, b = await store.list()
+    assert a["config_json"] == {"booking": {"enabled": True, "reminders": [{"minutes_before": 90, "instruction": ""}]}}
+    assert b["config_json"] == {"booking": {"reminders": []}}
+    assert (await store.bundle(a["id"])).config["booking"]["reminders"] == [{"minutes_before": 90, "instruction": ""}]
+    assert (await store.get_industry(1))["default_config"] == {}
+    tokens = await pg_pool.fetch("SELECT calendar_token FROM tenants")
+    assert len({r["calendar_token"] for r in tokens}) == 2 and all(len(r["calendar_token"]) == 64 for r in tokens)

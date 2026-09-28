@@ -27,7 +27,9 @@ account.
 | `postgres` | The source of truth: accounts (with credentials encrypted), conversations, messages, per-account settings, outreach queue, and the leases. |
 | `valkey` | Valkey (Redis-compatible): the command bus (panel → worker) and live-event fan-out (worker → open panel tabs). It stores nothing that outlives a request. |
 | `migrate` | A one-shot job that applies database migrations and exits. `panel` and `manager` wait for it. |
+| `scheduler` | Once a minute, tells every running account to do its timed work: booking reminders, requests nobody answered in time, waitlist offers, and replies that quiet hours held back (`scheduler.py`). Only one runs at a time. |
 | `caddy` | Optional. Serves the panel over public HTTPS. Off unless you enable it. See below. |
+| `booking-pages`, `caddy-booking` | Optional (`--profile booking-pages`). The public calendar feed per client and the read-only page per booking, on their own domain. See "Bookings". |
 
 **Leasing** makes sure only one worker runs a given account at a time. A worker
 has to take a lease on the account's row in Postgres before it connects, and
@@ -328,7 +330,9 @@ changes until you press **Apply**. It uses `DEEPSEEK_PLATFORM_KEY` from `.env`.
 | `price_floors` | none | Service → lowest price (EUR) a reply may quote. |
 | `allowed_link_domains`, `shareable_contacts` | none | Links, phone numbers and e-mail addresses a reply may contain. |
 | `banned_topics` | none | A reply mentioning one is held for approval. |
-| `api_spend_cap_eur` | 10 | Recorded now; enforced from phase 3. |
+| `api_spend_cap_eur` | 10 | AI spend per calendar month, in EUR. At the limit the bot stops replying for that client (messages are still received). 0 = no limit. |
+| `limits.*` | no limits | Tokens per day and per month, and EUR per day, for the same purpose. |
+| `replies.*` | no limits | Bot messages per chat per hour/day, least gap between them, not answering bare "ok"/"thanks", and your own *when not to reply* instruction. |
 | `ai.*` | `deepseek-chat`, 400 tokens, 1.0 | DeepSeek request parameters |
 
 **Account safety** (`safety.*`) protects the number itself. Telegram does not
@@ -362,6 +366,8 @@ will try to talk the model out of its rules; these checks don't listen.
 - Every message the account sends is recorded in the audit log with who caused it (the bot, or you from the panel) and why. AI-written messages also record the model and the prompt versions used (e.g. `b1/i1v3/c2`). Every DeepSeek call is metered per client.
 - **If a newer message arrives while a draft is still being prepared, that draft is cancelled and restarted**, so the reply always answers the latest state of the conversation. Sending a message yourself from the panel also cancels any draft in progress for that chat.
 - Messages you send from your phone or Telegram Desktop also appear in the panel, so the thread stays complete.
+- Before writing a reply it checks the client's AI limits (`limits.*`, `api_spend_cap_eur`) and the per-chat reply limits (`replies.*`). A reply not written for either reason is noted in the chat and the audit log. Booking news (a confirmation, a reminder) is never held back by the reply limits.
+- A reply held back by quiet hours is stored in Postgres and sent by the scheduler when they end, so a restart during the night does not lose it.
 - DeepSeek failures (network, timeout, 429, malformed response) are retried with backoff that honours `Retry-After`, then shown as a red error in the conversation. A bad key (401/403) fails at once. Telegram disconnects are reconnected automatically with backoff.
 
 ## Other features
@@ -386,14 +392,63 @@ accounts that send unsolicited DMs.
 **Linked-chat context** (`context_link.*`) is **off for clients**: it stores
 written summaries about people, which the platform does not keep.
 
-**Bookings** (`booking.*`, off by default). When a customer settles on a day
-and time, a request goes to a *provider* account (a person or a bot), who
-replies `YES <n>` or `NO <n>`. The customer is then told through the normal
-reply flow. You can set a check-in reminder before the slot (default 120 min).
-The *arrival instructions* (address, door code) are sent word for word, once,
-when the customer says they have arrived. Detection costs one short DeepSeek
-call per incoming message while it is on. Bookings are stored in
-`./data/tenants/<client id>/bookings.json`. (Phase 2 replaces this.)
+**Bookings** (`booking.*`, off by default). Open **Bookings** in the top bar
+for the selected account's calendar, what waits for an answer, the waitlist,
+the opening hours, the calendar link and AI usage.
+
+- When a customer asks for a day and time, the code checks it against the
+  opening hours, closed days, notice, how far ahead, and every other booking
+  (plus the gap after each). A taken or closed time is never put to the
+  owner; the reply offers the nearest free times and, if it was taken, the
+  waitlist.
+- A free time goes to the owner (`booking.provider`) from this same account:
+  *Booking request #7 … Reply YES 7 or NO 7, or a new time like 7 15:30.*
+  Numbers count per client from 1. **Nothing is confirmed until a person
+  says yes**: the owner by text, or you in the panel.
+- The owner can answer `YES 7`, `NO 7`, a new time (`7 15:30`,
+  `7 04.10 15:30`, `7 tomorrow 15:30`), `CANCEL 7`, `DONE 7`, `NOSHOW 7`, or
+  `LIST`. A bare `yes` works as a reply to the request message, or when only
+  one request is open. When the owner proposes a time, the customer is asked;
+  if they take it, it is confirmed (the owner wrote that time).
+- The customer can change the time before the owner answers (same number),
+  ask to move a confirmed booking (the owner answers `YES 7` / `NO 7`), or
+  cancel. Every change is in the booking's history and the audit log.
+- **Reminders** (`booking.reminders`): a list of `{minutes_before,
+  instruction}`, by default 24 h and 2 h before. The instruction says what
+  that reminder should say. The customer can reply `1` (coming) or `2`
+  (cancel). If the scheduler was down, only the latest due reminder goes out.
+  Quiet hours apply to reminders too.
+- A request nobody answered before its start time lapses, and both sides are
+  told. A cancelled or moved booking frees its time for the first person on
+  the waitlist whose wish covers it; they have `waitlist_offer_hours` to take
+  it before the next one is asked.
+- **Arrival**: when the customer says they are there, `arrival_instructions`
+  (address, door code) are sent word for word, once. With
+  `arrival_photo_check` (needs `vision`), a photo they send is compared with
+  the media items marked *Entrance*; with `arrival_requires_photo` the
+  instructions wait for a matching photo. The owner can send the entrance
+  photo to this account captioned "door".
+- **E-mail record**: with `SMTP_*` in `.env` and `booking.owner_email` set,
+  every confirmation, move and cancellation is e-mailed with an `.ics`
+  attached.
+- **Public pages** (optional): set `BOOKING_DOMAIN` and `PUBLIC_BASE_URL` in
+  `.env` and run `docker compose --profile booking-pages up -d`. Each client
+  then has a secret calendar feed (Bookings → Calendar link) and each booking
+  a read-only page that reminders link to, where the customer can say they
+  are coming or cancel. This uses ports 80/443, like the `public` profile for
+  the panel: run one of the two, or add the booking site to `Caddyfile`.
+
+Opening hours live in Postgres and are edited in **Bookings → Opening
+hours**; with no rows, any time is accepted as long as it doesn't overlap
+another booking. Detection costs one short DeepSeek call per customer
+message while bookings are on.
+
+**Photos** (`vision.*`, off by default). DeepSeek cannot see images, so photos
+go to a separate OpenAI-compatible model: set `VISION_API_URL` and
+`VISION_API_KEY` in `.env`, `vision.enabled` and `vision.model` in the
+client's config, and add the model's price under **Clients → Platform rules
+→ AI prices**. A customer's photo is then described in one or two sentences
+(never the person's appearance) so the reply can take it into account.
 
 *Google Calendar mirror (optional):* create a Google Cloud service account
 with the Calendar API enabled and download its JSON key. Put the key at
@@ -430,8 +485,8 @@ git pull && docker compose up -d --build  # update; migrate runs before panel/ma
 up. Change both in `.env` and run `docker compose up -d`.
 
 **Backups.** Everything that matters is in three places: the Postgres volume,
-`./data` (per client under `./data/tenants/<client id>`: media, bookings, the
-last halt reason), and `.env`.
+`./data` (per client under `./data/tenants/<client id>`: media and the last
+halt reason), and `.env`. Bookings are in Postgres.
 To dump the database:
 
 ```bash
@@ -549,9 +604,12 @@ reference only. Don't use them to deploy.
 ## Files
 
 ```
-docker-compose.yml     the stack: postgres, valkey, migrate, panel, manager, optional caddy
-Dockerfile             one image for panel, manager and migrate
-Caddyfile              optional public HTTPS front door (profile "public")
+docker-compose.yml     the stack: postgres, valkey, migrate, panel, manager, scheduler, optional caddy and booking pages
+Dockerfile             one image for panel, manager, scheduler, migrate and the booking pages
+Caddyfile              optional public HTTPS front door for the panel (profile "public")
+Caddyfile.booking      optional public HTTPS for the booking pages (profile "booking-pages")
+scheduler.py           the one background scheduler; replies held back by quiet hours
+public_app.py          the public booking pages: calendar feed and read-only page per booking
 panel.py               admin panel + API; control plane, no Telegram connections
 manager.py             spawns worker processes, restarts dead ones, adopts new accounts
 session_runtime.py     one Telegram account: client, drafting, sending, safety, outreach, bookings
@@ -568,6 +626,15 @@ audit.py               the append-only audit log
 llm_usage.py           per-client LLM token and cost metering
 config_assist.py       plain-language request -> proposed config change (never applied by itself)
 platform_api.py        admin API behind the Clients view
+booking_api.py         admin API behind the Bookings view
+booking_states.py      the booking state machine: which change is allowed, from where, by whom
+booking_store.py       bookings, opening hours, waitlist, reminders in Postgres, per client
+booking_flow.py        bookings on a running account: requests, owner answers, reminders, arrival
+availability.py        is a time bookable, and what is free nearby
+ai_limits.py           AI usage limits per client and reply limits per chat
+vision.py              photos through an OpenAI-compatible vision model
+mailer.py              the booking e-mail record over SMTP
+ics.py                 calendar files (the feed and e-mail attachments)
 config_store.py        per-account state: pause switch, device identity, per-contact styles
 crypto.py              AES-GCM encryption of stored secrets under USERBOT_MASTER_KEY
 device_profiles.py     stable per-account device identity
@@ -576,12 +643,12 @@ migrate_entrypoint.py  the one-shot `migrate` service
 migrations/            numbered SQL migrations
 ai_responder.py        builds the prompt, calls DeepSeek
 context_link.py        borrows context from a linked chat of the same person
-bookings.py            appointment requests and the provider's YES/NO
+bookings.py            the words around bookings: owner messages and commands, prompt lines
 media.py               the photo/video library the AI may attach
 google_calendar.py     optional Google Calendar mirror for bookings
 static/                the panel UI: index.html, css/, js/ (plain HTML/CSS/JS, no build step)
 tests/                 pytest suite (see "Running the tests")
-data/                  created at runtime: tenants/<client id>/ with media/ and bookings.json
+data/                  created at runtime: tenants/<client id>/media/
 ```
 
 ## A note on userbots

@@ -18,8 +18,16 @@ every send writes an audit row (audit.py) and every LLM call is metered
 (llm_usage.py). The account's own state (pause switch, device identity,
 per-contact overrides) stays in session_config via config_store.py.
 
-`bookings.BookingStore` and `media.MediaLibrary` are still files, kept per
-tenant under DATA_DIR/tenants/<tenant id> (tenants.tenant_data_dir).
+Bookings live in Postgres (booking_store.py); booking_flow.py runs them
+for this account: the customer's requests, the owner's typed answers,
+reminders, the waitlist and arrival. The scheduler (scheduler.py) sends
+`scheduler_tick` about once a minute; replies that quiet hours hold back
+are written to deferred_replies and picked up by that tick, so a restart
+overnight loses nothing. AI usage and reply limits (ai_limits.py) are
+checked before every reply.
+
+`media.MediaLibrary` is still files, kept per tenant under
+DATA_DIR/tenants/<tenant id> (tenants.tenant_data_dir).
 """
 
 from __future__ import annotations
@@ -31,7 +39,7 @@ import random
 import socket
 import time
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -44,21 +52,25 @@ from telethon.tl.functions.account import UpdateStatusRequest
 from telethon.tl.functions.contacts import GetContactsRequest
 from telethon.tl.types import InputPeerUser, User
 
+import ai_limits
 import ai_responder
 import audit
+import booking_flow
+import booking_store
 import bookings
 import commands
 import config_store
 import context_link
 import device_profiles
-import google_calendar
 import humanlike
 import leasing
 import llm_usage
 import media
 import policy
+import scheduler
 import tenant_config
 import tenants
+import vision
 from database import (
     DIR_IN,
     DIR_OUT,
@@ -213,7 +225,7 @@ class SessionRuntime:
         self.db = Database(pool, session_id)
         self.worker_id = worker_id or f"{socket.gethostname()}:{id(self)}"
 
-        # The tenant's files (media library, bookings.json) live under
+        # The tenant's files (media library) live under
         # DATA_DIR/tenants/<tenant id> (tenants.tenant_data_dir). Until
         # bind_tenant() knows the tenant, data_dir, media_library and
         # booking_store are not set.
@@ -256,12 +268,10 @@ class SessionRuntime:
         self.active_chats: set[int] = set()
         self.sending_chats: set[int] = set()
 
-        self.booking_scan_tasks: dict[int, asyncio.Task] = {}
-        self._provider_resolved: tuple[str, Optional[int], float] = ("", None, 0.0)
-        self.PROVIDER_RETRY_SECONDS = 300
-        self._calendar: Optional[google_calendar.GoogleCalendar] = None
-        self._calendar_key: tuple[str, str] = ("", "")
+        self.flow = booking_flow.BookingFlow(self)
         self.REMINDER_TICK_SECONDS = 60
+        # The last AI limit reported, so the panel hears about it once.
+        self._limit_reported = ""
 
         self._ai_gate: Optional[asyncio.Semaphore] = None
         self._ai_gate_size = 0
@@ -396,11 +406,18 @@ class SessionRuntime:
 
         if action == "cancel_draft":
             self.cancel_draft(args["chat_id"])
+            await self.clear_deferred(args["chat_id"])
             return {"ok": True}
 
         if action == "cancel_all_drafts":
             for chat_id in list(self.draft_tasks):
                 self.cancel_draft(chat_id)
+            await scheduler.clear_all_deferred(self.pool, self.tenant_id)
+            return {"ok": True}
+
+        if action == "scheduler_tick":
+            await self.run_deferred()
+            await self.flow.tick()
             return {"ok": True}
 
         if action == "reload_config":
@@ -411,7 +428,8 @@ class SessionRuntime:
             return {"ok": True}
 
         if action == "resend_unsent_bookings":
-            await self.resend_unsent_bookings()
+            for booking in await self.booking_store.unsent():
+                await self.flow.submit(booking)
             return {"ok": True}
 
         if action == "ensure_outreach_worker":
@@ -452,37 +470,26 @@ class SessionRuntime:
             chat_id = args["chat_id"]
             if await self.db.get_conversation(chat_id) is None:
                 raise ValueError("Unknown conversation")
-            if not self.booking_settings().get("enabled"):
-                raise ValueError("Bookings are turned off in Settings")
-            if chat_id == await self.provider_chat_id():
-                raise ValueError("That chat is the booking provider")
-            before = len(self.booking_store.all())
-            self.cancel_booking_scan(chat_id)
-            await self.booking_scan_worker(chat_id)
-            found = [b.to_dict() for b in self.booking_store.all()[before:]]
-            return {"found": found, "bookings": [b.to_dict() for b in self.booking_store.for_chat(chat_id)]}
+            if not self.flow.enabled():
+                raise ValueError("Bookings are turned off (booking.enabled)")
+            if chat_id == await self.flow.provider_chat_id():
+                raise ValueError("That chat is the booking owner")
+            self.flow.cancel_scan(chat_id)
+            await self.flow.scan(chat_id)
+            return {"bookings": [booking_store.public(b) for b in await self.booking_store.for_chat(
+                chat_id, booking_flow.bs.STATES, include_past=True)]}
 
-        if action == "booking_decide":
-            booking_id, confirmed = args["booking_id"], args["confirmed"]
-            booking = self.booking_store.get(booking_id)
-            if booking is None:
-                raise ValueError("Unknown booking")
-            if booking.status != bookings.PENDING:
-                raise ValueError(f"Booking is already {booking.status}")
-            await self.decide_booking(booking, confirmed, by="panel")
-            if booking.provider_chat_id is not None:
-                try:
-                    await self.send_as_me(
-                        booking.provider_chat_id,
-                        f"#{booking.id} was {'confirmed' if confirmed else 'declined'} from the panel.",
-                        actor=audit.ADMIN, reason="booking decision passed on to the provider",
-                    )
-                except Exception as exc:
-                    log.warning(
-                        "[%s] Could not tell the provider about #%s: %s",
-                        self.session_id, booking.id, type(exc).__name__,
-                    )
-            return booking.to_dict()
+        if action == "booking_action":
+            return await self.flow.admin_action(int(args["booking_id"]), str(args["action"]), args)
+
+        if action == "booking_customer_action":
+            # From the customer's booking page (public_app.py).
+            booking = await self.booking_store.get(int(args["booking_id"]))
+            action_name = str(args["action"])
+            if action_name not in ("cancel", "confirm_attendance"):
+                raise ValueError("Unknown customer action")
+            updated = await self.flow.customer_action(booking, action_name, via=booking_flow.VIA_PAGE)
+            return booking_store.public(updated) if updated else {}
 
         raise ValueError(f"Unknown command action: {action!r}")
 
@@ -534,8 +541,37 @@ class SessionRuntime:
         if first:
             self.data_dir = tenants.tenant_data_dir(self.data_root, self.tenant_id, self.session_id)
             self.media_library = media.MediaLibrary(self.data_dir / "media")
-            self.booking_store = bookings.BookingStore(self.data_dir / "bookings.json")
+            self.booking_store = booking_store.BookingStore(self.pool, self.tenant_id, self.session_id)
+            imported = await self.booking_store.import_legacy_file(self.data_dir / "bookings.json")
+            if imported:
+                log.info("[%s] Imported %s bookings from bookings.json.", self.session_id, imported)
         self._bound_at = time.monotonic()
+
+    def utcnow(self) -> datetime:
+        """The clock everything booking- and schedule-related reads (tests
+        replace it)."""
+        return datetime.now(timezone.utc)
+
+    async def ai_limit_reason(self) -> str:
+        """Why this client may not use the AI right now, or "". Reported to
+        the panel and the audit log once each time a limit is first hit."""
+        # The real clock, not utcnow(): usage rows carry the database's time.
+        now_local = datetime.now(bookings.tzinfo_for(self.config["timezone"]))
+        reason = await ai_limits.limit_reached(self.pool, self.tenant_id, self.config, now_local)
+        if reason and reason != self._limit_reported:
+            await self.push_error(None, f"AI paused for this client: {reason}. Messages are still received.")
+            await self.write_audit(audit.AI_LIMIT_REACHED, actor=audit.SYSTEM, reason=reason)
+        self._limit_reported = reason
+        return reason
+
+    async def clear_deferred(self, chat_id: int) -> None:
+        await scheduler.clear_deferred(self.pool, self.tenant_id, chat_id)
+
+    async def run_deferred(self) -> None:
+        """Replies that quiet hours held back and whose time has come."""
+        for chat_id in await scheduler.take_due_deferred(self.pool, self.tenant_id, self.utcnow()):
+            if not self.paused():
+                self.schedule_draft(chat_id)
 
     def paused(self) -> bool:
         """The account-wide pause (panel "Pause all", or halt_everything)."""
@@ -692,7 +728,7 @@ class SessionRuntime:
 
     def local_now(self) -> datetime:
         """Now, in the tenant's timezone."""
-        return datetime.now(bookings.tzinfo_for(self.config["timezone"]))
+        return self.utcnow().astimezone(bookings.tzinfo_for(self.config["timezone"]))
 
     def quiet_seconds_left(self, at: Optional[datetime] = None) -> float:
         """How long until quiet hours end (0 outside them) at `at`, now by default."""
@@ -1047,15 +1083,16 @@ class SessionRuntime:
             # answered in the same second at opening time.
             quiet = self.quiet_seconds_left(humanlike.later(self.local_now(), delay))
             if quiet:
-                delay += quiet + humanlike.sample_reply_delay(self.config["reply_delay"])
-                log.info("[%s]   quiet hours: the reply to chat %s waits %.0f min.", self.session_id, chat_id, delay / 60)
+                await self.defer_reply(chat_id, delay + quiet + humanlike.sample_reply_delay(self.config["reply_delay"]))
+                return
 
             await self.hub.broadcast({"type": "drafting", "chat_id": chat_id, "delay_seconds": round(delay, 1)})
             log.info("[%s]   drafting a reply for chat %s in %.0fs…", self.session_id, chat_id, delay)
             await asyncio.sleep(delay)
             # Quiet hours may have been switched on or moved while waiting.
-            while (left := self.quiet_seconds_left()) > 0:
-                await asyncio.sleep(left + humanlike.sample_reply_delay(self.config["reply_delay"]))
+            if (left := self.quiet_seconds_left()) > 0:
+                await self.defer_reply(chat_id, left + humanlike.sample_reply_delay(self.config["reply_delay"]))
+                return
 
             if self.paused():
                 return
@@ -1068,6 +1105,18 @@ class SessionRuntime:
                 log.info("[%s] No usable history for chat %s; skipping draft.", self.session_id, chat_id)
                 return
 
+            # The booking check for this message decides what the reply
+            # has to say (taken, confirmed, offered times).
+            await self.flow.wait_scan(chat_id)
+            note = await self.flow.reply_note(chat_id)
+            if await self.ai_limit_reason():
+                return
+            if not note.has_news:
+                skip = await self.reply_skip_reason(chat_id, history)
+                if skip:
+                    await self.skip_reply(chat_id, skip)
+                    return
+
             if self.config["auto_send"]:
                 await self.check_daily_quota()
 
@@ -1078,12 +1127,11 @@ class SessionRuntime:
             if background:
                 log.info("[%s]   drawing on a linked chat for context.", self.session_id)
 
-            news, news_kind = self.booking_news(chat_id)
-            booking_note = bookings.context_for_reply(
-                self.booking_store.for_chat(chat_id), news, news_kind
-            )
-            if news is not None:
-                log.info("[%s]   booking #%s: writing the %s into this reply.", self.session_id, news.id, news_kind)
+            if note.has_news:
+                log.info("[%s]   this reply carries booking news.", self.session_id)
+            # The tenant's "when not to answer" instruction is only offered
+            # when there is nothing the reply must pass on.
+            no_reply = "" if note.has_news else self.config["replies"]["no_reply_instruction"]
 
             media_note = self.media_prompt()
             prompt = self.bundle.prompt if self.bundle is not None else None
@@ -1098,13 +1146,18 @@ class SessionRuntime:
                     adaptive_style=self.config["human"]["adaptive_style"],
                     contact=overrides,
                     background=background,
-                    booking_note=booking_note,
+                    booking_note=note.text,
                     media_note=media_note,
                     system_prompt=prompt.text if prompt else None,
                     language_locked=self.config["language_policy"] != "mirror",
                     burst_max=self.config["burst"]["max_messages"],
                     usage_sink=self.usage_sink("reply"),
+                    no_reply_instruction=no_reply,
                 )
+
+            if no_reply and ai_responder.is_no_reply(text):
+                await self.skip_reply(chat_id, "the no-reply instruction applies to this message")
+                return
 
             text, attachments = media.split_attachments(text)
             attachments = [i for i in attachments if self.media_library.get(i) is not None]
@@ -1149,12 +1202,8 @@ class SessionRuntime:
                 if row is not None:
                     await self.push_message(row)
                 log.info("[%s] Draft awaiting approval for chat %s.", self.session_id, chat_id)
-            if news is not None:
-                if news_kind == "reminder":
-                    self.booking_store.update(news, reminder_sent=True)
-                else:
-                    self.booking_store.update(news, client_notified=True)
-                await self.broadcast_booking(news)
+            await self.flow.delivered(chat_id, note)
+            await scheduler.clear_deferred(self.pool, self.tenant_id, chat_id)
             self.schedule_go_offline(chat_id)
 
         except asyncio.CancelledError:
@@ -1173,6 +1222,28 @@ class SessionRuntime:
                 self.schedule_go_offline(chat_id)
             if self.draft_tasks.get(chat_id) is asyncio.current_task():
                 self.draft_tasks.pop(chat_id, None)
+
+    async def defer_reply(self, chat_id: int, seconds: float) -> None:
+        """Quiet hours: write the reply down for later instead of sleeping on
+        it, so a restart doesn't lose it."""
+        due = self.utcnow() + timedelta(seconds=seconds)
+        await scheduler.defer_reply(self.pool, self.tenant_id, self.session_id, chat_id, due)
+        log.info("[%s]   quiet hours: the reply to chat %s waits %.0f min.", self.session_id, chat_id, seconds / 60)
+        await self.hub.broadcast({"type": "drafting", "chat_id": chat_id, "delay_seconds": round(seconds, 1)})
+
+    async def reply_skip_reason(self, chat_id: int, history: list[dict[str, str]]) -> str:
+        """Why this message should get no reply (replies.* in the config), or ""."""
+        replies = self.config["replies"]
+        last = history[-1] if history else {}
+        if (replies["skip_acknowledgements"] and last.get("role") == "user"
+                and ai_limits.is_acknowledgement(last.get("content", ""), replies["acknowledgements"])):
+            return "the message is only an acknowledgement"
+        return await ai_limits.reply_limit(self.pool, self.tenant_id, chat_id, replies)
+
+    async def skip_reply(self, chat_id: int, reason: str) -> None:
+        log.info("[%s]   not replying in chat %s: %s", self.session_id, chat_id, reason)
+        await self.post_note(chat_id, f"No reply: {reason}.")
+        await self.write_audit(audit.REPLY_SKIPPED, reason=reason, payload={"chat_id": chat_id})
 
     async def check_policy(
         self, chat_id: int, text: str, prompt: Optional[Any]
@@ -1340,350 +1411,84 @@ class SessionRuntime:
     # Bookings
     # ------------------------------------------------------------------
 
-    def booking_settings(self) -> dict[str, Any]:
-        return self.config["booking"]
-
-    def booking_news(self, chat_id: int) -> tuple[Optional[bookings.Booking], str]:
-        for booking in self.booking_store.for_chat(chat_id, (bookings.CONFIRMED, bookings.DECLINED)):
-            if not booking.client_notified:
-                return booking, "decision"
-        for booking in self.booking_store.for_chat(chat_id, (bookings.CONFIRMED,)):
-            if booking.reminder_requested_at and not booking.reminder_sent:
-                return booking, "reminder"
-        return None, ""
-
-    def booking_now(self) -> datetime:
-        return datetime.now(bookings.tzinfo_for(self.config["timezone"]))
-
-    async def check_reminders(self) -> None:
-        settings = self.booking_settings()
-        if not settings.get("enabled"):
-            return
-        minutes = int(settings.get("reminder_minutes_before", 0) or 0)
-        for booking in self.booking_store.due_for_reminder(self.booking_now(), minutes):
-            self.booking_store.update(booking, reminder_requested_at=bookings.utcnow())
-            log.info("[%s] Booking #%s is %s; checking in with %s.", self.session_id, booking.id,
-                     bookings.describe_until(booking, self.booking_now()), booking.client_name)
-            await self.post_note(
-                booking.chat_id,
-                f"⏰ Booking #{booking.id} is {bookings.describe_until(booking, self.booking_now())} "
-                "— asking the client whether they are still coming.",
-            )
-            await self.broadcast_booking(booking)
-            if self.paused():
-                continue
-            conversation = await self.db.get_conversation(booking.chat_id)
-            if conversation and conversation["automation_paused"]:
-                continue
-            self.schedule_draft(booking.chat_id)
-
     async def reminder_loop(self) -> None:
+        """Backstop for a missed reload_config: pick up config and prompt
+        changes (an industry template edit, say) every few minutes. Booking
+        work runs on the scheduler's tick."""
         try:
             while True:
                 try:
-                    # Backstop for a missed reload_config: pick up config and
-                    # prompt changes (an industry template edit, say) every
-                    # few minutes regardless.
                     if time.monotonic() - self._bound_at > self.REBIND_SECONDS:
                         await self.bind_tenant()
-                    await self.check_reminders()
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    log.exception("[%s] Reminder check failed", self.session_id)
+                    log.exception("[%s] Rebind failed", self.session_id)
                 await asyncio.sleep(self.REMINDER_TICK_SECONDS)
         except asyncio.CancelledError:
             raise
-
-    async def send_arrival_instructions(self, booking: bookings.Booking) -> None:
-        text = (self.booking_settings().get("arrival_instructions") or "").strip()
-        self.booking_store.update(booking, arrived_at=bookings.utcnow())
-        if not text:
-            await self.post_note(
-                booking.chat_id,
-                f"\U0001F6AA Booking #{booking.id}: the client has arrived, but no arrival "
-                "instructions are set in Settings -> Bookings, so nothing was sent.",
-            )
-            await self.broadcast_booking(booking)
-            return
-        self.cancel_draft(booking.chat_id)
-        self.sending_chats.add(booking.chat_id)
-        try:
-            await self.send_as_me(booking.chat_id, text, typing=True, reason="arrival instructions")
-        except Exception as exc:
-            if not await self.handle_send_failure(booking.chat_id, exc):
-                await self.push_error(
-                    booking.chat_id, f"Could not send the arrival instructions: {type(exc).__name__}: {exc}",
-                )
-            return
-        finally:
-            self.sending_chats.discard(booking.chat_id)
-        self.booking_store.update(booking, instructions_sent_at=bookings.utcnow())
-        await self.post_note(
-            booking.chat_id, f"\U0001F6AA Booking #{booking.id}: the client has arrived — entry instructions sent.",
-        )
-        await self.broadcast_booking(booking)
-
-    async def provider_chat_id(self) -> Optional[int]:
-        value = self.booking_settings().get("provider") or ""
-        if not value or self.client is None or not self.telegram_state["connected"]:
-            return None
-        cached_value, cached_id, resolved_at = self._provider_resolved
-        now = asyncio.get_running_loop().time()
-        if cached_value == value and (
-            cached_id is not None or now - resolved_at < self.PROVIDER_RETRY_SECONDS
-        ):
-            return cached_id
-        try:
-            target: Any = int(value) if value.lstrip("-").isdigit() else value
-            entity = await self.client.get_entity(target)
-            chat_id = int(entity.id)
-            name, username, is_bot, access_hash = describe_sender(entity, chat_id)
-            await self.db.upsert_conversation(chat_id, name, username, is_bot, access_hash)
-        except Exception as exc:
-            log.warning("[%s] Cannot resolve booking provider %r: %s", self.session_id, value, type(exc).__name__)
-            self._provider_resolved = (value, None, now)
-            return None
-        self._provider_resolved = (value, chat_id, now)
-        return chat_id
-
-    def calendar_client(self) -> Optional[google_calendar.GoogleCalendar]:
-        import os
-
-        calendar_id = self.booking_settings().get("google_calendar_id") or ""
-        key_file = (os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE") or "").strip()
-        if not key_file:
-            default = self.data_dir / "google-service-account.json"
-            key_file = str(default) if default.exists() else ""
-        key = (calendar_id, key_file)
-        if key == self._calendar_key:
-            return self._calendar
-        self._calendar_key, self._calendar = key, None
-        if not calendar_id:
-            return None
-        if not key_file:
-            log.warning("[%s] Google Calendar is set but GOOGLE_SERVICE_ACCOUNT_FILE is not; skipping.", self.session_id)
-            return None
-        try:
-            self._calendar = google_calendar.GoogleCalendar(key_file, calendar_id, client=self.http_client)
-        except google_calendar.CalendarError as exc:
-            log.error("[%s] Google Calendar disabled: %s", self.session_id, exc)
-        return self._calendar
 
     async def post_note(self, chat_id: int, text: str) -> None:
         row = await self.db.record_message(chat_id, DIR_SYSTEM, STATUS_NOTE, text, bump_preview=False)
         if row is not None:
             await self.push_message(row)
 
-    async def broadcast_booking(self, booking: bookings.Booking) -> None:
-        await self.hub.broadcast({"type": "booking", "booking": booking.to_dict()})
+    async def provider_chat_id(self) -> Optional[int]:
+        return await self.flow.provider_chat_id()
 
-    def schedule_booking_scan(self, chat_id: int) -> None:
-        self.cancel_booking_scan(chat_id)
-        self.booking_scan_tasks[chat_id] = asyncio.create_task(self.booking_scan_worker(chat_id))
+    # ------------------------------------------------------------------
+    # Photos
+    # ------------------------------------------------------------------
 
-    def cancel_booking_scan(self, chat_id: int) -> None:
-        task = self.booking_scan_tasks.pop(chat_id, None)
-        if task is not None and not task.done():
-            task.cancel()
-
-    async def booking_scan_worker(self, chat_id: int) -> None:
+    async def read_photo(self, chat_id: int, event: Any) -> Optional[str]:
+        """What a customer's photo shows, as text for the chat history:
+        an arrival check when they may be arriving, else a short description
+        (vision.* in the config). None when photos are not looked at."""
+        cfg = self.config["vision"]
+        url, key = vision.endpoint_from_env()
+        if not (cfg["enabled"] and cfg["model"] and url and key) or await self.ai_limit_reason():
+            return None
         try:
-            settings = self.booking_settings()
-            history = await self.db.get_history_for_ai(chat_id, limit=int(settings.get("scan_messages", 20)))
-            if not history:
-                return
-            tz_name = self.config["timezone"]
-
-            arriving = self.booking_store.awaiting_arrival(
-                chat_id, self.booking_now(), int(settings.get("reminder_minutes_before", 0) or 0)
-            )
-            if arriving is not None and history[-1].get("role") == "user":
-                async with self.ai_gate():
-                    arrived = await ai_responder.extract_arrival(
-                        api_key=self.deepseek_key, history=history, ai_config=self.config["ai"], client=self.http_client,
-                        usage_sink=self.usage_sink("arrival_check"),
-                    )
-                if arrived:
-                    log.info("[%s] Booking #%s: %s says they have arrived.", self.session_id, arriving.id, arriving.client_name)
-                    await self.send_arrival_instructions(arriving)
-                    return
+            image = await self.client.download_media(event.message, file=bytes)
+        except Exception as exc:
+            log.warning("[%s] Could not download a photo in chat %s: %s", self.session_id, chat_id, type(exc).__name__)
+            return None
+        if not image:
+            return None
+        try:
+            arrival = await self.flow.arrival_photo(chat_id, image)
+            if arrival is not None:
+                return arrival
+            if not cfg["describe_photos"]:
+                return None
             async with self.ai_gate():
-                found = await ai_responder.extract_booking(
-                    api_key=self.deepseek_key, history=history, tz_name=tz_name, ai_config=self.config["ai"], client=self.http_client,
-                    usage_sink=self.usage_sink("booking_extract"),
+                description = await vision.describe_photo(
+                    image, api_url=url, api_key=key, model=cfg["model"], client=self.http_client,
+                    usage_sink=self.usage_sink("photo_describe"),
                 )
-            if not found:
-                return
-            fields = bookings.build_booking(
-                found, tz_name=tz_name, default_duration=int(settings.get("default_duration_minutes", 60)),
-            )
-            if fields is None:
-                log.info("[%s]   booking time in chat %s was unusable or in the past; ignoring.", self.session_id, chat_id)
-                return
-            start = datetime.fromisoformat(fields["start"])
-            existing = self.booking_store.find_same_slot(chat_id, start)
-            if existing is not None:
-                if existing.status == bookings.PENDING and existing.provider_message_id is None:
-                    await self.send_request_to_provider(existing)
-                return
-            await self.open_booking(chat_id, fields)
-        except asyncio.CancelledError:
-            raise
-        except ai_responder.AIResponderError as exc:
-            log.warning("[%s] Booking check failed for chat %s: %s", self.session_id, chat_id, exc)
-        except Exception:
-            log.exception("[%s] Booking check crashed for chat %s", self.session_id, chat_id)
-        finally:
-            if self.booking_scan_tasks.get(chat_id) is asyncio.current_task():
-                self.booking_scan_tasks.pop(chat_id, None)
+        except vision.VisionError as exc:
+            await self.push_error(chat_id, f"Photo not read: {exc}")
+            return None
+        return f"[photo] {description}"
 
-    async def open_booking(self, chat_id: int, fields: dict[str, Any]) -> bookings.Booking:
-        conversation = await self.db.get_conversation(chat_id) or {}
-        replaced = None
-        for earlier in self.booking_store.for_chat(chat_id, (bookings.PENDING,)):
-            self.booking_store.update(earlier, status=bookings.SUPERSEDED, decided_at=bookings.utcnow())
-            await self.drop_calendar_event(earlier)
-            await self.broadcast_booking(earlier)
-            replaced = earlier
-        booking = self.booking_store.add(
-            chat_id=chat_id,
-            client_name=conversation.get("display_name") or f"Chat {chat_id}",
-            client_username=conversation.get("username"),
-            replaces_id=replaced.id if replaced else None,
-            **fields,
-        )
-        log.info("[%s] Booking #%s: %s asked for %s.", self.session_id, booking.id, booking.client_name,
-                 bookings.describe_when(booking))
-
-        await self.send_request_to_provider(booking)
-
-        calendar = self.calendar_client()
-        if calendar is not None:
-            try:
-                event_id = await calendar.create_event(
-                    summary=f"[UNCONFIRMED] {booking.title or 'Appointment'} — {booking.client_name}",
-                    description=self.calendar_description(booking),
-                    start=booking.start_dt(), end=booking.end_dt(), tz_name=booking.timezone, tentative=True,
-                )
-                self.booking_store.update(booking, calendar_event_id=event_id)
-            except google_calendar.CalendarError as exc:
-                await self.push_error(chat_id, f"Google Calendar: {exc}")
-            except Exception as exc:
-                await self.push_error(chat_id, f"Google Calendar: {type(exc).__name__}: {exc}")
-
-        await self.broadcast_booking(booking)
-        return booking
-
-    async def send_request_to_provider(self, booking: bookings.Booking) -> bool:
-        provider = await self.provider_chat_id()
-        if provider is None:
-            await self.push_error(
-                booking.chat_id,
-                f"Booking #{booking.id} could not be sent: no provider is set in "
-                "Settings -> Bookings, or the username cannot be found. It will be "
-                "retried once the provider is set.",
-            )
+    async def save_owner_photo(self, event: Any, caption: str) -> bool:
+        """The owner sends a photo captioned "door" / "entrance" (or durvis,
+        ieeja, дверь, вход): it becomes an entrance reference for the arrival
+        photo check."""
+        words = {w.strip(".,!:").lower() for w in caption.split()}
+        if not words & {"door", "entrance", "durvis", "ieeja", "дверь", "вход"}:
             return False
+        name = self.media_library.unique_name(f"entrance-{event.message.id}.jpg")
         try:
-            row = await self.send_as_me(provider, bookings.format_request(booking), reason="booking request to the provider")
+            await self.client.download_media(event.message, file=str(self.media_library.dir / name))
+            item = self.media_library.add_file(name, caption[:200], role=media.ARRIVAL_REFERENCE)
         except Exception as exc:
-            if not await self.handle_send_failure(provider, exc):
-                await self.push_error(
-                    booking.chat_id, f"Could not send booking #{booking.id} to the provider: {type(exc).__name__}: {exc}",
-                )
+            log.warning("[%s] Could not save the owner's entrance photo: %s", self.session_id, exc)
             return False
-        self.booking_store.update(booking, provider_chat_id=provider, provider_message_id=row.get("telegram_id"))
-        await self.post_note(
-            booking.chat_id,
-            f"📅 Booking #{booking.id} requested for {bookings.describe_when(booking)} "
-            "— waiting for the provider to confirm.",
-        )
-        await self.broadcast_booking(booking)
+        with suppress(Exception):
+            await self.send_as_me(event.chat_id, f"Saved as entrance reference photo #{item['id']}.",
+                                  reason="entrance photo saved for the owner")
         return True
-
-    async def resend_unsent_bookings(self) -> None:
-        if not self.booking_settings().get("enabled"):
-            return
-        for booking in self.booking_store.pending():
-            if booking.provider_message_id is None:
-                log.info("[%s] Retrying booking #%s for the provider.", self.session_id, booking.id)
-                await self.send_request_to_provider(booking)
-
-    @staticmethod
-    def calendar_description(booking: bookings.Booking) -> str:
-        who = booking.client_name + (f" (@{booking.client_username})" if booking.client_username else "")
-        lines = [f"Client: {who}", f"Booking #{booking.id} via Telegram"]
-        if booking.notes:
-            lines.append(f"Notes: {booking.notes}")
-        return "\n".join(lines)
-
-    async def drop_calendar_event(self, booking: bookings.Booking) -> None:
-        calendar = self.calendar_client()
-        if calendar is None or not booking.calendar_event_id:
-            return
-        try:
-            await calendar.delete_event(booking.calendar_event_id)
-        except Exception as exc:
-            await self.push_error(booking.chat_id, f"Google Calendar: could not remove event: {exc}")
-        else:
-            self.booking_store.update(booking, calendar_event_id=None)
-
-    async def handle_provider_reply(self, chat_id: int, text: str, reply_to: Optional[int]) -> bool:
-        pending = self.booking_store.pending()
-        if not pending:
-            return False
-        decision = bookings.parse_provider_reply(text, pending, reply_to)
-        if decision is None:
-            return False
-        if decision.booking is None:
-            try:
-                await self.send_as_me(chat_id, bookings.format_help(pending), reason="booking help for the provider")
-            except Exception as exc:
-                await self.handle_send_failure(chat_id, exc)
-            return True
-        await self.decide_booking(decision.booking, decision.confirmed, by="provider")
-        try:
-            await self.send_as_me(chat_id, bookings.format_acknowledgement(decision.booking, decision.confirmed),
-                                  reason="booking decision acknowledged to the provider")
-        except Exception as exc:
-            await self.handle_send_failure(chat_id, exc)
-        return True
-
-    async def decide_booking(self, booking: bookings.Booking, confirmed: bool, by: str) -> None:
-        self.booking_store.update(
-            booking, status=bookings.CONFIRMED if confirmed else bookings.DECLINED,
-            decided_at=bookings.utcnow(), decided_by=by,
-        )
-        when = bookings.describe_when(booking)
-        log.info("[%s] Booking #%s %s by %s.", self.session_id, booking.id, booking.status, by)
-
-        calendar = self.calendar_client()
-        if confirmed and calendar is not None and booking.calendar_event_id:
-            try:
-                await calendar.confirm_event(
-                    booking.calendar_event_id, f"{booking.title or 'Appointment'} — {booking.client_name}",
-                )
-            except Exception as exc:
-                await self.push_error(booking.chat_id, f"Google Calendar: could not confirm event: {exc}")
-        elif not confirmed:
-            await self.drop_calendar_event(booking)
-
-        mark = "✅" if confirmed else "❌"
-        await self.post_note(
-            booking.chat_id,
-            f"{mark} Booking #{booking.id} for {when} {'confirmed' if confirmed else 'declined'} by the {by}.",
-        )
-        await self.broadcast_booking(booking)
-
-        if self.paused():
-            log.info("[%s]   automation is paused; the client will be told when a draft next runs.", self.session_id)
-            return
-        conversation = await self.db.get_conversation(booking.chat_id)
-        if conversation and conversation["automation_paused"]:
-            log.info("[%s]   chat %s is paused; tell the client by hand.", self.session_id, booking.chat_id)
-            return
-        self.schedule_draft(booking.chat_id)
 
     # ------------------------------------------------------------------
     # Telethon handlers
@@ -1704,7 +1509,8 @@ class SessionRuntime:
 
         text = (event.raw_text or "").strip()
         has_text = bool(text)
-        stored_text = text if has_text else "[non-text message]"
+        has_photo = getattr(event.message, "photo", None) is not None
+        stored_text = text if has_text else ("[photo]" if has_photo else "[non-text message]")
 
         # Always stored: the platform keeps a complete record of every
         # conversation (the pre-platform log_all_messages switch is gone).
@@ -1718,14 +1524,24 @@ class SessionRuntime:
         log.info("[%s] DM from %s%s (chat %s): %s", self.session_id, name, " [bot]" if is_bot else "", chat_id,
                  f"{len(text)} chars" if has_text else "non-text message")
 
-        is_provider = (
-            has_text and self.booking_settings().get("enabled") and chat_id == await self.provider_chat_id()
-        )
+        is_provider = self.flow.enabled() and chat_id == await self.flow.provider_chat_id()
         if is_provider:
-            if await self.handle_provider_reply(chat_id, text, event.message.reply_to_msg_id):
-                log.info("[%s]   booking decision from the provider — handled.", self.session_id)
+            if has_photo and await self.save_owner_photo(event, text):
                 return
-            log.info("[%s]   message from the booking provider; replying as usual.", self.session_id)
+            if has_text and await self.flow.on_owner_message(chat_id, text, event.message.reply_to_msg_id):
+                log.info("[%s]   booking command from the owner — handled.", self.session_id)
+                return
+            log.info("[%s]   message from the booking owner; replying as usual.", self.session_id)
+
+        if has_photo and not is_provider and not self.paused():
+            seen = await self.read_photo(chat_id, event)
+            if seen is not None and row is not None:
+                label = f"{text}\n{seen}" if has_text else seen
+                updated = await self.db.update_message(row["id"], text=label)
+                if updated is not None:
+                    await self.push_message(updated)
+                has_text = True
+                text = label
 
         if not has_text:
             log.info("[%s]   no text to reply to — skipping.", self.session_id)
@@ -1734,8 +1550,8 @@ class SessionRuntime:
             log.info("[%s]   automation is globally paused — skipping.", self.session_id)
             return
 
-        if self.booking_settings().get("enabled") and not is_provider:
-            self.schedule_booking_scan(chat_id)
+        if self.flow.enabled() and not is_provider:
+            await self.flow.on_customer_message(chat_id, text)
 
         conversation = await self.db.get_conversation(chat_id)
         if conversation and conversation["automation_paused"]:
@@ -1813,8 +1629,8 @@ class SessionRuntime:
                 await ticker
         for chat_id in list(self.draft_tasks):
             self.cancel_draft(chat_id)
-        for chat_id in list(self.booking_scan_tasks):
-            self.cancel_booking_scan(chat_id)
+        for chat_id in list(self.flow.scan_tasks):
+            self.flow.cancel_scan(chat_id)
         if self.offline_timer is not None and not self.offline_timer.done():
             self.offline_timer.cancel()
         old, self.client = self.client, None

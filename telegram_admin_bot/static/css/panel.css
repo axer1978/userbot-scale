@@ -129,11 +129,37 @@ main { flex: 1; display: flex; min-height: 0; }
 #composer textarea { min-height: 42px; max-height: 160px; }
 
 /* ---------- clients (platform) ---------- */
-#platform {
+#platform, #bookings {
   position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
   justify-content: center; padding: 24px;
 }
-#platform.open { display: flex; }
+#platform.open, #bookings.open { display: flex; }
+#bookings .pf-shell { max-width: 980px; }
+.bk-scroll { overflow-y: auto; padding: 0 22px 28px; }
+.bk-nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.bk-day { margin: 18px 0 6px; font-size: 13px; color: var(--muted); text-transform: capitalize; }
+.bk-row { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 6px; background: var(--bg); }
+.bk-row.open { border-color: var(--accent); }
+.bk-head { display: flex; gap: 10px; align-items: center; padding: 8px 12px; cursor: pointer; flex-wrap: wrap; }
+.bk-time { font-variant-numeric: tabular-nums; font-weight: 600; }
+.bk-num { color: var(--muted); }
+.bk-state { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--bg-hover); }
+.bk-row.st-pending .bk-state, .bk-row.st-requested .bk-state { background: rgba(169,130,31,.25); }
+.bk-row.st-confirmed .bk-state { background: rgba(46,160,67,.25); }
+.bk-row.st-cancelled, .bk-row.st-no_show { opacity: .6; }
+.bk-proposal { padding: 0 12px 8px; font-size: 13px; color: var(--accent); }
+.bk-detail { border-top: 1px solid var(--border); padding: 10px 12px; font-size: 13px; }
+.bk-fact { margin-bottom: 3px; }
+.bk-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 6px; }
+.bk-events { color: var(--muted); font-size: 12px; border-top: 1px dashed var(--border); padding-top: 6px; }
+.warn-note { color: var(--danger); }
+textarea.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.media-card .entrance { display: flex; gap: 6px; align-items: center; font-size: 12px; margin-top: 4px; }
+.media-card .entrance input { width: auto; }
+@media (max-width: 640px) {
+  #platform, #bookings { padding: 0; }
+  .bk-scroll { padding: 0 12px 20px; }
+}
 .pf-shell { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 14px;
   width: 100%; max-width: 1280px; display: flex; flex-direction: column; min-height: 0; }
 .pf-top { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--border); }

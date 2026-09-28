@@ -610,10 +610,18 @@ def legacy_overrides(legacy: dict[str, Any], *, used_outreach: bool) -> dict[str
         # Kept on only for an account that has actually used it.
         "outreach": {**legacy["outreach"], "enabled": used_outreach},
         "media": legacy["media"],
-        "booking": legacy["booking"],
+        "booking": _legacy_booking(legacy["booking"]),
     }
     defaults = tenant_config.TenantConfig().model_dump(mode="json")
     return _prune(defaults, candidate) or {}
+
+
+def _legacy_booking(booking: dict[str, Any]) -> dict[str, Any]:
+    """The old single check-in reminder becomes a one-item reminders list."""
+    out = {k: v for k, v in booking.items() if k != "reminder_minutes_before"}
+    minutes = int(booking.get("reminder_minutes_before") or 0)
+    out["reminders"] = [{"minutes_before": minutes, "instruction": ""}] if minutes >= 5 else []
+    return out
 
 
 def legacy_prompt(legacy: dict[str, Any]) -> dict[str, Any]:

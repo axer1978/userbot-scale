@@ -23,6 +23,7 @@
   <span id="mode" class="status"></span>
   <button id="global-pause" class="btn needs-login">Pause all</button>
   <button id="open-outreach" class="btn needs-login">Outreach</button>
+  <button id="open-bookings" class="btn" title="This client's bookings, opening hours, waitlist and calendar link">Bookings</button>
   <button id="open-media" class="btn">Media</button>
   <button id="open-style" class="btn">Style</button>
   <button id="open-settings" class="btn" title="How this client's bot behaves: config, prompt, versions">Settings</button>
@@ -135,6 +136,20 @@
     <div class="pf-body">
       <nav id="pf-tree"></nav>
       <section id="pf-detail"></section>
+    </div>
+  </div>
+</div>
+
+<div id="bookings">
+  <div class="pf-shell">
+    <div class="pf-top">
+      <h2>Bookings</h2>
+      <span class="spacer"></span>
+      <button type="button" id="bk-close" class="btn">Close</button>
+    </div>
+    <div class="bk-scroll">
+      <div id="bk-tabs" class="pf-tabs"></div>
+      <div id="bk-body"></div>
     </div>
   </div>
 </div>
@@ -266,7 +281,9 @@
     <div id="m-grid" class="media-grid"></div>
 
     <p class="hint" style="margin-top:16px">Whether the AI may send these, and the video rules, are in
-      <b>Settings → Config</b> under <code>media</code>.</p>
+      <b>Settings → Config</b> under <code>media</code>. A photo marked <b>Entrance</b> is what a
+      customer's arrival photo is compared with (<code>booking.arrival_photo_check</code>); the owner can
+      also send one to this account captioned "door".</p>
 
     <div class="sheet-actions">
       <button type="button" id="m-close" class="btn">Close</button>
@@ -285,6 +302,7 @@
 <script src="/js/socket.js"></script>
 <script src="/js/accounts.js"></script>
 <script src="/js/platform.js"></script>
+<script src="/js/bookings.js"></script>
 <script src="/js/boot.js"></script>
 </body>
 </html>
