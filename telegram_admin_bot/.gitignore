@@ -13,3 +13,5 @@ bookings.json
 google-service-account.json
 # Photos/videos loaded into the panel (per account, can be large).
 media/
+backups/
+deploy/age-recipient.txt

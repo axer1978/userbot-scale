@@ -31,7 +31,7 @@ async def test_quota_allows_sending_on_a_quiet_day(app, db):
 
 @pytest.mark.asyncio
 async def test_total_send_limit_blocks_further_messages(app, db):
-    app.config["safety"]["daily_send_limit"] = 3
+    app.config["daily_message_cap"] = 3
     await _sent(db, 1, 3)
     with pytest.raises(session_runtime.SendBlocked, match="Daily send limit"):
         await app.check_daily_quota()
@@ -40,7 +40,7 @@ async def test_total_send_limit_blocks_further_messages(app, db):
 @pytest.mark.asyncio
 async def test_send_limit_counts_replies_not_just_outreach(app, db):
     """Telegram counts all outbound volume, so the ceiling must too."""
-    app.config["safety"]["daily_send_limit"] = 2
+    app.config["daily_message_cap"] = 2
     await _sent(db, 42, 2)  # ordinary replies, no outreach rows at all
     with pytest.raises(session_runtime.SendBlocked):
         await app.check_daily_quota()
@@ -49,8 +49,8 @@ async def test_send_limit_counts_replies_not_just_outreach(app, db):
 @pytest.mark.asyncio
 async def test_distinct_people_capped_separately_from_volume(app, db):
     """Breadth is the stronger spam signal, so it has its own tighter cap."""
-    app.config["safety"]["daily_send_limit"] = 10_000
-    app.config["safety"]["daily_peer_limit"] = 2
+    app.config["daily_message_cap"] = 10_000
+    app.config["safety"]["daily_peer_cap"] = 2
     for i, chat in enumerate((10, 11, 12)):
         await _sent(db, chat, 1, start=100 * (i + 1))
     with pytest.raises(session_runtime.SendBlocked, match="distinct people"):
@@ -60,7 +60,7 @@ async def test_distinct_people_capped_separately_from_volume(app, db):
 @pytest.mark.asyncio
 async def test_many_messages_to_one_person_do_not_trip_the_peer_cap(app, db):
     """A long conversation with one person is not spam."""
-    app.config["safety"]["daily_peer_limit"] = 2
+    app.config["safety"]["daily_peer_cap"] = 2
     await _sent(db, 7, 25)
     await app.check_daily_quota()  # must not raise
 

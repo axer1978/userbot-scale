@@ -9,7 +9,7 @@ server where nobody can click through an OAuth consent screen. Setup:
 
   1. Google Cloud console → create a project → enable the Google Calendar API.
   2. IAM → Service accounts → create one → Keys → add a JSON key. Save the
-     file next to main.py (or anywhere; point GOOGLE_SERVICE_ACCOUNT_FILE at it).
+     file in this folder (or anywhere; point GOOGLE_SERVICE_ACCOUNT_FILE at it).
   3. In Google Calendar, share the target calendar with the service account's
      e-mail address, permission "Make changes to events".
   4. Put that calendar's ID (Settings → Integrate calendar) in

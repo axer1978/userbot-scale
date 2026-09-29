@@ -126,8 +126,7 @@ def outbox(app, monkeypatch):
 
     monkeypatch.setattr(app, "resolve_peer", fake_resolve_peer)
     monkeypatch.setattr(app, "deliver", fake_deliver)
-    monkeypatch.setattr(app, "BURST_GAP_MIN_SECONDS", 0)
-    monkeypatch.setattr(app, "BURST_GAP_MAX_SECONDS", 0)
+    app.config["burst"]["gap_ms"] = {"min": 0, "max": 0}
     return sent
 
 
@@ -164,7 +163,7 @@ async def test_a_burst_counts_fully_against_the_daily_limit(app, db, outbox):
 @pytest.mark.asyncio
 async def test_the_daily_limit_stops_a_burst_partway(app, db, outbox):
     """The guard runs per part, so a burst cannot overshoot the ceiling."""
-    app.config["safety"]["daily_send_limit"] = 2
+    app.config["daily_message_cap"] = 2
     await db.upsert_conversation(7, "J", None, False, 1)
 
     with pytest.raises(session_runtime.SendBlocked):

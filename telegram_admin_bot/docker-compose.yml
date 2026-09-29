@@ -1,3 +1,12 @@
+# Container logs capped at 3 x 10 MB per service, so a chatty container
+# can't fill the disk (deploy/bootstrap_ubuntu24.sh sets the same default
+# for the whole Docker daemon; this keeps it true on any other host).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-app-image: &app-image
   build: .
   # Shared by panel/manager/migrate: same code, same deps, same secrets. Only
@@ -6,7 +15,7 @@ x-app-image: &app-image
   depends_on:
     postgres:
       condition: service_healthy
-    redis:
+    valkey:
       condition: service_healthy
     migrate:
       condition: service_completed_successfully
@@ -31,11 +40,7 @@ x-app-image: &app-image
     # Per-worker session files and other DATA_DIR scratch state survive
     # rebuilds. The database of record is Postgres, not this volume.
     - ./data:/app/data
-  logging:
-    driver: json-file
-    options:
-      max-size: "10m"
-      max-file: "3"
+  logging: *logging
 
 services:
   # Shared state store for the whole fleet: every panel/manager/worker talks
@@ -63,6 +68,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    logging: *logging
     # Not published to the host at all: nothing outside this compose network
     # needs to reach Postgres directly, and every port opened is one more
     # thing to secure. Use `docker compose exec postgres psql ...` to poke
@@ -73,15 +79,22 @@ services:
   # a given session's lease — see commands.py. Holds no data that outlives a
   # single command's round trip or a websocket's lifetime; Postgres remains
   # the only thing anything here is actually persisted to.
-  redis:
-    image: redis:7-alpine
-    container_name: userbot-redis
+  # Valkey speaks the Redis protocol; the code uses only PUBLISH/SUBSCRIBE
+  # through redis-py, so REDIS_URL keeps its name.
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: userbot-valkey
     restart: unless-stopped
+    # Pub/sub only, nothing stored: no snapshots, no append-only file, so
+    # it never writes to disk (and can't refuse commands over a failed
+    # background save).
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
+    logging: *logging
     # Not published to the host, same reasoning as postgres above.
 
   # One-shot: applies pending migrations (pg.apply_migrations) and exits.
@@ -109,7 +122,7 @@ services:
   # account in the fleet instead of one panel per account. Holds no live
   # Telegram connections itself — it reads/writes Postgres and this
   # session's local files directly, and reaches a session's actual live
-  # client (held by whichever manager worker leased it) over the redis
+  # client (held by whichever manager worker leased it) over the valkey
   # command bus. See panel.py's module docstring for why it's built this
   # way instead of running its own SessionRuntimes.
   panel:
@@ -118,7 +131,7 @@ services:
     command: ["python", "panel.py"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://valkey:6379/0
       DATA_DIR: /app/data
       USERBOT_MASTER_KEY: ${USERBOT_MASTER_KEY:?USERBOT_MASTER_KEY must be set — see comment above}
       # SECURITY-SENSITIVE: no default on purpose. panel.py requires this
@@ -135,15 +148,99 @@ services:
     # loopback-only publish stays exactly as it is either way.
     ports:
       - "127.0.0.1:8787:8787"
+    # "healthy" in `docker compose ps` once the panel answers HTTP. The
+    # login-options route needs no login and touches nothing.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/login-options', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # The one background scheduler: once a minute it nudges every running
+  # account to send due booking reminders, let unanswered requests lapse,
+  # move waitlist offers on and release replies that quiet hours held back
+  # (scheduler.py). Holds a Postgres advisory lock, so a second copy would
+  # only wait. No Telegram connection of its own.
+  scheduler:
+    <<: *app-image
+    container_name: userbot-scheduler
+    command: ["python", "scheduler.py"]
+    # `environment` here replaces the shared block above (a YAML merge is
+    # shallow), so everything the app services share is repeated.
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
+      REDIS_URL: redis://valkey:6379/0
+      DATA_DIR: /app/data
+      USERBOT_MASTER_KEY: ${USERBOT_MASTER_KEY:?USERBOT_MASTER_KEY must be set — see comment above}
+
+  # OPTIONAL public pages for bookings: the calendar feed per client
+  # (/cal/<token>.ics) and a read-only page per booking (/b/<token>).
+  # Only started with the `booking-pages` profile (served by the `caddy`
+  # service next to the public panel) or the `booking-only` profile (served
+  # by `caddy-booking`, no public panel). It serves nothing else (not the
+  # panel). Set BOOKING_DOMAIN and PUBLIC_BASE_URL in .env.
+  booking-pages:
+    <<: *app-image
+    container_name: userbot-booking-pages
+    # Both profiles: caddy-booking (booking-only) depends on this service,
+    # and Compose does not enable a dependency's profile by itself.
+    profiles: ["booking-pages", "booking-only"]
+    command: ["python", "public_app.py"]
+    # The one app service facing the internet directly gets none of .env
+    # (admin password, authenticator key, master key, SMTP login): it needs
+    # only the database, the bus and the settings below.
+    env_file: []
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
+      REDIS_URL: redis://valkey:6379/0
+      PUBLIC_BIND: 0.0.0.0
+      PUBLIC_PORT: "8788"
+      PUBLIC_HOST: ${BOOKING_DOMAIN:-localhost}
+
+  # HTTPS for the booking pages, with its own Let's Encrypt certificate for
+  # BOOKING_DOMAIN (Caddyfile.booking). It uses ports 80/443 like `caddy`
+  # below, so never run the two together.
+  caddy-booking:
+    image: caddy:2-alpine
+    container_name: userbot-caddy-booking
+    # Only for booking pages WITHOUT the public panel
+    # (COMPOSE_PROFILES=booking-only). With the panel public as well, the
+    # `caddy` service serves both: set BOOKING_DOMAIN and
+    # COMPOSE_PROFILES=public,booking-pages.
+    profiles: ["booking-only"]
+    restart: unless-stopped
+    depends_on:
+      - booking-pages
+    environment:
+      BOOKING_DOMAIN: ${BOOKING_DOMAIN:-}
+    command:
+      - sh
+      - -c
+      - >-
+        if [ -z "$$BOOKING_DOMAIN" ]; then
+        echo "BOOKING_DOMAIN must be set (in .env) for the booking-pages profile — see README" >&2;
+        exit 1; fi;
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.booking:/etc/caddy/Caddyfile:ro
+      - caddy_booking_data:/data
+      - caddy_booking_config:/config
+    logging: *logging
 
   # OPTIONAL public HTTPS front door for the panel. Only started with
   #     docker compose --profile public up -d
   # — a plain `docker compose up -d` ignores it and the panel stays
   # SSH-tunnel-only. Caddy gets a Let's Encrypt certificate for PANEL_DOMAIN
   # on its own (which is why it needs ports 80 and 443 open to the internet)
-  # and reverse-proxies to the panel; see ./Caddyfile. The panel itself
-  # still has only the shared ADMIN_PASSWORD, now rate-limited per client
-  # IP (panel.py), so pick a long one before turning this on.
+  # and reverse-proxies to the panel; see ./Caddyfile. With PANEL_DOMAIN set
+  # the panel refuses to start without ADMIN_TOTP_SECRET and an
+  # ADMIN_PASSWORD of 14+ characters (panel.py check_public_setup); logins
+  # are rate-limited per client IP.
   caddy:
     image: caddy:2-alpine
     container_name: userbot-caddy
@@ -160,6 +257,7 @@ services:
       # everyone not using this profile. The `command` below does the
       # "must be set" check instead, only when Caddy actually starts.
       PANEL_DOMAIN: ${PANEL_DOMAIN:-}
+      BOOKING_DOMAIN: ${BOOKING_DOMAIN:-}
     # Same as the image's default command, behind a guard: with
     # PANEL_DOMAIN empty the Caddyfile's site address would silently
     # collapse into its global-options block and fail with a confusing
@@ -171,22 +269,24 @@ services:
         if [ -z "$$PANEL_DOMAIN" ]; then
         echo "PANEL_DOMAIN must be set (in .env) for the public profile — see README" >&2;
         exit 1; fi;
-        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+        CONF=/etc/caddy/Caddyfile;
+        if [ -n "$$BOOKING_DOMAIN" ]; then CONF=/etc/caddy/Caddyfile.both; fi;
+        exec caddy run --config "$$CONF" --adapter caddyfile
     ports:
       - "80:80"      # ACME HTTP-01 challenge + redirect to HTTPS
       - "443:443"
       - "443:443/udp"  # HTTP/3
     volumes:
+      # All three in one folder: Caddyfile.both imports the other two by
+      # paths relative to itself.
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile.booking:/etc/caddy/Caddyfile.booking:ro
+      - ./Caddyfile.both:/etc/caddy/Caddyfile.both:ro
       # Certificates and ACME account keys. Keep this volume: losing it
       # means re-issuing certificates, and Let's Encrypt rate-limits that.
       - caddy_data:/data
       - caddy_config:/config
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *logging
 
   # The fleet manager: leases sessions from Postgres and runs a
   # SessionRuntime worker per leased session, WORKER_COUNT/SESSIONS_PER_WORKER
@@ -201,7 +301,7 @@ services:
     command: ["python", "manager.py"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://valkey:6379/0
       DATA_DIR: /app/data
       USERBOT_MASTER_KEY: ${USERBOT_MASTER_KEY:?USERBOT_MASTER_KEY must be set — see comment above}
       # How many SessionRuntime workers this manager replica runs, and how
@@ -219,3 +319,5 @@ volumes:
   # profile only; unused otherwise).
   caddy_data:
   caddy_config:
+  caddy_booking_data:
+  caddy_booking_config:

@@ -57,8 +57,12 @@ UPDATE telegram_sessions
    SET lease_expires_at = now() + make_interval(secs => $3),
        last_seen_at     = now()
  WHERE session_id = ANY($1) AND lease_worker_id = $2 AND lease_expires_at > now()
+   AND is_active
 RETURNING session_id, lease_worker_id, lease_epoch, lease_expires_at
 """
+# `AND is_active`: deactivating an account (or a hard-off) makes its next
+# renewal fail, so the worker running it fences and lets go within
+# RENEW_SECONDS instead of holding it until the manager restarts.
 
 _RELEASE_SQL = """
 UPDATE telegram_sessions
@@ -196,31 +200,64 @@ class LeaseKeeper:
     def is_safe(self, session_id: str) -> bool:
         return self._safe.get(session_id, False)
 
+    def _deadline(self, tracked: list[str], now: float) -> float:
+        """When the first tracked session runs out of its danger window."""
+        return min((self._last_ok.get(s, now) + self._danger for s in tracked), default=now + self._danger)
+
+    def _next_wait(self, now: float) -> float:
+        """Normally the renewal interval; sooner when a failed renewal would
+        otherwise leave the next attempt past the danger window, so fencing
+        happens at DANGER_SECONDS and not up to an interval later (which,
+        with the defaults, would be when the lease has already expired)."""
+        tracked = list(self._leases)
+        if not tracked:
+            return self._interval
+        return max(0.01, min(self._interval, self._deadline(tracked, now) - now))
+
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
         while not self._stop_event.is_set():
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self._interval)
+                await asyncio.wait_for(self._stop_event.wait(), timeout=self._next_wait(loop.time()))
                 break  # stop() was called
             except asyncio.TimeoutError:
                 pass
-            await self._tick(loop.time())
+            try:
+                await self._tick(loop.time())
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Never let the keeper die: without it nothing would fence
+                # this worker once the lease ran out.
+                log.exception("lease keeper round failed for worker %s", self._worker_id)
 
     async def _tick(self, now: float) -> None:
         tracked = list(self._leases.keys())
         if not tracked:
             return
+        loop = asyncio.get_running_loop()
         renewed: dict[str, Lease] = {}
         # Tracked separately from `renewed` being non-empty: if every tracked
         # session lost its lease in the same tick, a successful call legally
         # returns an empty dict too, and that must still fence immediately
         # rather than being mistaken for the call itself having failed.
         call_ok = False
+        # A renewal that hangs (Postgres unreachable, not refusing) is given
+        # up in time to still fence inside the danger window.
+        budget = max(self._deadline(tracked, now) - now, min(1.0, self._danger))
         try:
-            renewed = await renew_many(self._pool, tracked, self._worker_id, ttl=self._ttl)
+            renewed = await asyncio.wait_for(
+                renew_many(self._pool, tracked, self._worker_id, ttl=self._ttl), timeout=budget,
+            )
             call_ok = True
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            log.error("lease renewal for worker %s got no answer within %.1fs", self._worker_id, budget)
         except Exception:
             log.exception("lease renewal batch failed for worker %s", self._worker_id)
+        # The call may have taken a while; judge the danger window by now.
+        now_after = max(now, loop.time())
 
         for session_id in tracked:
             if session_id in renewed:
@@ -233,7 +270,7 @@ class LeaseKeeper:
             # confirmed lost. A confirmed loss fences immediately; a failed
             # call only fences once we're past the danger window.
             last_ok = self._last_ok.get(session_id, now)
-            if call_ok or (now - last_ok) > self._danger:
+            if call_ok or (now_after - last_ok) >= self._danger:
                 await self._fence(session_id)
             # else: the whole batch errored and we're still inside the danger
             # window — leave it tracked, try again next tick.

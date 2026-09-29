@@ -1,5 +1,6 @@
-# Public HTTPS front door for the admin panel — used only by the `caddy`
-# service in docker-compose.yml, which only runs with
+# Public HTTPS front door for the admin panel and the client dashboard
+# (/owner/) — used only by the `caddy` service in docker-compose.yml, which
+# only runs with
 #     docker compose --profile public up -d
 #
 # PANEL_DOMAIN (from .env) is the site address. Because it's a real hostname,
@@ -8,19 +9,26 @@
 # ports 80 and 443 reachable from the internet and PANEL_DOMAIN resolving to
 # this server (a real domain's A record, or an <ip-with-dashes>.sslip.io name).
 #
+# With BOOKING_DOMAIN also set, the same Caddy serves the public booking
+# pages too (Caddyfile.both imports this file and Caddyfile.booking).
+#
 # reverse_proxy sets X-Forwarded-For to the real client IP (ignoring any
 # X-Forwarded-For the client sent, since no trusted_proxies are configured);
 # panel.py's login rate limiting relies on that. Websockets (/ws/*) are
-# proxied as-is by default.
+# proxied as-is by default. The panel itself sends the Content-Security-
+# Policy and the other page headers (panel.py SECURITY_HEADERS).
 
 {$PANEL_DOMAIN} {
 	encode zstd gzip
 
+	tls {
+		protocols tls1.2 tls1.3
+	}
+
 	header {
-		Strict-Transport-Security "max-age=31536000"
-		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		Referrer-Policy "no-referrer"
+		# Two years, every subdomain of this name: browsers never try
+		# plain HTTP again once they have seen it.
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
 		# Don't advertise what's serving the panel (Caddy's own, or
 		# uvicorn's passed through from upstream).
 		-Server

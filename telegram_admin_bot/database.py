@@ -28,6 +28,7 @@ from typing import Any, Optional
 
 import asyncpg
 
+import audit
 import crypto
 
 # Message.direction
@@ -97,6 +98,15 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 def _preview(text: str, limit: int = 90) -> str:
     flat = " ".join((text or "").split())
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def _clean(text: Optional[str]) -> Optional[str]:
+    """Text as Postgres can store it. A NUL character (which a Telegram
+    message or name can carry) makes Postgres refuse the whole row, and the
+    customer's message would be lost; it is dropped instead."""
+    if text is None or "\x00" not in text:
+        return text
+    return text.replace("\x00", "")
 
 
 # ----------------------------------------------------------------------
@@ -174,7 +184,7 @@ class SessionRegistry:
             if api_hash
             else None
         )
-        async with self._pool.acquire() as con:
+        async with self._pool.acquire() as con, con.transaction():
             await con.execute(
                 """
                 INSERT INTO telegram_sessions (session_id, label, api_id, api_hash_enc)
@@ -190,6 +200,23 @@ class SessionRegistry:
                 api_id,
                 api_hash_enc,
             )
+            # Every account belongs to a tenant; a new account becomes a new
+            # tenant in the default (lowest-id) industry.
+            tenant_id = await con.fetchval(
+                """
+                INSERT INTO tenants (name, industry_id, session_id, legacy_imported_at)
+                SELECT $2, (SELECT min(id) FROM industries), $1, now()
+                 WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE session_id = $1)
+                RETURNING id
+                """,
+                session_id,
+                label or session_id,
+            )
+            if tenant_id is not None:
+                await audit.record(
+                    con, tenant_id=tenant_id, actor=audit.SYSTEM, event=audit.TENANT_CREATED,
+                    reason="New Telegram account added", payload={"session_id": session_id},
+                )
         return await self.get(session_id)  # type: ignore[return-value]
 
     async def save_login(
@@ -360,26 +387,46 @@ class SessionRegistry:
 
 
 class Database:
-    """Every method here is scoped to the `session_id` bound at
-    construction. No method takes a session parameter."""
+    """One tenant's data. Bound to an account (`session_id`) at construction;
+    no method takes a session or tenant parameter.
 
-    def __init__(self, pool: asyncpg.Pool, session_id: str) -> None:
+    Every read, update and delete filters on the tenant that owns the
+    account, never on the account alone: tenant_id is the isolation
+    boundary (see migration 0002). Inserts write both; the database's
+    tenant_for_session trigger refuses a row whose tenant_id and session_id
+    belong to different tenants.
+    """
+
+    def __init__(self, pool: asyncpg.Pool, session_id: str, tenant_id: Optional[int] = None) -> None:
         self._pool = pool
         self._session_id = validate_session_id(session_id)
+        self._tenant_id = tenant_id
 
     @property
     def session_id(self) -> str:
         return self._session_id
 
+    async def tenant_id(self) -> int:
+        """The owning tenant, looked up once and then cached. Called before
+        a connection is acquired, never inside one, so a cold lookup can't
+        wait on the pool while holding a connection from it."""
+        if self._tenant_id is None:
+            found = await self._pool.fetchval("SELECT id FROM tenants WHERE session_id = $1", self._session_id)
+            if found is None:
+                raise LookupError(f"no tenant owns session {self._session_id!r}")
+            self._tenant_id = found
+        return self._tenant_id
+
     async def connect(self) -> None:
         """Kept for call-site compatibility with the old per-file Database;
-        the pool is owned by the process, so this only seeds the per-session
-        id counters used by bookings/media."""
+        the pool is owned by the process, so this only resolves the tenant
+        and seeds the per-session id counters used by bookings/media."""
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             await con.executemany(
-                "INSERT INTO session_counters (session_id, name) VALUES ($1, $2) "
+                "INSERT INTO session_counters (session_id, tenant_id, name) VALUES ($1, $2, $3) "
                 "ON CONFLICT (session_id, name) DO NOTHING",
-                [(self._session_id, "booking"), (self._session_id, "media")],
+                [(self._session_id, tid, "booking"), (self._session_id, tid, "media")],
             )
 
     async def close(self) -> None:
@@ -398,71 +445,96 @@ class Database:
         is_bot: bool,
         access_hash: Optional[int] = None,
     ) -> dict[str, Any]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             await con.execute(
                 """
-                INSERT INTO conversations (session_id, chat_id, display_name, username,
-                                           is_bot, access_hash, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, now())
+                INSERT INTO conversations (session_id, tenant_id, chat_id, display_name, username,
+                                           is_bot, access_hash, customer_ref, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
                 ON CONFLICT (session_id, chat_id) DO UPDATE SET
                     display_name = excluded.display_name,
                     username     = excluded.username,
                     is_bot       = excluded.is_bot,
-                    access_hash  = COALESCE(excluded.access_hash, conversations.access_hash)
+                    access_hash  = COALESCE(excluded.access_hash, conversations.access_hash),
+                    customer_ref = COALESCE(conversations.customer_ref, excluded.customer_ref)
                 """,
                 self._session_id,
+                tid,
                 chat_id,
-                display_name,
-                username,
+                _clean(display_name),
+                _clean(username),
                 bool(is_bot),
                 access_hash,
+                crypto.customer_ref(tid, "telegram", chat_id),
             )
         return await self.get_conversation(chat_id)  # type: ignore[return-value]
 
     async def get_conversation(self, chat_id: int) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             row = await con.fetchrow(
-                "SELECT * FROM conversations WHERE session_id = $1 AND chat_id = $2",
-                self._session_id,
+                "SELECT * FROM conversations WHERE tenant_id = $1 AND chat_id = $2",
+                tid,
                 chat_id,
             )
         return _conversation(row) if row else None
 
     async def list_conversations(self) -> list[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             rows = await con.fetch(
                 """
                 SELECT * FROM conversations
-                 WHERE session_id = $1
+                 WHERE tenant_id = $1
                  ORDER BY COALESCE(last_message_at, created_at) DESC
                 """,
-                self._session_id,
+                tid,
             )
         return [_conversation(r) for r in rows]
 
-    async def set_paused(self, chat_id: int, paused: bool) -> Optional[dict[str, Any]]:
+    async def set_paused(self, chat_id: int, paused: bool, reason: str = "") -> Optional[dict[str, Any]]:
+        """`reason` says why ("" = by hand); it is cleared on unpause."""
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             await con.execute(
-                "UPDATE conversations SET automation_paused = $3 WHERE session_id = $1 AND chat_id = $2",
-                self._session_id,
+                "UPDATE conversations SET automation_paused = $3, paused_reason = $4 "
+                "WHERE tenant_id = $1 AND chat_id = $2",
+                tid,
                 chat_id,
                 bool(paused),
+                reason if paused else "",
+            )
+        return await self.get_conversation(chat_id)
+
+    async def set_takeover(self, chat_id: int, until: Optional[datetime]) -> Optional[dict[str, Any]]:
+        """Human takeover: the bot stays quiet in this chat until `until`
+        (None ends it)."""
+        tid = await self.tenant_id()
+        async with self._pool.acquire() as con:
+            await con.execute(
+                "UPDATE conversations SET human_takeover_until = $3 WHERE tenant_id = $1 AND chat_id = $2",
+                tid,
+                chat_id,
+                until,
             )
         return await self.get_conversation(chat_id)
 
     async def get_access_hash(self, chat_id: int) -> Optional[int]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             return await con.fetchval(
-                "SELECT access_hash FROM conversations WHERE session_id = $1 AND chat_id = $2",
-                self._session_id,
+                "SELECT access_hash FROM conversations WHERE tenant_id = $1 AND chat_id = $2",
+                tid,
                 chat_id,
             )
 
     async def mark_read(self, chat_id: int) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             await con.execute(
-                "UPDATE conversations SET unread = 0 WHERE session_id = $1 AND chat_id = $2",
-                self._session_id,
+                "UPDATE conversations SET unread = 0 WHERE tenant_id = $1 AND chat_id = $2",
+                tid,
                 chat_id,
             )
         return await self.get_conversation(chat_id)
@@ -481,30 +553,38 @@ class Database:
         bump_preview: bool = True,
         mark_unread: bool = False,
         attachments: Optional[list[int]] = None,
+        llm_model: Optional[str] = None,
+        prompt_version: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         """Insert a message and refresh the conversation's preview.
 
         Returns None when the message is a duplicate of one already stored
         under the same Telegram message id (we send via Telethon *and*
         watch outgoing events, so the same message can arrive twice).
+        `llm_model` / `prompt_version` are set on AI-written messages.
         """
+        text = _clean(text) or ""
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con, con.transaction():
             row = await con.fetchrow(
                 """
-                INSERT INTO messages (session_id, chat_id, telegram_id, direction, status,
-                                      text, attachments)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                INSERT INTO messages (session_id, tenant_id, chat_id, telegram_id, direction, status,
+                                      text, attachments, llm_model, prompt_version)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 ON CONFLICT (session_id, chat_id, telegram_id) WHERE telegram_id IS NOT NULL
                 DO NOTHING
                 RETURNING id
                 """,
                 self._session_id,
+                tid,
                 chat_id,
                 telegram_id,
                 direction,
                 status,
                 text,
                 list(attachments or []),
+                llm_model,
+                prompt_version,
             )
             if row is None:
                 return None
@@ -517,9 +597,9 @@ class Database:
                        SET last_message_at      = now(),
                            last_message_preview = $3,
                            unread               = CASE WHEN $4 THEN unread + 1 ELSE unread END
-                     WHERE session_id = $1 AND chat_id = $2
+                     WHERE tenant_id = $1 AND chat_id = $2
                     """,
-                    self._session_id,
+                    tid,
                     chat_id,
                     _preview(text),
                     bool(mark_unread),
@@ -528,10 +608,11 @@ class Database:
         return await self.get_message(message_id)
 
     async def get_message(self, message_id: int) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             row = await con.fetchrow(
-                "SELECT * FROM messages WHERE session_id = $1 AND id = $2",
-                self._session_id,
+                "SELECT * FROM messages WHERE tenant_id = $1 AND id = $2",
+                tid,
                 message_id,
             )
         return _message(row) if row else None
@@ -539,27 +620,29 @@ class Database:
     async def find_by_telegram_id(
         self, chat_id: int, telegram_id: Optional[int]
     ) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
         if telegram_id is None:
             return None
         async with self._pool.acquire() as con:
             row = await con.fetchrow(
-                "SELECT * FROM messages WHERE session_id = $1 AND chat_id = $2 AND telegram_id = $3",
-                self._session_id,
+                "SELECT * FROM messages WHERE tenant_id = $1 AND chat_id = $2 AND telegram_id = $3",
+                tid,
                 chat_id,
                 telegram_id,
             )
         return _message(row) if row else None
 
     async def get_messages(self, chat_id: int, limit: int = 300) -> list[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             rows = await con.fetch(
                 """
                 SELECT * FROM (
-                    SELECT * FROM messages WHERE session_id = $1 AND chat_id = $2
+                    SELECT * FROM messages WHERE tenant_id = $1 AND chat_id = $2
                      ORDER BY id DESC LIMIT $3
                 ) AS recent ORDER BY id ASC
                 """,
-                self._session_id,
+                tid,
                 chat_id,
                 limit,
             )
@@ -571,12 +654,13 @@ class Database:
         Drafts that were never approved, rejections and error rows are left
         out — only what actually crossed the wire is context for the model.
         """
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             rows = await con.fetch(
                 """
                 SELECT * FROM (
                     SELECT direction, text, id FROM messages
-                     WHERE session_id = $1
+                     WHERE tenant_id = $1
                        AND chat_id = $2
                        AND status = ANY($3)
                        AND direction = ANY($4)
@@ -584,7 +668,7 @@ class Database:
                      ORDER BY id DESC LIMIT $5
                 ) AS recent ORDER BY id ASC
                 """,
-                self._session_id,
+                tid,
                 chat_id,
                 [STATUS_RECEIVED, STATUS_SENT],
                 [DIR_IN, DIR_OUT],
@@ -604,10 +688,11 @@ class Database:
         telegram_id: Optional[int] = None,
         attachments: Optional[list[int]] = None,
     ) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
         sets: list[str] = []
-        params: list[Any] = [self._session_id, message_id]
+        params: list[Any] = [tid, message_id]
         if text is not None:
-            params.append(text)
+            params.append(_clean(text))
             sets.append(f"text = ${len(params)}")
         if attachments is not None:
             params.append(list(attachments))
@@ -620,18 +705,19 @@ class Database:
             sets.append(f"telegram_id = ${len(params)}")
         if not sets:
             return await self.get_message(message_id)
-        sql = f"UPDATE messages SET {', '.join(sets)} WHERE session_id = $1 AND id = $2"
+        sql = f"UPDATE messages SET {', '.join(sets)} WHERE tenant_id = $1 AND id = $2"
         async with self._pool.acquire() as con:
             await con.execute(sql, *params)
         return await self.get_message(message_id)
 
     async def pending_drafts(self, chat_id: Optional[int] = None) -> list[dict[str, Any]]:
+        tid = await self.tenant_id()
         if chat_id is not None:
-            sql = "SELECT * FROM messages WHERE session_id = $1 AND status = $2 AND chat_id = $3 ORDER BY id ASC"
-            params = [self._session_id, STATUS_PENDING, chat_id]
+            sql = "SELECT * FROM messages WHERE tenant_id = $1 AND status = $2 AND chat_id = $3 ORDER BY id ASC"
+            params = [tid, STATUS_PENDING, chat_id]
         else:
-            sql = "SELECT * FROM messages WHERE session_id = $1 AND status = $2 ORDER BY id ASC"
-            params = [self._session_id, STATUS_PENDING]
+            sql = "SELECT * FROM messages WHERE tenant_id = $1 AND status = $2 ORDER BY id ASC"
+            params = [tid, STATUS_PENDING]
         async with self._pool.acquire() as con:
             rows = await con.fetch(sql, *params)
         return [_message(r) for r in rows]
@@ -644,11 +730,12 @@ class Database:
         return [d["id"] for d in drafts]
 
     async def set_conversation_preview(self, chat_id: int, text: str) -> None:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             await con.execute(
                 "UPDATE conversations SET last_message_at = now(), last_message_preview = $3 "
-                "WHERE session_id = $1 AND chat_id = $2",
-                self._session_id,
+                "WHERE tenant_id = $1 AND chat_id = $2",
+                tid,
                 chat_id,
                 _preview(text),
             )
@@ -667,11 +754,12 @@ class Database:
         openers.
         """
         created: list[int] = []
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con, con.transaction():
             for chat_id, name in recipients:
                 exists = await con.fetchval(
-                    "SELECT 1 FROM outreach WHERE session_id = $1 AND chat_id = $2 AND status = ANY($3)",
-                    self._session_id,
+                    "SELECT 1 FROM outreach WHERE tenant_id = $1 AND chat_id = $2 AND status = ANY($3)",
+                    tid,
                     chat_id,
                     [OUT_QUEUED, OUT_DRAFTED],
                 )
@@ -679,11 +767,12 @@ class Database:
                     continue
                 row = await con.fetchrow(
                     """
-                    INSERT INTO outreach (session_id, chat_id, display_name, goal, status, created_at)
-                    VALUES ($1, $2, $3, $4, $5, now())
+                    INSERT INTO outreach (session_id, tenant_id, chat_id, display_name, goal, status, created_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, now())
                     RETURNING id
                     """,
                     self._session_id,
+                    tid,
                     chat_id,
                     name,
                     goal,
@@ -693,32 +782,35 @@ class Database:
         return [row for row in [await self.get_outreach(i) for i in created] if row]
 
     async def get_outreach(self, outreach_id: int) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             row = await con.fetchrow(
-                "SELECT * FROM outreach WHERE session_id = $1 AND id = $2",
-                self._session_id,
+                "SELECT * FROM outreach WHERE tenant_id = $1 AND id = $2",
+                tid,
                 outreach_id,
             )
         return _outreach(row) if row else None
 
     async def list_outreach(self, limit: int = 200) -> list[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             rows = await con.fetch(
                 """
                 SELECT * FROM (
-                    SELECT * FROM outreach WHERE session_id = $1 ORDER BY id DESC LIMIT $2
+                    SELECT * FROM outreach WHERE tenant_id = $1 ORDER BY id DESC LIMIT $2
                 ) AS recent ORDER BY id ASC
                 """,
-                self._session_id,
+                tid,
                 limit,
             )
         return [_outreach(r) for r in rows]
 
     async def next_queued_outreach(self) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             row = await con.fetchrow(
-                "SELECT * FROM outreach WHERE session_id = $1 AND status = $2 ORDER BY id ASC LIMIT 1",
-                self._session_id,
+                "SELECT * FROM outreach WHERE tenant_id = $1 AND status = $2 ORDER BY id ASC LIMIT 1",
+                tid,
                 OUT_QUEUED,
             )
         return _outreach(row) if row else None
@@ -733,8 +825,9 @@ class Database:
         draft_id: Optional[int] = None,
         mark_sent: bool = False,
     ) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
         sets: list[str] = []
-        params: list[Any] = [self._session_id, outreach_id]
+        params: list[Any] = [tid, outreach_id]
         for column, value in (
             ("status", status),
             ("message", message),
@@ -748,36 +841,39 @@ class Database:
             sets.append("sent_at = now()")
         if not sets:
             return await self.get_outreach(outreach_id)
-        sql = f"UPDATE outreach SET {', '.join(sets)} WHERE session_id = $1 AND id = $2"
+        sql = f"UPDATE outreach SET {', '.join(sets)} WHERE tenant_id = $1 AND id = $2"
         async with self._pool.acquire() as con:
             await con.execute(sql, *params)
         return await self.get_outreach(outreach_id)
 
     async def outreach_for_draft(self, draft_id: int) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             row = await con.fetchrow(
-                "SELECT * FROM outreach WHERE session_id = $1 AND draft_id = $2",
-                self._session_id,
+                "SELECT * FROM outreach WHERE tenant_id = $1 AND draft_id = $2",
+                tid,
                 draft_id,
             )
         return _outreach(row) if row else None
 
     async def cancel_queued_outreach(self) -> int:
         """Stop everything not yet acted on. Returns how many were cancelled."""
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             result = await con.execute(
-                "UPDATE outreach SET status = $2 WHERE session_id = $1 AND status = $3",
-                self._session_id,
+                "UPDATE outreach SET status = $2 WHERE tenant_id = $1 AND status = $3",
+                tid,
                 OUT_CANCELLED,
                 OUT_QUEUED,
             )
         return _affected(result)
 
     async def outreach_sent_since(self, iso_timestamp: str) -> int:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             n = await con.fetchval(
-                "SELECT COUNT(*) FROM outreach WHERE session_id = $1 AND status = $2 AND sent_at >= $3",
-                self._session_id,
+                "SELECT COUNT(*) FROM outreach WHERE tenant_id = $1 AND status = $2 AND sent_at >= $3",
+                tid,
                 OUT_SENT,
                 _ts(iso_timestamp),
             )
@@ -788,11 +884,12 @@ class Database:
         included. Telegram's spam heuristics count total outbound volume,
         not just conversations we started, so the daily ceiling has to see
         all of it."""
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             n = await con.fetchval(
                 "SELECT COUNT(*) FROM messages "
-                " WHERE session_id = $1 AND direction = $2 AND status = $3 AND created_at >= $4",
-                self._session_id,
+                " WHERE tenant_id = $1 AND direction = $2 AND status = $3 AND created_at >= $4",
+                tid,
                 DIR_OUT,
                 STATUS_SENT,
                 _ts(iso_timestamp),
@@ -805,11 +902,12 @@ class Database:
         Messaging many *different* people is a far stronger spam signal
         than sending many messages inside one ongoing conversation.
         """
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             n = await con.fetchval(
                 "SELECT COUNT(DISTINCT chat_id) FROM messages "
-                " WHERE session_id = $1 AND direction = $2 AND status = $3 AND created_at >= $4",
-                self._session_id,
+                " WHERE tenant_id = $1 AND direction = $2 AND status = $3 AND created_at >= $4",
+                tid,
                 DIR_OUT,
                 STATUS_SENT,
                 _ts(iso_timestamp),
@@ -836,19 +934,21 @@ class Database:
         """
         if chat_id == source_id:
             raise ValueError("A chat cannot be linked to itself.")
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con, con.transaction():
             for a, b in ((chat_id, source_id), (source_id, chat_id)):
                 await con.execute(
                     """
-                    INSERT INTO chat_links (session_id, chat_id, source_id, origin, reason,
+                    INSERT INTO chat_links (session_id, tenant_id, chat_id, source_id, origin, reason,
                                             confidence, created_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, now())
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, now())
                     ON CONFLICT (session_id, chat_id, source_id) DO UPDATE SET
                         origin     = excluded.origin,
                         reason     = excluded.reason,
                         confidence = excluded.confidence
                     """,
                     self._session_id,
+                    tid,
                     a,
                     b,
                     origin,
@@ -870,14 +970,15 @@ class Database:
         `block` leaves a marker behind so detection does not re-link the
         pair on their next message — an unlink I did by hand has to stick.
         """
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con, con.transaction():
             result = await con.execute(
                 """
                 DELETE FROM chat_links
-                 WHERE session_id = $1
+                 WHERE tenant_id = $1
                    AND ((chat_id = $2 AND source_id = $3) OR (chat_id = $3 AND source_id = $2))
                 """,
-                self._session_id,
+                tid,
                 chat_id,
                 source_id,
             )
@@ -885,9 +986,9 @@ class Database:
                 for a, b in ((chat_id, source_id), (source_id, chat_id)):
                     await con.execute(
                         """
-                        INSERT INTO chat_links (session_id, chat_id, source_id, origin, reason,
+                        INSERT INTO chat_links (session_id, tenant_id, chat_id, source_id, origin, reason,
                                                 confidence, created_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, now())
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, now())
                         ON CONFLICT (session_id, chat_id, source_id) DO UPDATE SET
                             origin     = excluded.origin,
                             reason     = excluded.reason,
@@ -895,6 +996,7 @@ class Database:
                             created_at = excluded.created_at
                         """,
                         self._session_id,
+                        tid,
                         a,
                         b,
                         LINK_BLOCKED,
@@ -905,26 +1007,28 @@ class Database:
 
     async def blocked_sources(self, chat_id: int) -> set[int]:
         """Chats this one was deliberately unlinked from."""
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             rows = await con.fetch(
-                "SELECT source_id FROM chat_links WHERE session_id = $1 AND chat_id = $2 AND origin = $3",
-                self._session_id,
+                "SELECT source_id FROM chat_links WHERE tenant_id = $1 AND chat_id = $2 AND origin = $3",
+                tid,
                 chat_id,
                 LINK_BLOCKED,
             )
         return {r["source_id"] for r in rows}
 
     async def get_link(self, chat_id: int, source_id: int) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             row = await con.fetchrow(
                 """
                 SELECT l.*, c.display_name AS source_name, c.username AS source_username
                   FROM chat_links l
                   LEFT JOIN conversations c
-                    ON c.session_id = l.session_id AND c.chat_id = l.source_id
-                 WHERE l.session_id = $1 AND l.chat_id = $2 AND l.source_id = $3
+                    ON c.tenant_id = l.tenant_id AND c.chat_id = l.source_id
+                 WHERE l.tenant_id = $1 AND l.chat_id = $2 AND l.source_id = $3
                 """,
-                self._session_id,
+                tid,
                 chat_id,
                 source_id,
             )
@@ -932,33 +1036,35 @@ class Database:
 
     async def get_links(self, chat_id: int) -> list[dict[str, Any]]:
         """Every chat this one borrows context from, newest link first."""
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             rows = await con.fetch(
                 """
                 SELECT l.*, c.display_name AS source_name, c.username AS source_username
                   FROM chat_links l
                   LEFT JOIN conversations c
-                    ON c.session_id = l.session_id AND c.chat_id = l.source_id
-                 WHERE l.session_id = $1 AND l.chat_id = $2 AND l.origin <> 'blocked'
+                    ON c.tenant_id = l.tenant_id AND c.chat_id = l.source_id
+                 WHERE l.tenant_id = $1 AND l.chat_id = $2 AND l.origin <> 'blocked'
                  ORDER BY l.confidence DESC, l.created_at DESC
                 """,
-                self._session_id,
+                tid,
                 chat_id,
             )
         return [_link(r) for r in rows]
 
     async def all_links(self) -> list[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             rows = await con.fetch(
                 """
                 SELECT l.*, c.display_name AS source_name, c.username AS source_username
                   FROM chat_links l
                   LEFT JOIN conversations c
-                    ON c.session_id = l.session_id AND c.chat_id = l.source_id
-                 WHERE l.session_id = $1 AND l.origin <> 'blocked'
+                    ON c.tenant_id = l.tenant_id AND c.chat_id = l.source_id
+                 WHERE l.tenant_id = $1 AND l.origin <> 'blocked'
                  ORDER BY l.created_at DESC
                 """,
-                self._session_id,
+                tid,
             )
         return [_link(r) for r in rows]
 
@@ -968,11 +1074,12 @@ class Database:
 
     async def last_message_id(self, chat_id: int) -> int:
         """Highest stored messages.id for a chat; 0 when it has none."""
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             last = await con.fetchval(
                 "SELECT MAX(id) FROM messages"
-                " WHERE session_id = $1 AND chat_id = $2 AND status = ANY($3) AND direction = ANY($4)",
-                self._session_id,
+                " WHERE tenant_id = $1 AND chat_id = $2 AND status = ANY($3) AND direction = ANY($4)",
+                tid,
                 chat_id,
                 [STATUS_RECEIVED, STATUS_SENT],
                 [DIR_IN, DIR_OUT],
@@ -980,10 +1087,11 @@ class Database:
         return last or 0
 
     async def get_summary(self, chat_id: int) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             row = await con.fetchrow(
-                "SELECT * FROM chat_summaries WHERE session_id = $1 AND chat_id = $2",
-                self._session_id,
+                "SELECT * FROM chat_summaries WHERE tenant_id = $1 AND chat_id = $2",
+                tid,
                 chat_id,
             )
         if row is None:
@@ -996,17 +1104,19 @@ class Database:
         }
 
     async def save_summary(self, chat_id: int, summary: str, last_message_id: int) -> dict[str, Any]:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             await con.execute(
                 """
-                INSERT INTO chat_summaries (session_id, chat_id, summary, last_message_id, updated_at)
-                VALUES ($1, $2, $3, $4, now())
+                INSERT INTO chat_summaries (session_id, tenant_id, chat_id, summary, last_message_id, updated_at)
+                VALUES ($1, $2, $3, $4, $5, now())
                 ON CONFLICT (session_id, chat_id) DO UPDATE SET
                     summary         = excluded.summary,
                     last_message_id = excluded.last_message_id,
                     updated_at      = excluded.updated_at
                 """,
                 self._session_id,
+                tid,
                 chat_id,
                 summary,
                 last_message_id,
@@ -1014,10 +1124,11 @@ class Database:
         return await self.get_summary(chat_id)  # type: ignore[return-value]
 
     async def clear_summary(self, chat_id: int) -> None:
+        tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             await con.execute(
-                "DELETE FROM chat_summaries WHERE session_id = $1 AND chat_id = $2",
-                self._session_id,
+                "DELETE FROM chat_summaries WHERE tenant_id = $1 AND chat_id = $2",
+                tid,
                 chat_id,
             )
 
@@ -1051,6 +1162,10 @@ def _conversation(row: asyncpg.Record) -> dict[str, Any]:
         "username": row["username"],
         "is_bot": bool(row["is_bot"]),
         "automation_paused": bool(row["automation_paused"]),
+        # Why automation is paused here ("" = by hand in the panel).
+        "paused_reason": row["paused_reason"],
+        # A person wrote here by hand; the bot is quiet until then.
+        "human_takeover_until": _iso(row["human_takeover_until"]),
         "unread": row["unread"],
         "last_message_at": _iso(row["last_message_at"]),
         "last_message_preview": row["last_message_preview"],
@@ -1082,6 +1197,8 @@ def _message(row: asyncpg.Record) -> dict[str, Any]:
         "text": row["text"],
         "created_at": _iso(row["created_at"]),
         "attachments": _attachments(row),
+        "llm_model": row["llm_model"],
+        "prompt_version": row["prompt_version"],
     }
 
 

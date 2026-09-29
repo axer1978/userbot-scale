@@ -49,23 +49,37 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.datastructures import Headers as StarletteHeaders
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-import bookings as bookings_module
+import audit
+import booking_api
+import booking_store
 import commands
 import config_store
 import context_link
+import controls
 import media
 import pg
+import platform_api
+import owner_admin_api
+import owner_api
+import review_api
+import safety_api
+import tenants
+import unanswered_api
 import totp
 from database import (
     OUT_CANCELLED,
@@ -88,6 +102,11 @@ ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 # 6-digit code from an authenticator app.
 ADMIN_TOTP_SECRET = "".join((os.getenv("ADMIN_TOTP_SECRET") or "").split())
 HOST = (os.getenv("ADMIN_HOST") or "127.0.0.1").strip()
+# Set when the panel is on the public internet behind Caddy (the `public`
+# profile). The panel then refuses to start without an authenticator code
+# for the admin and a long admin password (check_public_setup).
+PANEL_DOMAIN = (os.getenv("PANEL_DOMAIN") or "").strip()
+PUBLIC_MIN_PASSWORD = 14
 PORT = int(os.getenv("ADMIN_PORT") or 8787)
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
@@ -111,6 +130,8 @@ BEST_EFFORT_TIMEOUT = 5.0
 LOGIN_MAX_FAILURES = 5
 LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 SESSION_TTL_SECONDS = 12 * 60 * 60
+# Past this many addresses with failures on record, expired ones are swept.
+MAX_TRACKED_IPS = 10_000
 
 logging.basicConfig(
     level=logging.INFO,
@@ -120,7 +141,162 @@ logging.basicConfig(
 logging.getLogger("telethon").setLevel(logging.WARNING)
 log = logging.getLogger("panel")
 
-app = FastAPI(title="Telegram AI Assistant — Fleet Admin")
+# No /docs, /redoc or /openapi.json: a public panel has no reason to hand
+# anyone a map of its API.
+app = FastAPI(title="Telegram AI Assistant — Fleet Admin", docs_url=None, redoc_url=None, openapi_url=None)
+
+# Sent on every response, whether it comes through Caddy or an SSH tunnel.
+# script-src 'self': no inline scripts anywhere in the panel or the client
+# dashboard. Inline style attributes are used by the panel's markup, hence
+# style-src 'unsafe-inline'. HSTS is Caddy's job (only it knows about TLS).
+# connect-src is completed per request (_csp): 'self' plus ws(s):// to this
+# same host only, for the live-updates socket, never to any other host.
+_CSP_BASE = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'{ws}; "
+    "font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+)
+SECURITY_HEADERS = {
+    "Content-Security-Policy": _CSP_BASE.format(ws=""),
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+}
+# What a Host header may look like to be echoed into the CSP (a name or an
+# address, optionally a port); anything else just gets connect-src 'self'.
+_HOST_RE = re.compile(r"^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$")
+
+# Request bodies. Everything the panel accepts as JSON is small; only the
+# media upload streams a file. Anything bigger is refused with 413 before
+# it is buffered, so an anonymous POST to /api/login can't eat the memory.
+MAX_BODY_BYTES = 2 * 1024 * 1024
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+_UPLOAD_PATH_RE = re.compile(r"^/api/sessions/[^/]+/media/upload$")
+_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+# The body types a page on another site can send without a CORS preflight
+# (an HTML form or a "simple" fetch). No API route takes any of them.
+_FORM_TYPES = ("application/x-www-form-urlencoded", "multipart/form-data", "text/plain")
+
+
+def _csp(request: Request) -> str:
+    host = request.headers.get("host", "")
+    if not _HOST_RE.match(host):
+        return SECURITY_HEADERS["Content-Security-Policy"]
+    return _CSP_BASE.format(ws=f" wss://{host} ws://{host}")
+
+
+def _same_origin(headers: Any) -> bool:
+    """False when the browser says the request was started by another
+    origin. Checked on every state-changing request and the websocket.
+
+    SameSite=Strict cookies are not enough on their own: "site" means the
+    registrable domain, and a panel on <ip>.sslip.io shares it with every
+    other *.sslip.io host on the internet (sslip.io is not on the Public
+    Suffix List), so a page there is "same-site" and would get the cookie
+    sent along. Sec-Fetch-Site and Origin are set by the browser and can't
+    be forged by a page; a request with neither (curl, tests) comes from no
+    browser page at all and is left to the cookie check."""
+    fetch_site = (headers.get("sec-fetch-site") or "").lower()
+    if fetch_site in ("cross-site", "same-site"):
+        return False
+    origin = headers.get("origin")
+    if origin is None:
+        return True
+    parsed = urlsplit(origin)
+    host = (headers.get("host") or "").lower()
+    return bool(parsed.scheme in ("http", "https", "ws", "wss") and parsed.netloc
+                and parsed.netloc.lower() == host)
+
+
+class _BodyTooLarge(StarletteHTTPException):
+    def __init__(self) -> None:
+        super().__init__(status_code=413, detail="The request is too large.")
+
+
+class RequestGuard:
+    """Pure ASGI (so it sees the websocket handshake and the raw body):
+    refuses cross-origin state-changing requests and websockets, form-type
+    bodies on the API, and bodies over the size limit."""
+
+    def __init__(self, app_: Any) -> None:
+        self.app = app_
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        headers = StarletteHeaders(scope=scope)
+        if scope["type"] == "websocket":
+            if not _same_origin(headers):
+                await send({"type": "websocket.close", "code": 4403})
+                return
+            await self.app(scope, receive, send)
+            return
+
+        path, method = scope["path"], scope["method"]
+        if method in _UNSAFE_METHODS:
+            if not _same_origin(headers):
+                await self._refuse(scope, receive, send, 403, "Cross-origin request refused.")
+                return
+            content_type = (headers.get("content-type") or "").split(";")[0].strip().lower()
+            if path.startswith("/api/") and content_type in _FORM_TYPES:
+                await self._refuse(scope, receive, send, 415, "Send JSON (Content-Type: application/json).")
+                return
+        limit = MAX_UPLOAD_BYTES if _UPLOAD_PATH_RE.match(path) else MAX_BODY_BYTES
+        length = headers.get("content-length")
+        if length is not None and (not length.isdigit() or int(length) > limit):
+            await self._refuse(scope, receive, send, 413, "The request is too large.")
+            return
+        received = 0
+
+        async def limited_receive() -> dict:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    # Raised inside the route's body read, so FastAPI answers 413.
+                    raise _BodyTooLarge()
+            return message
+
+        await self.app(scope, limited_receive, send)
+
+    @staticmethod
+    async def _refuse(scope: dict, receive: Any, send: Any, status: int, detail: str) -> None:
+        response = JSONResponse({"detail": detail}, status_code=status,
+                                headers={"Cache-Control": "no-store", **SECURITY_HEADERS})
+        await response(scope, receive, send)
+
+
+app.add_middleware(RequestGuard)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", _csp(request))
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    if request.url.path.startswith("/api/"):
+        # Nothing the API returns may be cached by a browser or a proxy.
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
+def check_public_setup() -> list[str]:
+    """What must be fixed before the panel may face the internet. Empty
+    when PANEL_DOMAIN is unset (SSH-tunnel only) or everything is in place."""
+    if not PANEL_DOMAIN:
+        return []
+    problems = []
+    if not ADMIN_TOTP_SECRET:
+        problems.append("ADMIN_TOTP_SECRET is not set: a public panel needs an authenticator code for the admin "
+                        "(generate one with `python totp.py` on the server)")
+    if len(ADMIN_PASSWORD) < PUBLIC_MIN_PASSWORD:
+        problems.append(f"ADMIN_PASSWORD is shorter than {PUBLIC_MIN_PASSWORD} characters")
+    return problems
 
 pool = None  # set in startup
 registry: Optional[SessionRegistry] = None
@@ -137,18 +313,28 @@ _last_totp_step = -1
 def db_for(session_id: str) -> Database:
     """A `Database` facade is just (pool, session_id) — cheap to construct
     per request, no connection of its own to hold open. Its `.connect()` is
-    for seeding booking/media *id counters*, which this file never touches
-    (bookings/media are still local files here, not Postgres rows), so it's
+    for seeding id counters, which this file never touches, so it's
     correctly skipped."""
     return Database(pool, session_id)
 
 
-def booking_store_for(session_id: str) -> bookings_module.BookingStore:
-    return bookings_module.BookingStore(DATA_DIR / session_id / "bookings.json")
+async def tenant_dir(session_id: str) -> Path:
+    """The tenant's folder for this account (tenants.tenant_data_dir)."""
+    tenant = await tenants.TenantStore(pool).by_session(session_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    return tenants.tenant_data_dir(DATA_DIR, tenant["id"], session_id)
 
 
-def media_library_for(session_id: str) -> media.MediaLibrary:
-    return media.MediaLibrary(DATA_DIR / session_id / "media")
+async def booking_store_for(session_id: str) -> booking_store.BookingStore:
+    tenant = await tenants.TenantStore(pool).by_session(session_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    return booking_store.BookingStore(pool, tenant["id"], session_id)
+
+
+async def media_library_for(session_id: str) -> media.MediaLibrary:
+    return media.MediaLibrary(await tenant_dir(session_id) / "media")
 
 
 async def best_effort_dispatch(session_id: str, action: str, args: Optional[dict[str, Any]] = None) -> None:
@@ -220,8 +406,28 @@ def _recent_failures(ip: str, now: float) -> list[float]:
     return recent
 
 
-def require_auth(admin_token: Optional[str] = Cookie(default=None)) -> None:
-    if not _token_is_valid(admin_token):
+def _cookie_secure() -> bool:
+    """Secure unless the panel listens on loopback only (plain http through
+    an SSH tunnel). In Docker ADMIN_HOST is 0.0.0.0, so always Secure there."""
+    return HOST not in LOOPBACK
+
+
+def admin_cookie_name() -> str:
+    """`__Host-admin_token` whenever the cookie is Secure. The __Host- prefix
+    makes the browser refuse that name from anything but this exact host,
+    with no Domain attribute: another *.sslip.io site (or any sibling
+    subdomain) can't plant or overwrite it ("cookie tossing"), which could
+    otherwise lock the admin out or swap sessions. Plain http on loopback
+    can't use the prefix (it requires Secure), hence the plain name there."""
+    return "__Host-admin_token" if _cookie_secure() else "admin_token"
+
+
+def admin_token_from(cookies: Any) -> Optional[str]:
+    return cookies.get(admin_cookie_name())
+
+
+def require_auth(request: Request) -> None:
+    if not _token_is_valid(admin_token_from(request.cookies)):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
 
@@ -262,6 +468,10 @@ async def api_login(body: LoginBody, request: Request) -> JSONResponse:
             headers={"Retry-After": str(retry_after)},
         )
     if not _credentials_ok(body):
+        if len(_login_failures) >= MAX_TRACKED_IPS:
+            # Many addresses (an IPv6 range, say): drop the ones whose window is over.
+            for other in list(_login_failures):
+                _recent_failures(other, now)
         failures.append(now)
         _login_failures[ip] = failures
         log.warning("Failed admin login from %s (%d/%d).", ip, len(failures), LOGIN_MAX_FAILURES)
@@ -278,21 +488,27 @@ async def api_login(body: LoginBody, request: Request) -> JSONResponse:
     token = secrets.token_urlsafe(32)
     _valid_tokens[token] = now + SESSION_TTL_SECONDS
     response = JSONResponse({"ok": True})
+    # A token already in the browser is retired, not left valid beside the new one.
+    previous = admin_token_from(request.cookies)
+    if previous:
+        _valid_tokens.pop(previous, None)
     response.set_cookie(
         # strict: the cookie never rides along on a request another site
         # starts, not even a top-level link into the panel.
-        "admin_token", token, httponly=True, samesite="strict",
-        secure=HOST not in LOOPBACK,
+        admin_cookie_name(), token, httponly=True, samesite="strict",
+        secure=_cookie_secure(), path="/",
     )
     return response
 
 
 @app.post("/api/logout")
-async def api_logout(admin_token: Optional[str] = Cookie(default=None)) -> JSONResponse:
+async def api_logout(request: Request) -> JSONResponse:
+    admin_token = admin_token_from(request.cookies)
     if admin_token:
         _valid_tokens.pop(admin_token, None)
     response = JSONResponse({"ok": True})
-    response.delete_cookie("admin_token")
+    response.delete_cookie(admin_cookie_name(), path="/", httponly=True, samesite="strict",
+                           secure=_cookie_secure())
     return response
 
 
@@ -348,6 +564,9 @@ class AuthStartBody(BaseModel):
     phone: str = ""
     deepseek_api_key: str = ""
     label: str = ""
+    # Optional: socks5://user:pass@host:port (proxies.py). The sign-in and
+    # the account then both go through it.
+    proxy_url: str = ""
 
 
 class AuthCodeBody(BaseModel):
@@ -432,6 +651,7 @@ async def api_auth_start(body: AuthStartBody) -> dict[str, Any]:
     try:
         await login_flow.start(
             session_id, int(api_id_raw), api_hash, phone, label=body.label.strip() or phone,
+            proxy_url=body.proxy_url.strip(),
         )
     except LoginError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -525,7 +745,42 @@ async def api_status(session_id: str) -> dict[str, Any]:
         "telegram_connected": live and row.get("state") == "running",
         "telegram_error": row.get("state_reason") if row.get("state") == "error" else None,
         "state": row.get("state"),
-        "global_pause": (await config_store.load(pool, session_id))["behavior"].get("global_pause", False),
+        **(await _controls_status(session_id)),
+        **(await _tenant_status(session_id)),
+    }
+
+
+async def _controls_status(session_id: str) -> dict[str, Any]:
+    """The kill switches for the top bar (controls.py). `global_pause` is
+    the manual hold, i.e. the "Pause all" button."""
+    tenant = await tenants.TenantStore(pool).by_session(session_id)
+    if tenant is None:
+        return {"global_pause": False, "off_reason": "", "holds": []}
+    holds = await controls.holds(pool, tenant["id"])
+    return {
+        "global_pause": any(h["kind"] == controls.MANUAL for h in holds),
+        "off_reason": await controls.off_reason(pool, tenant["id"]),
+        "holds": holds,
+        "billing_status": tenant["status"],
+    }
+
+
+async def _tenant_status(session_id: str) -> dict[str, Any]:
+    """What the top bar shows about the tenant: its id, auto-send, quiet
+    hours, and whether the business sections of the prompt say anything."""
+    try:
+        bundle = await tenants.TenantStore(pool).bundle_for_session(session_id)
+    except Exception as exc:  # a broken config must not break the status line
+        log.warning("[%s] Could not load tenant for status: %s", session_id, exc)
+        return {"tenant_id": None}
+    cfg = bundle.config
+    return {
+        "tenant_id": bundle.tenant["id"],
+        "tenant_name": bundle.tenant["name"],
+        "auto_send": cfg["auto_send"],
+        "quiet_hours": cfg["quiet_hours"],
+        "timezone": cfg["timezone"],
+        "persona_configured": bool(bundle.prompt.business_text.strip()),
     }
 
 
@@ -536,12 +791,14 @@ async def api_get_config(session_id: str) -> dict[str, Any]:
 
 @app.put("/api/sessions/{session_id}/config", dependencies=[Depends(require_auth)])
 async def api_put_config(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """This account's own settings (session_config): the per-contact style
+    overrides from the Style sheet. How the bot behaves is the tenant's
+    config, edited under Clients (platform_api.py)."""
     stored = await config_store.load(pool, session_id)
-    before = stored.get("booking") or {}
-    # The device identity is assigned by the runtime, not edited here, and the
-    # Settings form doesn't send it; without this a save would blank it.
-    if "identity" not in payload:
-        payload = {**payload, "identity": stored["identity"]}
+    # The device identity is assigned by the runtime and the pause switch has
+    # its own route; neither is edited here, so a save can't blank them.
+    payload = {**payload, "identity": stored["identity"],
+               "behavior": {**stored["behavior"], "global_pause": stored["behavior"]["global_pause"]}}
     try:
         new_config = await config_store.save(pool, session_id, payload)
     except (ValueError, OSError) as exc:
@@ -549,13 +806,7 @@ async def api_put_config(session_id: str, payload: dict[str, Any]) -> dict[str, 
 
     await best_effort_dispatch(session_id, "reload_config")
     await publish(session_id, {"type": "config", "config": new_config})
-    log.info("[%s] Config updated from the admin panel.", session_id)
-
-    after = new_config.get("booking") or {}
-    if after.get("enabled") and (
-        after.get("provider") != before.get("provider") or not before.get("enabled")
-    ):
-        await best_effort_dispatch(session_id, "resend_unsent_bookings")
+    log.info("[%s] Account settings updated from the admin panel.", session_id)
     return new_config
 
 
@@ -665,19 +916,47 @@ async def api_pause(session_id: str, chat_id: int, body: PauseBody) -> dict[str,
 
 @app.post("/api/sessions/{session_id}/global-pause", dependencies=[Depends(require_auth)])
 async def api_global_pause(session_id: str, body: GlobalPauseBody) -> dict[str, Any]:
-    current = await config_store.load(pool, session_id)
-    new_config = await config_store.save(
-        pool, session_id,
-        {**current, "behavior": {**current["behavior"], "global_pause": body.global_pause}},
-    )
-    await best_effort_dispatch(session_id, "reload_config")
+    """"Pause all": the tenant's manual soft-off hold (controls.py). It
+    lifts only the manual hold; a billing, anomaly or other hold stays."""
+    tenant = await tenants.TenantStore(pool).by_session(session_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
     if body.global_pause:
+        await controls.add_hold(pool, tenant["id"], controls.MANUAL, "Pause all, from the panel", actor=audit.ADMIN)
         log.warning("[%s] Automation PAUSED from the admin panel.", session_id)
-        await best_effort_dispatch(session_id, "cancel_all_drafts")
     else:
+        await controls.remove_hold(pool, tenant["id"], controls.MANUAL, actor=audit.ADMIN,
+                                   reason="Resumed from the panel")
         log.info("[%s] Automation resumed from the admin panel.", session_id)
-    await publish(session_id, {"type": "config", "config": new_config})
-    return {"global_pause": new_config["behavior"]["global_pause"]}
+    await best_effort_dispatch(session_id, "reload_controls")
+    state = await _controls_status(session_id)
+    await publish(session_id, {"type": "controls", **state})
+    return state
+
+
+class TakeoverBody(BaseModel):
+    active: bool
+
+
+@app.post(
+    "/api/sessions/{session_id}/conversations/{chat_id}/takeover",
+    dependencies=[Depends(require_auth)],
+)
+async def api_takeover(session_id: str, chat_id: int, body: TakeoverBody) -> dict[str, Any]:
+    """Hand a chat back to the bot before takeover_hours are over. (A
+    takeover starts by itself when someone writes in the chat by hand.)"""
+    if body.active:
+        raise HTTPException(status_code=400, detail="A takeover starts by writing in the chat.")
+    db = db_for(session_id)
+    before = await db.get_conversation(chat_id)
+    if before is None:
+        raise HTTPException(status_code=404, detail="Unknown conversation")
+    conversation = await db.set_takeover(chat_id, None)
+    if before.get("human_takeover_until"):
+        await audit.record(pool, tenant_id=await db.tenant_id(), actor=audit.ADMIN, event=audit.TAKEOVER_ENDED,
+                           reason="handed back to the bot from the panel", payload={"chat_id": chat_id})
+    await publish(session_id, {"type": "conversation", "conversation": conversation})
+    return conversation
 
 
 @app.post("/api/sessions/{session_id}/conversations/{chat_id}/send", dependencies=[Depends(require_auth)])
@@ -717,35 +996,6 @@ async def api_reject(session_id: str, draft_id: int) -> dict[str, Any]:
     return row or {}
 
 
-@app.get("/api/sessions/{session_id}/bookings", dependencies=[Depends(require_auth)])
-async def api_bookings(session_id: str) -> list[dict[str, Any]]:
-    return [b.to_dict() for b in booking_store_for(session_id).all()]
-
-
-@app.post(
-    "/api/sessions/{session_id}/conversations/{chat_id}/booking-scan",
-    dependencies=[Depends(require_auth)],
-)
-async def api_booking_scan(session_id: str, chat_id: int) -> dict[str, Any]:
-    return await _dispatch_live(session_id, "booking_scan", {"chat_id": chat_id})
-
-
-@app.post("/api/sessions/{session_id}/bookings/{booking_id}/confirm", dependencies=[Depends(require_auth)])
-async def api_booking_confirm(session_id: str, booking_id: int) -> dict[str, Any]:
-    return await _dispatch_live(
-        session_id, "booking_decide", {"booking_id": booking_id, "confirmed": True},
-        not_found_detail="Unknown booking",
-    )
-
-
-@app.post("/api/sessions/{session_id}/bookings/{booking_id}/decline", dependencies=[Depends(require_auth)])
-async def api_booking_decline(session_id: str, booking_id: int) -> dict[str, Any]:
-    return await _dispatch_live(
-        session_id, "booking_decide", {"booking_id": booking_id, "confirmed": False},
-        not_found_detail="Unknown booking",
-    )
-
-
 @app.get("/api/sessions/{session_id}/contacts", dependencies=[Depends(require_auth)])
 async def api_contacts(session_id: str) -> list[dict[str, Any]]:
     return await _dispatch_live(session_id, "list_contacts", {}, timeout=LIVE_ACTION_TIMEOUT)
@@ -763,6 +1013,12 @@ async def api_outreach_queue(session_id: str, body: OutreachBody) -> dict[str, A
         raise HTTPException(status_code=400, detail="Say what the message should achieve")
     if not body.chat_ids:
         raise HTTPException(status_code=400, detail="Pick at least one contact")
+    bundle = await tenants.TenantStore(pool).bundle_for_session(session_id)
+    if not bundle.config["outreach"]["enabled"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Outreach is off for this client. Turn on outreach.enabled in its settings first.",
+        )
 
     try:
         contacts = await _dispatch_live(session_id, "list_contacts", {}, timeout=LIVE_ACTION_TIMEOUT)
@@ -803,15 +1059,18 @@ async def api_outreach_cancel(session_id: str) -> dict[str, Any]:
 
 @app.get("/api/sessions/{session_id}/media", dependencies=[Depends(require_auth)])
 async def api_media_list(session_id: str) -> list[dict[str, Any]]:
-    library = media_library_for(session_id)
+    library = await media_library_for(session_id)
     library.refresh()
     return library.all()
 
 
 @app.put("/api/sessions/{session_id}/media/upload", dependencies=[Depends(require_auth)])
 async def api_media_upload(session_id: str, request: Request, name: str, description: str = "") -> dict[str, Any]:
-    library = media_library_for(session_id)
-    if media.kind_for(name) is None:
+    library = await media_library_for(session_id)
+    # Checked on the name the file will actually get (folders and odd
+    # characters stripped), not on the raw one: "x.png/" or "..png" would
+    # pass on the raw name and then be stored with no usable extension.
+    if media.kind_for(media.safe_filename(name)) is None:
         raise HTTPException(
             status_code=400,
             detail="Only photos (jpg, png, webp, gif) and videos (mp4, mov, mkv, webm) are accepted.",
@@ -840,8 +1099,26 @@ async def api_media_upload(session_id: str, request: Request, name: str, descrip
 
 @app.patch("/api/sessions/{session_id}/media/{item_id}", dependencies=[Depends(require_auth)])
 async def api_media_describe(session_id: str, item_id: int, body: MediaDescribeBody) -> dict[str, Any]:
-    library = media_library_for(session_id)
+    library = await media_library_for(session_id)
     item = library.describe(item_id, body.description)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Unknown media item")
+    await publish(session_id, {"type": "media", "media": library.all()})
+    return item
+
+
+class MediaRoleBody(BaseModel):
+    role: Optional[str] = Field(None, pattern="^arrival_reference$")
+
+
+@app.patch("/api/sessions/{session_id}/media/{item_id}/role", dependencies=[Depends(require_auth)])
+async def api_media_role(session_id: str, item_id: int, body: MediaRoleBody) -> dict[str, Any]:
+    """Mark a photo as the entrance reference for the arrival photo check."""
+    library = await media_library_for(session_id)
+    try:
+        item = library.set_role(item_id, body.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     if item is None:
         raise HTTPException(status_code=404, detail="Unknown media item")
     await publish(session_id, {"type": "media", "media": library.all()})
@@ -850,7 +1127,7 @@ async def api_media_describe(session_id: str, item_id: int, body: MediaDescribeB
 
 @app.delete("/api/sessions/{session_id}/media/{item_id}", dependencies=[Depends(require_auth)])
 async def api_media_delete(session_id: str, item_id: int) -> dict[str, Any]:
-    library = media_library_for(session_id)
+    library = await media_library_for(session_id)
     if not library.remove(item_id):
         raise HTTPException(status_code=404, detail="Unknown media item")
     await publish(session_id, {"type": "media", "media": library.all()})
@@ -859,7 +1136,7 @@ async def api_media_delete(session_id: str, item_id: int) -> dict[str, Any]:
 
 @app.get("/api/sessions/{session_id}/media/{item_id}/file", dependencies=[Depends(require_auth)])
 async def api_media_file(session_id: str, item_id: int) -> FileResponse:
-    path = media_library_for(session_id).path(item_id)
+    path = (await media_library_for(session_id)).path(item_id)
     if path is None:
         raise HTTPException(status_code=404, detail="Unknown media item")
     return FileResponse(str(path))
@@ -872,7 +1149,7 @@ async def api_media_file(session_id: str, item_id: int) -> FileResponse:
 async def api_send_media(session_id: str, chat_id: int, body: SendMediaBody) -> dict[str, Any]:
     if await db_for(session_id).get_conversation(chat_id) is None:
         raise HTTPException(status_code=404, detail="Unknown conversation")
-    if media_library_for(session_id).get(body.media_id) is None:
+    if (await media_library_for(session_id)).get(body.media_id) is None:
         raise HTTPException(status_code=404, detail="Unknown media item")
     await best_effort_dispatch(session_id, "cancel_draft", {"chat_id": chat_id})
     return await _dispatch_live(session_id, "send_media", {"chat_id": chat_id, "media_id": body.media_id})
@@ -911,7 +1188,8 @@ async def _dispatch_live(
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
-    if not _token_is_valid(ws.cookies.get("admin_token")):
+    # The Origin check happened in RequestGuard; this is the login check.
+    if not _token_is_valid(admin_token_from(ws.cookies)):
         await ws.close(code=4401)
         return
 
@@ -922,9 +1200,10 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
             "type": "hello",
             "conversations": await db.list_conversations(),
             "config": await config_store.load(pool, session_id),
+            "tenant_config": (await tenants.TenantStore(pool).bundle_for_session(session_id)).config,
             "status": await api_status(session_id),
-            "bookings": [b.to_dict() for b in booking_store_for(session_id).all()],
-            "media": media_library_for(session_id).all(),
+            "bookings": [booking_store.public(b) for b in await (await booking_store_for(session_id)).awaiting_owner()],
+            "media": (await media_library_for(session_id)).all(),
         })
     except Exception:
         log.exception("[%s] Failed to send websocket hello", session_id)
@@ -960,10 +1239,35 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
 
 
 @app.exception_handler(Exception)
-async def unhandled(_request, exc: Exception) -> JSONResponse:
-    log.exception("Unhandled error in admin API")
-    return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
+async def unhandled(request: Request, exc: Exception) -> JSONResponse:
+    """The full error goes to the log. Only a logged-in admin sees its text
+    in the answer (it helps on the panel's toasts); anyone else, a client on
+    /api/owner/* included, gets a bare message, since an exception's text
+    can carry a query, a connection string or a stored value."""
+    log.exception("Unhandled error in %s %s", request.method, request.url.path)
+    if _token_is_valid(admin_token_from(request.cookies)):
+        detail = f"{type(exc).__name__}: {exc}"
+    else:
+        detail = "Something went wrong on the server."
+    return JSONResponse(status_code=500, content={"detail": detail})
 
+
+# Industries, tenants, prompt layers, the config helper and the audit log.
+platform_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(platform_api.router, dependencies=[Depends(require_auth)])
+booking_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(booking_api.router, dependencies=[Depends(require_auth)])
+# Kill switches, billing, alerts and health: admin only, like everything here.
+safety_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(safety_api.router, dependencies=[Depends(require_auth)])
+# Phase 4. Admin only: client logins, the unanswered queue, review batches.
+for _module in (owner_admin_api, unanswered_api, review_api):
+    _module.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+    app.include_router(_module.router, dependencies=[Depends(require_auth)])
+# The client dashboard's API has its own login (owner_auth.py), never the
+# admin's; every route there checks it.
+owner_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(owner_api.router)
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
@@ -977,6 +1281,9 @@ app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 @app.on_event("startup")
 async def on_startup() -> None:
     global pool, registry, bus, login_flow
+    problems = check_public_setup()
+    if problems:
+        raise RuntimeError("Refusing to serve a public panel (PANEL_DOMAIN is set): " + "; ".join(problems))
     if ADMIN_TOTP_SECRET:
         # Fail at boot, not at the first login attempt, if it can't work.
         try:

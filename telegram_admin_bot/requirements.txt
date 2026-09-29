@@ -1,16 +1,23 @@
-telethon>=1.36,<2.0
-fastapi>=0.115
-uvicorn[standard]>=0.30
-httpx>=0.27
-python-dotenv>=1.0
-tzdata>=2024.1
+# Runtime dependencies, pinned to the versions the test suite last passed
+# with, so a server build installs exactly what was tested. Bump them on
+# purpose (and run the tests), not by rebuilding on a different day.
+telethon==1.45.0
+fastapi==0.141.1
+# The tenant config schema (tenant_config.py) uses it directly.
+pydantic==2.13.5
+uvicorn[standard]==0.53.0
+httpx==0.28.1
+python-dotenv==1.2.3
+tzdata==2026.4
 # AES-GCM for secrets at rest (crypto.py); also signs the Google Calendar JWT.
-cryptography>=42
-asyncpg>=0.29
-redis>=5.0
-python-socks[asyncio]>=2.4
+cryptography==50.0.1
+asyncpg==0.31.0
+redis==8.1.0
+python-socks[asyncio]==3.1.1
 
 # Tests only — not needed to run the assistant.
 pytest>=8.0
 pytest-asyncio>=0.24
 fakeredis>=2.21
+# tests/test_deploy_files.py reads docker-compose.yml.
+PyYAML>=6.0

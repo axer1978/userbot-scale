@@ -158,8 +158,7 @@ def outbox(app, monkeypatch):
     monkeypatch.setattr(app, "resolve_peer", fake_resolve_peer)
     monkeypatch.setattr(app, "deliver", fake_deliver)
     monkeypatch.setattr(app, "deliver_file", fake_deliver_file)
-    monkeypatch.setattr(app, "BURST_GAP_MIN_SECONDS", 0)
-    monkeypatch.setattr(app, "BURST_GAP_MAX_SECONDS", 0)
+    app.config["burst"]["gap_ms"] = {"min": 0, "max": 0}
     return sent
 
 
@@ -271,7 +270,7 @@ async def test_the_model_is_offered_the_files_and_its_tag_becomes_an_attachment(
 
 @pytest.mark.asyncio
 async def test_a_photo_auto_sends_but_a_video_waits_for_approval(app, db, drafting, outbox):
-    app.config["behavior"]["auto_send"] = True
+    app.config["auto_send"] = True
     await db.upsert_conversation(7, "J", None, False, 1)
     await db.record_message(7, DIR_IN, STATUS_RECEIVED, "pic?", telegram_id=1)
 
@@ -288,7 +287,7 @@ async def test_a_photo_auto_sends_but_a_video_waits_for_approval(app, db, drafti
 
 @pytest.mark.asyncio
 async def test_videos_go_straight_out_when_the_rule_is_off(app, db, drafting, outbox):
-    app.config["behavior"]["auto_send"] = True
+    app.config["auto_send"] = True
     app.config["media"]["videos_need_approval"] = False
     await db.upsert_conversation(7, "J", None, False, 1)
     await db.record_message(7, DIR_IN, STATUS_RECEIVED, "vid?", telegram_id=1)

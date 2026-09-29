@@ -1,0 +1,9 @@
+# The panel and the public booking pages from one Caddy (the `caddy`
+# service picks this file when BOOKING_DOMAIN is set in .env). Each site
+# gets its own Let's Encrypt certificate.
+#
+# Import paths are relative to this file, so this works both in the
+# container (all three files mounted in /etc/caddy) and in a checkout:
+#     caddy validate --config Caddyfile.both --adapter caddyfile
+import Caddyfile
+import Caddyfile.booking

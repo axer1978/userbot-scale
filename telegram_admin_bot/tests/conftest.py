@@ -95,15 +95,25 @@ async def pg_pool():
             await admin.close()
 
 
+async def seed_session(pool, session_id: str, *, active: bool = True, name: str = "", industry_id: int = 1) -> int:
+    """A telegram_sessions row plus the tenant that owns it, the way
+    SessionRegistry.create makes them. Returns the tenant id."""
+    async with pool.acquire() as con:
+        await con.execute(
+            "INSERT INTO telegram_sessions (session_id, is_active) VALUES ($1, $2)", session_id, active
+        )
+        return await con.fetchval(
+            "INSERT INTO tenants (name, industry_id, session_id, legacy_imported_at) "
+            "VALUES ($1, $2, $3, now()) RETURNING id",
+            name or session_id, industry_id, session_id,
+        )
+
+
 @pytest_asyncio.fixture
 async def db(pg_pool):
     """A `Database` bound to session_id "test", with its telegram_sessions
-    row already seeded so foreign keys resolve."""
-    async with pg_pool.acquire() as con:
-        await con.execute(
-            "INSERT INTO telegram_sessions (session_id, is_active) VALUES ($1, TRUE)",
-            "test",
-        )
+    row and tenant already seeded so foreign keys resolve."""
+    await seed_session(pg_pool, "test")
     database = Database(pg_pool, "test")
     await database.connect()
     yield database
@@ -115,7 +125,7 @@ async def app(pg_pool, db, tmp_path):
     """A `SessionRuntime` for session "test", built but never started.
 
     Config-only tests (settings routes, halt_everything, global pause) only
-    touch `runtime.config` / `save_config()`, neither of which needs a
+    touch `runtime.config` / `runtime.account`, neither of which needs a
     lease, Redis, or a Telegram connection — `start()` would need all
     three and this session has none of them. Skipping `start()` means
     there is nothing to `stop()` in teardown either.
@@ -124,6 +134,9 @@ async def app(pg_pool, db, tmp_path):
         pg_pool, db.session_id, data_dir=tmp_path, redis_url="redis://unused"
     )
     runtime.hub = FakeHub()  # handle_send_failure and friends reach for it by attribute
+    # What start() does before it connects: load the tenant's config and
+    # prompt, and settle its data folder.
+    await runtime.bind_tenant()
     yield runtime
 
 

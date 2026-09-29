@@ -1,0 +1,29 @@
+# Public HTTPS for the booking pages only (public_app.py): the calendar feed
+# per client and the read-only page per booking. Used by the `caddy-booking`
+# service, which only runs with
+#     docker compose --profile booking-pages up -d
+#
+# BOOKING_DOMAIN (from .env) must resolve to this server, with ports 80 and
+# 443 open; Caddy gets and renews the certificate itself. Nothing else is
+# proxied: the admin panel is not reachable through this site.
+
+{$BOOKING_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+		-Via
+	}
+
+	# No access log: the URLs carry the secret tokens.
+	@pages path /cal/* /b/* /healthz
+	handle @pages {
+		reverse_proxy booking-pages:8788
+	}
+	handle {
+		respond "Not found" 404
+	}
+}

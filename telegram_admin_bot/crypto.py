@@ -6,11 +6,15 @@ environment variable or a secrets file, and the process refuses to boot
 without one. Every ciphertext is bound (via AES-GCM's associated data) to
 the session_id and column it belongs to, so a blob copied into the wrong
 row or the wrong column fails to decrypt instead of silently succeeding.
+
+Also derives customer_ref, the per-tenant pseudonymous id for a customer.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 from dataclasses import dataclass
@@ -149,6 +153,21 @@ def decrypt(blob: bytes, *, aad: bytes) -> bytes:
 
 def encrypt_text(text: str, *, aad: bytes) -> bytes:
     return encrypt(text.encode("utf-8"), aad=aad)
+
+
+def customer_ref(tenant_id: int, channel: str, external_id: int | str) -> str:
+    """A stable pseudonymous id for one customer of one tenant.
+
+    HMAC-SHA256 of "<channel>:<external id>" under a key derived for this
+    tenant alone, so the same person gets unrelated refs under different
+    tenants and a ref reveals nothing without the master key. Derived from
+    the oldest key in the keyring, not the active one: rotating the master
+    key must not change every customer's ref.
+    """
+    keyring = load_keyring()
+    root = keyring.keys[min(keyring.keys)]
+    tenant_key = hmac.new(root, f"customer_ref:{int(tenant_id)}".encode(), hashlib.sha256).digest()
+    return hmac.new(tenant_key, f"{channel}:{external_id}".encode(), hashlib.sha256).hexdigest()[:32]
 
 
 def decrypt_text(blob: bytes, *, aad: bytes) -> str:
