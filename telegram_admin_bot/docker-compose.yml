@@ -176,7 +176,10 @@ services:
   caddy-booking:
     image: caddy:2-alpine
     container_name: userbot-caddy-booking
-    profiles: ["booking-pages"]
+    # Only for booking pages WITHOUT the public panel. With the panel public
+    # as well, the `caddy` service serves both (set BOOKING_DOMAIN and run
+    # --profile public --profile booking-pages).
+    profiles: ["booking-only"]
     restart: unless-stopped
     depends_on:
       - booking-pages
@@ -223,6 +226,7 @@ services:
       # everyone not using this profile. The `command` below does the
       # "must be set" check instead, only when Caddy actually starts.
       PANEL_DOMAIN: ${PANEL_DOMAIN:-}
+      BOOKING_DOMAIN: ${BOOKING_DOMAIN:-}
     # Same as the image's default command, behind a guard: with
     # PANEL_DOMAIN empty the Caddyfile's site address would silently
     # collapse into its global-options block and fail with a confusing
@@ -234,13 +238,17 @@ services:
         if [ -z "$$PANEL_DOMAIN" ]; then
         echo "PANEL_DOMAIN must be set (in .env) for the public profile — see README" >&2;
         exit 1; fi;
-        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+        CONF=/etc/caddy/Caddyfile;
+        if [ -n "$$BOOKING_DOMAIN" ]; then CONF=/etc/caddy/Caddyfile.both; fi;
+        exec caddy run --config "$$CONF" --adapter caddyfile
     ports:
       - "80:80"      # ACME HTTP-01 challenge + redirect to HTTPS
       - "443:443"
       - "443:443/udp"  # HTTP/3
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile.booking:/etc/caddy/Caddyfile.booking:ro
+      - ./Caddyfile.both:/etc/caddy/Caddyfile.both:ro
       # Certificates and ACME account keys. Keep this volume: losing it
       # means re-issuing certificates, and Let's Encrypt rate-limits that.
       - caddy_data:/data

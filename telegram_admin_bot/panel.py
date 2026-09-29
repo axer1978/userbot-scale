@@ -98,6 +98,11 @@ ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 # 6-digit code from an authenticator app.
 ADMIN_TOTP_SECRET = "".join((os.getenv("ADMIN_TOTP_SECRET") or "").split())
 HOST = (os.getenv("ADMIN_HOST") or "127.0.0.1").strip()
+# Set when the panel is on the public internet behind Caddy (the `public`
+# profile). The panel then refuses to start without an authenticator code
+# for the admin and a long admin password (check_public_setup).
+PANEL_DOMAIN = (os.getenv("PANEL_DOMAIN") or "").strip()
+PUBLIC_MIN_PASSWORD = 14
 PORT = int(os.getenv("ADMIN_PORT") or 8787)
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
@@ -131,6 +136,48 @@ logging.getLogger("telethon").setLevel(logging.WARNING)
 log = logging.getLogger("panel")
 
 app = FastAPI(title="Telegram AI Assistant — Fleet Admin")
+
+# Sent on every response, whether it comes through Caddy or an SSH tunnel.
+# script-src 'self': no inline scripts anywhere in the panel or the client
+# dashboard. Inline style attributes are used by the panel's markup, hence
+# style-src 'unsafe-inline'. HSTS is Caddy's job (only it knows about TLS).
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' wss: ws:; "
+        "font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    if request.url.path.startswith("/api/"):
+        # Nothing the API returns may be cached by a browser or a proxy.
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
+def check_public_setup() -> list[str]:
+    """What must be fixed before the panel may face the internet. Empty
+    when PANEL_DOMAIN is unset (SSH-tunnel only) or everything is in place."""
+    if not PANEL_DOMAIN:
+        return []
+    problems = []
+    if not ADMIN_TOTP_SECRET:
+        problems.append("ADMIN_TOTP_SECRET is not set: a public panel needs an authenticator code for the admin "
+                        "(generate one with `python totp.py` on the server)")
+    if len(ADMIN_PASSWORD) < PUBLIC_MIN_PASSWORD:
+        problems.append(f"ADMIN_PASSWORD is shorter than {PUBLIC_MIN_PASSWORD} characters")
+    return problems
 
 pool = None  # set in startup
 registry: Optional[SessionRegistry] = None
@@ -1069,6 +1116,9 @@ app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 @app.on_event("startup")
 async def on_startup() -> None:
     global pool, registry, bus, login_flow
+    problems = check_public_setup()
+    if problems:
+        raise RuntimeError("Refusing to serve a public panel (PANEL_DOMAIN is set): " + "; ".join(problems))
     if ADMIN_TOTP_SECRET:
         # Fail at boot, not at the first login attempt, if it can't work.
         try:

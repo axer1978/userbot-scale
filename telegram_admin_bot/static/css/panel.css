@@ -54,6 +54,10 @@ header {
 .btn.small { padding: 4px 9px; font-size: 12px; border-radius: 6px; }
 .btn.on { background: var(--danger); border-color: var(--danger); color: #fff; }
 
+#hdr-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+#menu-toggle, .back-btn { display: none; }
+header { flex-wrap: wrap; }
+
 /* ---------- layout ---------- */
 main { flex: 1; display: flex; min-height: 0; }
 #sidebar {
@@ -389,3 +393,55 @@ legend { padding: 0 6px; color: var(--accent); font-size: 12px; text-transform: 
 #session-menu .s-row.active { background: var(--accent-dim); }
 #session-menu .s-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #session-menu .s-empty { padding: 11px 13px; color: var(--muted); font-size: 13px; }
+
+/* ---------- phones and tablets ----------
+   Below 760 px: the top bar folds into a menu, the chat list and the open
+   chat take turns filling the screen (body.chat-open), sheets and overlays
+   go full screen, and controls get finger-sized. 16 px inputs stop iOS from
+   zooming in on focus. */
+@media (max-width: 1100px) {
+  header { gap: 8px; padding: 8px 12px; }
+  #hdr-actions .btn { padding: 6px 10px; }
+  #sidebar { width: 280px; }
+}
+@media (max-width: 760px) {
+  body { overflow: hidden; }
+  header { padding: 8px 10px calc(8px) 10px; padding-top: max(8px, env(safe-area-inset-top)); }
+  .brand { font-size: 14px; }
+  .brand .instance, #conn-text, #mode { display: none; }
+  #session-btn-label { max-width: 42vw; display: inline-block; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; vertical-align: bottom; }
+  .off-chip { max-width: 100%; order: 10; flex-basis: 100%; }
+  #menu-toggle { display: inline-flex; align-items: center; }
+  #hdr-actions { display: none; order: 11; flex-basis: 100%; justify-content: stretch; }
+  body.menu-open #hdr-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  #hdr-actions .btn { min-height: 44px; width: 100%; }
+
+  #sidebar { width: 100%; border-right: 0; }
+  #panel { display: none; }
+  body.chat-open #sidebar { display: none; }
+  body.chat-open #panel { display: flex; }
+  .back-btn { display: inline-flex; align-items: center; }
+  #thread-header { flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
+  #thread { padding: 10px; }
+  .msg, .draft { max-width: 90%; }
+  #composer { padding: 8px 10px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .conv { padding: 13px 14px; }
+
+  .btn { min-height: 40px; }
+  .btn.small { min-height: 36px; padding: 6px 11px; font-size: 13px; }
+  input, textarea, select { font-size: 16px; }
+
+  #outreach, #style, #media, #login, #admin-gate { padding: 0; align-items: stretch; }
+  .sheet { border-radius: 0; max-width: none !important; min-height: 100%; padding: 18px 14px; }
+  .sheet-actions { flex-wrap: wrap; }
+  .sheet-actions .btn { flex: 1 1 auto; }
+  .pf-shell { border-radius: 0; max-width: none !important; height: 100%; }
+  .pf-top { padding: 10px 12px; flex-wrap: wrap; }
+  .pf-tabs { overflow-x: auto; flex-wrap: nowrap; }
+  .pf-tab { white-space: nowrap; min-height: 40px; }
+  .cfg-table { display: block; overflow-x: auto; }
+  .row { flex-direction: column; }
+  .media-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  #toasts { left: 10px; right: 10px; }
+}

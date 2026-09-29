@@ -84,6 +84,11 @@ function renderThreadHeader() {
     return;
   }
 
+  // Phones: the list and the chat take turns; this goes back to the list.
+  const back = el("button", "btn small back-btn", "‹ Chats");
+  back.addEventListener("click", () => document.body.classList.remove("chat-open"));
+  header.appendChild(back);
+
   const name = el("strong", null, conv.display_name || String(conv.chat_id));
   header.appendChild(name);
   if (conv.username) {
@@ -408,6 +413,7 @@ function renderComposer() {
 
 async function selectConversation(chatId) {
   state.activeChatId = chatId;
+  document.body.classList.add("chat-open");
   state.links = [];
   state.linkOptions = null;
   renderSidebar();

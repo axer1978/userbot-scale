@@ -273,6 +273,7 @@ async function selectSession(sessionId) {
   state.conversations = [];
   state.messages = [];
   state.activeChatId = null;
+  document.body.classList.remove("chat-open");
   state.config = null;
   state.tenantConfig = null;
   state.status = null;
