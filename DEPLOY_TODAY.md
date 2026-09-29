@@ -25,13 +25,14 @@ The server's own firewall is set up in step 3.
 ssh root@SERVER_IP
 ```
 
-If the provider gave you only a password, first add your SSH key from your own computer. On Windows PowerShell:
+If the provider gave you only a password, first add your SSH key from your own computer:
 
-```powershell
-type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@SERVER_IP "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```bash
+ls ~/.ssh/id_ed25519.pub || ssh-keygen -t ed25519
+ssh-copy-id -i ~/.ssh/id_ed25519.pub root@SERVER_IP
 ```
 
-If `type` says the file is missing, run `ssh-keygen -t ed25519` first. The bootstrap in step 3 only switches off password login once a key is installed.
+`ssh-copy-id` asks for the server's password once. The bootstrap in step 3 only switches off password login once a key is installed.
 
 If your provider logs you in as `ubuntu` (or another user) instead of `root`, that's fine: the commands below work the same. After step 3, log out and back in once so you can run `docker` without `sudo`.
 
