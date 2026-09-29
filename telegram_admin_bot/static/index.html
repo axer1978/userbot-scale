@@ -36,6 +36,8 @@
   <button id="open-settings" class="btn" title="How this client's bot behaves: config, prompt, versions">Settings</button>
   <button id="open-safety" class="btn" title="Kill switches, billing, alerts and account health">Safety <span id="safety-count" class="count-badge"></span></button>
   <button id="open-platform" class="btn" title="All clients, industries and the platform rules">Clients</button>
+  <button id="open-onboarding" class="btn" title="Set up a new client step by step, or continue one">New client</button>
+  <button id="open-review" class="btn" title="Review the bot's replies and export them for training">Review</button>
   <button id="logout" class="btn">Log out</button>
   </nav>
 </header>
@@ -175,6 +177,33 @@
     <div class="bk-scroll">
       <div id="sf-tabs" class="pf-tabs"></div>
       <div id="sf-body"></div>
+    </div>
+  </div>
+</div>
+
+<div id="review">
+  <div class="pf-shell">
+    <div class="pf-top">
+      <h2>Review</h2>
+      <span class="muted" id="rv-crumb">the bot's replies, for training</span>
+      <span class="spacer"></span>
+      <button type="button" id="rv-close" class="btn">Close</button>
+    </div>
+    <div class="bk-scroll"><div id="rv-body"></div></div>
+  </div>
+</div>
+
+<div id="onboarding">
+  <div class="pf-shell">
+    <div class="pf-top">
+      <h2>New client</h2>
+      <span class="muted" id="ob-crumb"></span>
+      <span class="spacer"></span>
+      <button type="button" id="ob-close" class="btn">Close</button>
+    </div>
+    <div class="bk-scroll">
+      <div id="ob-progress" class="ob-progress"></div>
+      <div id="ob-body"></div>
     </div>
   </div>
 </div>
@@ -329,6 +358,8 @@
 <script src="/js/platform.js"></script>
 <script src="/js/bookings.js"></script>
 <script src="/js/safety.js"></script>
+<script src="/js/review.js"></script>
+<script src="/js/onboarding.js"></script>
 <script src="/js/boot.js"></script>
 </body>
 </html>
