@@ -1,6 +1,6 @@
 # Phase 4: client-facing, public HTTPS, phones and tablets
 
-Branch `platform/phase-1`. Tests: **924 passed** against Postgres 16 (846 after phase 3), plus a jsdom click-through of every new screen and of the client dashboard (19 checks, no script errors). To deploy on the new server, follow [DEPLOY_TODAY.md](DEPLOY_TODAY.md).
+Branch `platform/phase-1`. Tests: **924 passed** against Postgres 16 (846 after phase 3), plus a jsdom click-through of every new screen and of the client dashboard (19 checks, no script errors). To deploy on the new server, follow [DEPLOY_TODAY.md](../DEPLOY_TODAY.md).
 
 ## Done
 

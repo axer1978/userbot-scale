@@ -152,29 +152,6 @@ either way, so the SSH tunnel keeps working. Everyone coming through the
 tunnel shares one rate-limit bucket, so 5 typos there lock the tunnel out
 for up to 15 minutes too (restarting the panel clears it).
 
-### Using nginx instead of Caddy
-
-If you'd rather run nginx on the host, use
-[`deploy/nginx-panel.conf`](deploy/nginx-panel.conf) and **don't** enable the
-`public` profile (both need ports 80 and 443). Open ports 80 and 443 as above,
-then, with `panel.example.com` replaced by your hostname:
-
-```bash
-sudo apt install -y nginx certbot python3-certbot-nginx
-sudo cp deploy/nginx-panel.conf /etc/nginx/sites-available/userbot-panel
-sudo sed -i 's/panel.example.com/YOUR-HOSTNAME/' /etc/nginx/sites-available/userbot-panel
-sudo ln -s /etc/nginx/sites-available/userbot-panel /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d YOUR-HOSTNAME --redirect
-```
-
-certbot adds HTTPS and the http→https redirect to that file and renews the
-certificate automatically. If you edit the config, keep
-`proxy_set_header X-Forwarded-For $remote_addr;` as it is: the panel treats
-the first address in that header as the client, so nginx's usual
-`$proxy_add_x_forwarded_for` (which appends to whatever the visitor sent)
-would let anyone fake their IP and dodge the login rate limit.
-
 ### Hardening a public panel
 
 Do these once the panel has a public address. In order of how much they
@@ -199,33 +176,7 @@ private window before closing your current session, to confirm the code is
 accepted. Lost the phone? Remove the line from `.env` and recreate the
 panel; then set up a new secret.
 
-**2. nginx rate limits and scanner catch-all.** `deploy/nginx-panel.conf`
-already limits logins to 10 a minute per IP (on top of the panel's own
-5-wrong-in-15-minutes lockout), caps connections, cuts off slow clients and
-sends security headers. Add the catch-all so requests by bare IP, not by the
-panel's name, get dropped without a response:
-
-```bash
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo cp deploy/nginx-default-deny.conf /etc/nginx/sites-available/default-deny
-sudo ln -sf /etc/nginx/sites-available/default-deny /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-**3. fail2ban.** Bans an address at the firewall for an hour after 10 failed
-or refused logins within 10 minutes:
-
-```bash
-sudo apt install -y fail2ban
-sudo cp deploy/fail2ban/userbot-panel.conf /etc/fail2ban/filter.d/
-sudo cp deploy/fail2ban/userbot-panel.local /etc/fail2ban/jail.d/
-sudo systemctl restart fail2ban
-sudo fail2ban-client status userbot-panel
-```
-
-Banned yourself: `sudo fail2ban-client set userbot-panel unbanip <your-ip>`.
-
-**4. The server itself.**
+**2. The server itself.**
 - In the cloud firewall (e.g. AWS security group), allow SSH (22) only from
   your own IP, and nothing inbound besides 22, 80 and 443.
 - Keep security updates automatic:
@@ -650,16 +601,6 @@ account. DeepSeek errors also show up red in the conversation.
 session was rejected. Read the reason in Safety or the manager logs, wait and
 work out what caused it, then resume that hold in Safety.
 
-## Legacy files
-
-`main.py`, `start.bat`, `setup_session.py`, `instances.py` and `env_file.py`
-are the old single-account mode: one process per account, SQLite, and
-credentials in `.env`. The fleet stack superseded them (design decision D9),
-and nothing in it imports or runs them. The same goes for
-`deploy/telegram-assistant.service` (a systemd unit that runs `main.py`) and
-`config.example.json` (settings now live in Postgres). They are kept for
-reference only. Don't use them to deploy.
-
 ## Files
 
 ```
@@ -667,6 +608,11 @@ docker-compose.yml     the stack: postgres, valkey, migrate, panel, manager, sch
 Dockerfile             one image for panel, manager, scheduler, migrate and the booking pages
 Caddyfile              optional public HTTPS front door for the panel (profile "public")
 Caddyfile.booking      optional public HTTPS for the booking pages (profile "booking-pages")
+Caddyfile.both         the panel and the booking pages on one Caddy
+deploy/                bootstrap_ubuntu24.sh (prepares a new server) and backup.sh (encrypted backups)
+owner_auth.py          client logins: passwords, sessions, optional 2FA
+owner_api.py           API behind the client dashboard (/owner/)
+proxies.py             per-account Telegram proxy (socks5/http)
 scheduler.py           the one background scheduler; replies held back by quiet hours; watchdog, billing
 controls.py            kill switches: soft-off holds, the global stop (also a shell command), hard-off
 alerts.py              alerts for the operator: stored, shown in Safety, e-mailed / webhooked

@@ -1,6 +1,6 @@
 # Audit and crash tests (2026-09-29)
 
-Three audits ran over the code as it was after phase 4, each fixing what it found and adding tests. Tests: **1051 passed**, 4 skipped (924 before). See [RUNBOOK.md](RUNBOOK.md) for what to do when something breaks.
+Three audits ran over the code as it was after phase 4, each fixing what it found and adding tests. Tests: **1051 passed**, 4 skipped (924 before). See [RUNBOOK.md](../RUNBOOK.md) for what to do when something breaks.
 
 ## Security (admin panel and client dashboard)
 
