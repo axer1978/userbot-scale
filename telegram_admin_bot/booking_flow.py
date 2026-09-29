@@ -828,18 +828,34 @@ class BookingFlow:
         now = self.now()
         loop_now = asyncio.get_running_loop().time()
 
+        # One booking whose step fails (its calendar, a bad row) is logged
+        # and tried again next tick; it doesn't keep the others, or the
+        # later steps, from running.
+        async def guarded(what: str, step) -> None:
+            try:
+                await step()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("[%s] Booking tick: %s failed; retried next tick", self.rt.session_id, what)
+
+        async def expire(booking: dict[str, Any]) -> None:
+            try:
+                await self.change(booking, bs.expire(booking, now=now), actor=bs.SYSTEM, via=VIA_SYSTEM)
+            except (bs.IllegalTransition, booking_store.StaleBooking):
+                pass
+
         for booking in await self.store.between(now - timedelta(days=7), now, states=[bs.REQUESTED, bs.PENDING]):
             if booking["starts_at"] <= now:
-                try:
-                    await self.change(booking, bs.expire(booking, now=now), actor=bs.SYSTEM, via=VIA_SYSTEM)
-                except (bs.IllegalTransition, booking_store.StaleBooking):
-                    pass
+                await guarded(f"expiring #{booking['number']}", lambda b=booking: expire(b))
 
-        for booking, reminder, skipped in await self.store.due_reminders(now, self.settings["reminders"]):
+        async def remind(booking: dict[str, Any], reminder: dict[str, Any], skipped: list[int]) -> None:
             for minutes in skipped:
                 await self.store.claim_reminder(booking, minutes)
+            # Claimed before anything is sent: at most once, even across a
+            # crash right after this line (then it is simply not sent).
             if not await self.store.claim_reminder(booking, reminder["minutes_before"]):
-                continue
+                return
             chat_id = booking["chat_id"]
             conversation = await self.rt.db.get_conversation(chat_id)
             why = (f"sending is off ({self.rt.off_reason})" if self.rt.paused() else
@@ -848,7 +864,7 @@ class BookingFlow:
                 # Claimed above, so it is skipped for good: nothing is
                 # replayed later.
                 await self.rt.post_note(chat_id, f"⏰ Reminder for booking #{booking['number']} not sent: {why}.")
-                continue
+                return
             self.add_line(chat_id, bookings.reminder_line(booking, reminder.get("instruction", ""), now,
                                                           self.page_url(booking)))
             self.reminders_out[chat_id] = (booking["id"], reminder["minutes_before"], booking["starts_at"])
@@ -856,15 +872,41 @@ class BookingFlow:
                                              f"{bookings.describe_until(booking['starts_at'], now)}: sending the reminder.")
             self.rt.schedule_draft(chat_id)
 
-        for entry in await self.store.expired_offers(now, self.settings["waitlist_offer_hours"]):
+        for booking, reminder, skipped in await self.store.due_reminders(now, self.settings["reminders"]):
+            await guarded(f"reminder for #{booking['number']}",
+                          lambda b=booking, r=reminder, s=skipped: remind(b, r, s))
+
+        async def lapse(entry: dict[str, Any]) -> None:
             await self.store.set_waitlist_state(entry["id"], "expired", reason="the offer was not taken in time")
             if entry["offered_starts_at"] > now:
                 await self.offer_to_next(entry["offered_starts_at"], exclude_entry=entry["id"])
 
-        for booking in [] if self.rt.paused() else await self.store.unsent():
+        for entry in await self.store.expired_offers(now, self.settings["waitlist_offer_hours"]):
+            await guarded(f"waitlist offer {entry['id']}", lambda e=entry: lapse(e))
+
+        unsent = [] if self.rt.paused() else await self.store.unsent()
+        for booking in unsent:
             last = self._submit_attempts.get(booking["id"], 0.0)
             if loop_now - last >= self.RESUBMIT_SECONDS:
-                await self.submit(booking)
+                await guarded(f"resubmitting #{booking['number']}", lambda b=booking: self.submit(b))
+        # Attempts for bookings that are no longer waiting to be sent.
+        waiting = {b["id"] for b in unsent}
+        if not self.rt.paused():
+            for booking_id in list(self._submit_attempts):
+                if booking_id not in waiting:
+                    self._submit_attempts.pop(booking_id, None)
+
+    def prune_memory(self) -> None:
+        """Drop per-chat hints that no longer matter (see
+        SessionRuntime.prune_memory)."""
+        cutoff = self.now() - timedelta(days=1)
+        for chat_id, (start, _end) in list(self.last_unavailable.items()):
+            if start < cutoff:
+                self.last_unavailable.pop(chat_id, None)
+        loop_now = asyncio.get_running_loop().time()
+        for booking_id, at in list(self._submit_attempts.items()):
+            if loop_now - at >= self.RESUBMIT_SECONDS:
+                self._submit_attempts.pop(booking_id, None)
 
     # ------------------------------------------------ calendar and e-mail
 
