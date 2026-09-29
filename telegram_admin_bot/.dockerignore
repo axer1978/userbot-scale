@@ -1,12 +1,17 @@
+# Secrets and per-server state never go into the image. Everything else
+# (the Python modules, static/ including static/owner/, migrations/) must.
 .env
+.env.*
 data/
 *.db
 *.session
 __pycache__/
 *.py[cod]
 .venv/
+.pytest_cache/
 instances/
 bookings.json
 google-service-account.json
 media/
 backups/
+deploy/age-recipient.txt
