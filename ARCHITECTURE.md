@@ -1,6 +1,6 @@
 # Architecture
 
-State as of phase 3 of the multi-tenant platform (branch `platform/phase-1`).
+State as of phase 4 of the multi-tenant platform (branch `platform/phase-1`).
 Code lives in `telegram_admin_bot/`; module names below are files there.
 
 ## Processes
@@ -74,7 +74,20 @@ Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `
 | `session_config` | tenant_id, session_id, config | Now only the account's own state: device identity, per-contact style overrides. The old pause switch became the `manual` hold (migration 0004) |
 | `worker_heartbeats`, `panel_sessions`, `schema_migrations` | | Operational, not tenant data |
 
-Not built yet (later phases): `customer_flags`, `unanswered_queue`, `review_batches`, `review_items`, `conversations.language`.
+| `owners`, `owner_tenants`, `owner_sessions` | owner: username, scrypt password hash, encrypted TOTP; links to tenants; sessions by token hash | Client master logins (phase 4). Every owner route is scoped to the owner's linked tenants |
+| `unanswered_queue` | tenant_id, chat_id, message_id, reason, status (open/reviewed/added_to_template) | Customer messages that got no reply, decided in code |
+| `review_batches`, `review_items` | tenant, date range; item context, reply, decision, edited_text | Review for the trainer; JSONL export |
+| `digest_log` | tenant_id, week_start | At most one weekly digest per tenant and week |
+
+Not built yet (later phases): `customer_flags`, `conversations.language`.
+
+## Client-facing (phase 4)
+
+- **Two logins, two cookies.** The admin (`admin_token`, password + TOTP, required when `PANEL_DOMAIN` is set) reaches everything under `/api/` except `/api/owner/*`. A client (`owner_token`, `owner_auth.py`) reaches only `/api/owner/*`, and every query there is limited to the tenants in `owner_tenants`. The client page is `static/owner/`.
+- **Unanswered queue** is written by `SessionRuntime.queue_unanswered()` wherever a customer message ends without a reply (see `unanswered.py` for the reasons); promoting one appends to the industry FAQ as a new template version.
+- **Staging** (`staging.enabled`): `on_incoming` answers only `staging.test_chats`, after escalation and soft-off.
+- **Digest** (`digest.py`) runs in the scheduler's platform round next to health and billing.
+- **Public exposure**: Caddy (TLS, HSTS) → panel, which adds CSP and the other headers itself (`panel.SECURITY_HEADERS`). Postgres and Valkey are never published.
 
 ## Configuration: three layers
 

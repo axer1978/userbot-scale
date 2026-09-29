@@ -414,6 +414,7 @@ function renderComposer() {
 async function selectConversation(chatId) {
   state.activeChatId = chatId;
   document.body.classList.add("chat-open");
+  document.body.classList.remove("menu-open");
   state.links = [];
   state.linkOptions = null;
   renderSidebar();
