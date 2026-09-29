@@ -300,6 +300,49 @@ class Anomaly(_Strict):
     tripwire_suspend: bool = True
 
 
+class Staging(_Strict):
+    """Staging: the bot answers only the listed test chats (usernames with
+    or without @, or numeric chat ids); everyone else is stored, not
+    answered. Turning it off is "go live"."""
+    enabled: bool = False
+    test_chats: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("test_chats")
+    @classmethod
+    def _clean(cls, value: list[str]) -> list[str]:
+        out: list[str] = []
+        for item in value:
+            item = item.strip().lstrip("@").lower()
+            if item and item not in out:
+                out.append(item)
+        return out
+
+
+class Digest(_Strict):
+    """A weekly summary for the owner: by Telegram (booking.provider) and,
+    with SMTP set up, by e-mail."""
+    enabled: bool = True
+    # 0 = Monday ... 6 = Sunday, and the hour, in the client's timezone.
+    weekday: int = Field(0, ge=0, le=6)
+    hour: int = Field(9, ge=0, le=23)
+    # Empty = booking.owner_email.
+    email: str = Field("", max_length=254)
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, value: str) -> str:
+        value = value.strip()
+        if value and not _EMAIL.match(value):
+            raise ValueError("not an e-mail address")
+        return value
+
+
+class Unanswered(_Strict):
+    """What counts as unanswered, besides a message that got no reply at all:
+    a reply containing one of these phrases (case ignored)."""
+    fallback_phrases: list[str] = Field(default_factory=list, max_length=100)
+
+
 class TenantConfig(_Strict):
     timezone: str = "Europe/Riga"
     # Off: every reply waits in the panel for approval. On: replies that pass
@@ -344,6 +387,9 @@ class TenantConfig(_Strict):
     limits: Limits = Field(default_factory=Limits)
     replies: Replies = Field(default_factory=Replies)
     anomaly: Anomaly = Field(default_factory=Anomaly)
+    staging: Staging = Field(default_factory=Staging)
+    digest: Digest = Field(default_factory=Digest)
+    unanswered: Unanswered = Field(default_factory=Unanswered)
 
     @field_validator("timezone")
     @classmethod

@@ -70,8 +70,12 @@ import controls
 import media
 import pg
 import platform_api
+import owner_admin_api
+import owner_api
+import review_api
 import safety_api
 import tenants
+import unanswered_api
 import totp
 from database import (
     OUT_CANCELLED,
@@ -1044,6 +1048,14 @@ app.include_router(booking_api.router, dependencies=[Depends(require_auth)])
 # Kill switches, billing, alerts and health: admin only, like everything here.
 safety_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(safety_api.router, dependencies=[Depends(require_auth)])
+# Phase 4. Admin only: client logins, the unanswered queue, review batches.
+for _module in (owner_admin_api, unanswered_api, review_api):
+    _module.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+    app.include_router(_module.router, dependencies=[Depends(require_auth)])
+# The client dashboard's API has its own login (owner_auth.py), never the
+# admin's; every route there checks it.
+owner_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(owner_api.router)
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 

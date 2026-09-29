@@ -58,7 +58,7 @@ async def test_upgrade_from_schema_1_turns_each_account_into_a_tenant(pg_pool, t
         await con.execute("INSERT INTO messages (session_id, chat_id, direction, status, text) "
                           "VALUES ('tg1', 7, 'in', 'received', 'sveiki')")
 
-    assert await pg_module.apply_migrations(pg_pool) == [2, 3, 4]
+    assert await pg_module.apply_migrations(pg_pool) == [2, 3, 4, 5]
     report = await tenants.backfill(pg_pool)
 
     store = tenants.TenantStore(pg_pool)
@@ -226,7 +226,7 @@ async def test_migration_3_moves_config_keys_that_changed(pg_pool, tmp_path):
                           "('B', 1, 'tg2', '{\"booking\": {\"reminder_minutes_before\": 0}}')")
     await pg_pool.execute("UPDATE industries SET default_config = '{\"auto_confirm\": false}'")
 
-    assert await pg_module.apply_migrations(pg_pool) == [3, 4]
+    assert await pg_module.apply_migrations(pg_pool) == [3, 4, 5]
     store = tenants.TenantStore(pg_pool)
     a, b = await store.list()
     assert a["config_json"] == {"booking": {"enabled": True, "reminders": [{"minutes_before": 90, "instruction": ""}]}}
