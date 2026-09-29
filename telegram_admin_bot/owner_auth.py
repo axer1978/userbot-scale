@@ -305,15 +305,30 @@ def cookie_secure() -> bool:
     return (os.getenv("ADMIN_HOST") or "127.0.0.1").strip() not in LOOPBACK
 
 
+def cookie_name() -> str:
+    """`__Host-owner_token` whenever the cookie is Secure (always, in Docker).
+    The browser only accepts a __Host- cookie from this exact host, Secure,
+    Path=/ and without a Domain, so a page on a sibling domain (any other
+    *.sslip.io host, which counts as the same site) can't plant its own
+    session in a client's browser or overwrite theirs. Plain http on
+    loopback (SSH tunnel) can't carry the prefix, so it keeps the bare name."""
+    return f"__Host-{COOKIE}" if cookie_secure() else COOKIE
+
+
+def token_from(request: Any) -> Optional[str]:
+    """The owner session token the request carries, under the current name."""
+    return request.cookies.get(cookie_name())
+
+
 def set_cookie(response: Any, token: str) -> None:
     response.set_cookie(
-        COOKIE, token, httponly=True, samesite="strict", secure=cookie_secure(),
+        cookie_name(), token, httponly=True, samesite="strict", secure=cookie_secure(),
         max_age=int(SESSION_TTL.total_seconds()), path="/",
     )
 
 
 def clear_cookie(response: Any) -> None:
-    response.delete_cookie(COOKIE, path="/", httponly=True, samesite="strict", secure=cookie_secure())
+    response.delete_cookie(cookie_name(), path="/", httponly=True, samesite="strict", secure=cookie_secure())
 
 
 # --------------------------------------------------------------- dependencies
@@ -322,7 +337,7 @@ def clear_cookie(response: Any) -> None:
 async def any_owner(request: Request) -> dict[str, Any]:
     """The logged-in owner, even one who still has to change the password.
     Only the change-password and logout routes use this directly."""
-    owner = await session_owner(_get_pool(), request.cookies.get(COOKIE))
+    owner = await session_owner(_get_pool(), token_from(request))
     if owner is None:
         raise HTTPException(status_code=401, detail="Not logged in")
     return owner

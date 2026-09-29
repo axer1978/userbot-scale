@@ -49,16 +49,20 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.datastructures import Headers as StarletteHeaders
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import audit
 import booking_api
@@ -126,6 +130,8 @@ BEST_EFFORT_TIMEOUT = 5.0
 LOGIN_MAX_FAILURES = 5
 LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 SESSION_TTL_SECONDS = 12 * 60 * 60
+# Past this many addresses with failures on record, expired ones are swept.
+MAX_TRACKED_IPS = 10_000
 
 logging.basicConfig(
     level=logging.INFO,
@@ -135,29 +141,142 @@ logging.basicConfig(
 logging.getLogger("telethon").setLevel(logging.WARNING)
 log = logging.getLogger("panel")
 
-app = FastAPI(title="Telegram AI Assistant — Fleet Admin")
+# No /docs, /redoc or /openapi.json: a public panel has no reason to hand
+# anyone a map of its API.
+app = FastAPI(title="Telegram AI Assistant — Fleet Admin", docs_url=None, redoc_url=None, openapi_url=None)
 
 # Sent on every response, whether it comes through Caddy or an SSH tunnel.
 # script-src 'self': no inline scripts anywhere in the panel or the client
 # dashboard. Inline style attributes are used by the panel's markup, hence
 # style-src 'unsafe-inline'. HSTS is Caddy's job (only it knows about TLS).
+# connect-src is completed per request (_csp): 'self' plus ws(s):// to this
+# same host only, for the live-updates socket, never to any other host.
+_CSP_BASE = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'{ws}; "
+    "font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+)
 SECURITY_HEADERS = {
-    "Content-Security-Policy": (
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' wss: ws:; "
-        "font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
-    ),
+    "Content-Security-Policy": _CSP_BASE.format(ws=""),
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
     "Cross-Origin-Opener-Policy": "same-origin",
 }
+# What a Host header may look like to be echoed into the CSP (a name or an
+# address, optionally a port); anything else just gets connect-src 'self'.
+_HOST_RE = re.compile(r"^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$")
+
+# Request bodies. Everything the panel accepts as JSON is small; only the
+# media upload streams a file. Anything bigger is refused with 413 before
+# it is buffered, so an anonymous POST to /api/login can't eat the memory.
+MAX_BODY_BYTES = 2 * 1024 * 1024
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+_UPLOAD_PATH_RE = re.compile(r"^/api/sessions/[^/]+/media/upload$")
+_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+# The body types a page on another site can send without a CORS preflight
+# (an HTML form or a "simple" fetch). No API route takes any of them.
+_FORM_TYPES = ("application/x-www-form-urlencoded", "multipart/form-data", "text/plain")
+
+
+def _csp(request: Request) -> str:
+    host = request.headers.get("host", "")
+    if not _HOST_RE.match(host):
+        return SECURITY_HEADERS["Content-Security-Policy"]
+    return _CSP_BASE.format(ws=f" wss://{host} ws://{host}")
+
+
+def _same_origin(headers: Any) -> bool:
+    """False when the browser says the request was started by another
+    origin. Checked on every state-changing request and the websocket.
+
+    SameSite=Strict cookies are not enough on their own: "site" means the
+    registrable domain, and a panel on <ip>.sslip.io shares it with every
+    other *.sslip.io host on the internet (sslip.io is not on the Public
+    Suffix List), so a page there is "same-site" and would get the cookie
+    sent along. Sec-Fetch-Site and Origin are set by the browser and can't
+    be forged by a page; a request with neither (curl, tests) comes from no
+    browser page at all and is left to the cookie check."""
+    fetch_site = (headers.get("sec-fetch-site") or "").lower()
+    if fetch_site in ("cross-site", "same-site"):
+        return False
+    origin = headers.get("origin")
+    if origin is None:
+        return True
+    parsed = urlsplit(origin)
+    host = (headers.get("host") or "").lower()
+    return bool(parsed.scheme in ("http", "https", "ws", "wss") and parsed.netloc
+                and parsed.netloc.lower() == host)
+
+
+class _BodyTooLarge(StarletteHTTPException):
+    def __init__(self) -> None:
+        super().__init__(status_code=413, detail="The request is too large.")
+
+
+class RequestGuard:
+    """Pure ASGI (so it sees the websocket handshake and the raw body):
+    refuses cross-origin state-changing requests and websockets, form-type
+    bodies on the API, and bodies over the size limit."""
+
+    def __init__(self, app_: Any) -> None:
+        self.app = app_
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        headers = StarletteHeaders(scope=scope)
+        if scope["type"] == "websocket":
+            if not _same_origin(headers):
+                await send({"type": "websocket.close", "code": 4403})
+                return
+            await self.app(scope, receive, send)
+            return
+
+        path, method = scope["path"], scope["method"]
+        if method in _UNSAFE_METHODS:
+            if not _same_origin(headers):
+                await self._refuse(scope, receive, send, 403, "Cross-origin request refused.")
+                return
+            content_type = (headers.get("content-type") or "").split(";")[0].strip().lower()
+            if path.startswith("/api/") and content_type in _FORM_TYPES:
+                await self._refuse(scope, receive, send, 415, "Send JSON (Content-Type: application/json).")
+                return
+        limit = MAX_UPLOAD_BYTES if _UPLOAD_PATH_RE.match(path) else MAX_BODY_BYTES
+        length = headers.get("content-length")
+        if length is not None and (not length.isdigit() or int(length) > limit):
+            await self._refuse(scope, receive, send, 413, "The request is too large.")
+            return
+        received = 0
+
+        async def limited_receive() -> dict:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    # Raised inside the route's body read, so FastAPI answers 413.
+                    raise _BodyTooLarge()
+            return message
+
+        await self.app(scope, limited_receive, send)
+
+    @staticmethod
+    async def _refuse(scope: dict, receive: Any, send: Any, status: int, detail: str) -> None:
+        response = JSONResponse({"detail": detail}, status_code=status,
+                                headers={"Cache-Control": "no-store", **SECURITY_HEADERS})
+        await response(scope, receive, send)
+
+
+app.add_middleware(RequestGuard)
 
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", _csp(request))
     for name, value in SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
     if request.url.path.startswith("/api/"):
@@ -287,8 +406,28 @@ def _recent_failures(ip: str, now: float) -> list[float]:
     return recent
 
 
-def require_auth(admin_token: Optional[str] = Cookie(default=None)) -> None:
-    if not _token_is_valid(admin_token):
+def _cookie_secure() -> bool:
+    """Secure unless the panel listens on loopback only (plain http through
+    an SSH tunnel). In Docker ADMIN_HOST is 0.0.0.0, so always Secure there."""
+    return HOST not in LOOPBACK
+
+
+def admin_cookie_name() -> str:
+    """`__Host-admin_token` whenever the cookie is Secure. The __Host- prefix
+    makes the browser refuse that name from anything but this exact host,
+    with no Domain attribute: another *.sslip.io site (or any sibling
+    subdomain) can't plant or overwrite it ("cookie tossing"), which could
+    otherwise lock the admin out or swap sessions. Plain http on loopback
+    can't use the prefix (it requires Secure), hence the plain name there."""
+    return "__Host-admin_token" if _cookie_secure() else "admin_token"
+
+
+def admin_token_from(cookies: Any) -> Optional[str]:
+    return cookies.get(admin_cookie_name())
+
+
+def require_auth(request: Request) -> None:
+    if not _token_is_valid(admin_token_from(request.cookies)):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
 
@@ -329,6 +468,10 @@ async def api_login(body: LoginBody, request: Request) -> JSONResponse:
             headers={"Retry-After": str(retry_after)},
         )
     if not _credentials_ok(body):
+        if len(_login_failures) >= MAX_TRACKED_IPS:
+            # Many addresses (an IPv6 range, say): drop the ones whose window is over.
+            for other in list(_login_failures):
+                _recent_failures(other, now)
         failures.append(now)
         _login_failures[ip] = failures
         log.warning("Failed admin login from %s (%d/%d).", ip, len(failures), LOGIN_MAX_FAILURES)
@@ -345,21 +488,27 @@ async def api_login(body: LoginBody, request: Request) -> JSONResponse:
     token = secrets.token_urlsafe(32)
     _valid_tokens[token] = now + SESSION_TTL_SECONDS
     response = JSONResponse({"ok": True})
+    # A token already in the browser is retired, not left valid beside the new one.
+    previous = admin_token_from(request.cookies)
+    if previous:
+        _valid_tokens.pop(previous, None)
     response.set_cookie(
         # strict: the cookie never rides along on a request another site
         # starts, not even a top-level link into the panel.
-        "admin_token", token, httponly=True, samesite="strict",
-        secure=HOST not in LOOPBACK,
+        admin_cookie_name(), token, httponly=True, samesite="strict",
+        secure=_cookie_secure(), path="/",
     )
     return response
 
 
 @app.post("/api/logout")
-async def api_logout(admin_token: Optional[str] = Cookie(default=None)) -> JSONResponse:
+async def api_logout(request: Request) -> JSONResponse:
+    admin_token = admin_token_from(request.cookies)
     if admin_token:
         _valid_tokens.pop(admin_token, None)
     response = JSONResponse({"ok": True})
-    response.delete_cookie("admin_token")
+    response.delete_cookie(admin_cookie_name(), path="/", httponly=True, samesite="strict",
+                           secure=_cookie_secure())
     return response
 
 
@@ -914,7 +1063,10 @@ async def api_media_list(session_id: str) -> list[dict[str, Any]]:
 @app.put("/api/sessions/{session_id}/media/upload", dependencies=[Depends(require_auth)])
 async def api_media_upload(session_id: str, request: Request, name: str, description: str = "") -> dict[str, Any]:
     library = await media_library_for(session_id)
-    if media.kind_for(name) is None:
+    # Checked on the name the file will actually get (folders and odd
+    # characters stripped), not on the raw one: "x.png/" or "..png" would
+    # pass on the raw name and then be stored with no usable extension.
+    if media.kind_for(media.safe_filename(name)) is None:
         raise HTTPException(
             status_code=400,
             detail="Only photos (jpg, png, webp, gif) and videos (mp4, mov, mkv, webm) are accepted.",
@@ -1032,7 +1184,8 @@ async def _dispatch_live(
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
-    if not _token_is_valid(ws.cookies.get("admin_token")):
+    # The Origin check happened in RequestGuard; this is the login check.
+    if not _token_is_valid(admin_token_from(ws.cookies)):
         await ws.close(code=4401)
         return
 
@@ -1082,9 +1235,17 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
 
 
 @app.exception_handler(Exception)
-async def unhandled(_request, exc: Exception) -> JSONResponse:
-    log.exception("Unhandled error in admin API")
-    return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
+async def unhandled(request: Request, exc: Exception) -> JSONResponse:
+    """The full error goes to the log. Only a logged-in admin sees its text
+    in the answer (it helps on the panel's toasts); anyone else, a client on
+    /api/owner/* included, gets a bare message, since an exception's text
+    can carry a query, a connection string or a stored value."""
+    log.exception("Unhandled error in %s %s", request.method, request.url.path)
+    if _token_is_valid(admin_token_from(request.cookies)):
+        detail = f"{type(exc).__name__}: {exc}"
+    else:
+        detail = "Something went wrong on the server."
+    return JSONResponse(status_code=500, content={"detail": detail})
 
 
 # Industries, tenants, prompt layers, the config helper and the audit log.
