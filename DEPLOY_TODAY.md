@@ -1,28 +1,23 @@
 # Deploying on a new Ubuntu 24.04 server
 
-What you get is one HTTPS address, for example `https://panel.yourdomain.com`:
+What you get is one HTTPS address. Without a domain of your own it's a free name made from the server's IP address: a server at `203.0.113.7` becomes `https://203-0-113-7.sslip.io`. There's nothing to register: [sslip.io](https://sslip.io) answers every name like that with the IP in it, and Let's Encrypt issues a normal certificate for it.
 
 - **The admin panel** (you): works on a computer, a phone or a tablet. It needs your password and a code from an authenticator app.
-- **The client dashboard** (your clients): at `https://panel.yourdomain.com/owner/`. Each client logs in to their own master account and sees only their businesses.
+- **The client dashboard** (your clients): the same address plus `/owner/`. Each client logs in to their own master account and sees only their businesses.
 
-Replace `yourdomain.com` everywhere below with your domain, and `SERVER_IP` with the server's address. Nothing here needs to be sent to me.
+Below, `SERVER_IP` is the server's address and `PANEL_ADDRESS` is your panel's name (`203-0-113-7.sslip.io`, or later `panel.yourdomain.com`). Nothing here needs to be sent to me.
 
-## 1. The domain (do this first: DNS takes minutes to hours)
+## 1. Open the ports at your provider
 
-At your registrar or DNS provider:
+Many providers have a firewall of their own in their web console (AWS "security group", Hetzner "Firewalls", Oracle "security list"...). If yours does, allow in:
 
-| Type | Name | Value |
-|---|---|---|
-| A | `panel` | `SERVER_IP` |
-| A | `book` (optional: public booking pages) | `SERVER_IP` |
+- TCP 22 (SSH)
+- TCP 80 and TCP 443 (HTTPS, and Let's Encrypt checking the certificate)
+- UDP 443 (optional, faster HTTPS)
 
-On Cloudflare, set the record to **DNS only** (grey cloud). Check it from any computer:
+The server's own firewall is set up in step 3.
 
-```bash
-nslookup panel.yourdomain.com
-```
-
-When it answers with `SERVER_IP`, you're ready for step 5.
+**Own domain instead of sslip.io (optional).** Add an A record `panel` → `SERVER_IP` at your DNS provider (on Cloudflare: **DNS only**, grey cloud), and `book` → `SERVER_IP` too if you want the booking pages. `nslookup panel.yourdomain.com` should answer with `SERVER_IP` before step 5. You can also switch later: see "Moving to your own domain" at the end.
 
 ## 2. Log in to the server
 
@@ -33,25 +28,47 @@ ssh root@SERVER_IP
 If the provider gave you only a password, first add your SSH key from your own computer. On Windows PowerShell:
 
 ```powershell
-type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@SERVER_IP "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@SERVER_IP "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
 ```
 
 If `type` says the file is missing, run `ssh-keygen -t ed25519` first. The bootstrap in step 3 only switches off password login once a key is installed.
 
+If your provider logs you in as `ubuntu` (or another user) instead of `root`, that's fine: the commands below work the same. After step 3, log out and back in once so you can run `docker` without `sudo`.
+
 ## 3. Get the code and prepare the server
 
 ```bash
-apt-get update && apt-get install -y git
+sudo apt-get update && sudo apt-get install -y git
+```
+
+**If the GitHub repository is public:**
+
+```bash
 git clone -b platform/phase-1 https://github.com/axer1978/userbot-scale.git
+```
+
+**If it is private** (GitHub no longer accepts passwords for `git clone`), use a read-only deploy key:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/github_deploy -N ""
+cat ~/.ssh/github_deploy.pub
+```
+
+In GitHub: the repository → **Settings → Deploy keys → Add deploy key**, paste that line, leave "Allow write access" off. Then:
+
+```bash
+git clone -c core.sshCommand="ssh -i ~/.ssh/github_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+  -b platform/phase-1 git@github.com:axer1978/userbot-scale.git
+```
+
+The `-c` part is saved in the clone, so later `git pull`s use the same key.
+
+Then, either way:
+
+```bash
 cd userbot-scale/telegram_admin_bot
 sudo bash deploy/bootstrap_ubuntu24.sh
 ```
-
-If the GitHub repository is private, `git clone` asks for a login. Use a read-only deploy key instead:
-
-- `ssh-keygen -t ed25519 -f ~/.ssh/github_deploy -N ""`
-- Add the contents of `~/.ssh/github_deploy.pub` in GitHub: repo → Settings → Deploy keys (read access only).
-- Clone with `GIT_SSH_COMMAND="ssh -i ~/.ssh/github_deploy" git clone -b platform/phase-1 git@github.com:axer1978/userbot-scale.git`.
 
 The bootstrap installs:
 
@@ -63,66 +80,79 @@ The bootstrap installs:
 - swap on small servers;
 - `age` for encrypted backups.
 
+It's safe to run again. If it ends with "The updates want a reboot", run `sudo reboot`, wait a minute, log in again and `cd userbot-scale/telegram_admin_bot`.
+
 ## 4. Create `.env` (the secrets are generated on the server and never leave it)
 
-Still in `userbot-scale/telegram_admin_bot`:
+Still in `userbot-scale/telegram_admin_bot`. Paste the whole block:
 
 ```bash
 umask 077
+if [ -e .env ]; then echo "STOP: .env already exists. Keep it, it holds your keys."; else
 python3 -c "import secrets,base64;print('USERBOT_MASTER_KEY='+base64.b64encode(secrets.token_bytes(32)).decode());print('ADMIN_PASSWORD='+secrets.token_urlsafe(24));print('POSTGRES_PASSWORD='+secrets.token_urlsafe(24));print('ADMIN_TOTP_SECRET='+base64.b32encode(secrets.token_bytes(20)).decode())" > .env
-echo "PANEL_DOMAIN=panel.yourdomain.com" >> .env
+IP=$(curl -4 -fsS https://api.ipify.org)
+echo "PANEL_DOMAIN=${IP//./-}.sslip.io" >> .env
 echo "COMPOSE_PROFILES=public" >> .env
+fi
+grep -E '^(PANEL_DOMAIN|ADMIN_PASSWORD|ADMIN_TOTP_SECRET)=' .env
 ```
 
-Then read your admin password and your authenticator key. You'll need both to log in:
+The last line shows your panel's address, admin password and authenticator key:
 
-```bash
-grep -E '^(ADMIN_PASSWORD|ADMIN_TOTP_SECRET)=' .env
-```
-
+- `PANEL_DOMAIN` must be `SERVER_IP` with dashes plus `.sslip.io`. If it isn't, fix it with `nano .env`. With your own domain, put `panel.yourdomain.com` there instead.
 - In your authenticator app (Google Authenticator, Microsoft Authenticator, Authy, 1Password…), choose **Enter a setup key**. Name: `Userbot panel`. Key: the `ADMIN_TOTP_SECRET` value. Type: time-based.
 - Store the admin password in your password manager.
-- **Back up `.env` off the server now**, for example in your password manager as a secure note. It holds the master key. Without it, the stored Telegram logins can't be read.
-- Don't run the `python3 -c` line again later: it would replace the keys.
+- **Back up `.env` off the server now**, for example in your password manager as a secure note (`cat .env` shows it all). It holds the master key. Without it, the stored Telegram logins can't be read.
 
-The panel refuses to start on a public domain without the authenticator key and a password of at least 14 characters. The line above satisfies both.
+The panel refuses to start on a public address without the authenticator key and a password of at least 14 characters. The block above satisfies both (the password is 32 characters).
 
 Optional, same file (`nano .env`):
 
-- **Booking pages:** `BOOKING_DOMAIN=book.yourdomain.com` and `PUBLIC_BASE_URL=https://book.yourdomain.com`, then change the profiles line to `COMPOSE_PROFILES=public,booking-pages`.
+- **Booking pages** (the public calendar feed and booking page links for customers):
+
+  ```bash
+  D=$(grep '^PANEL_DOMAIN=' .env | cut -d= -f2)
+  echo "BOOKING_DOMAIN=book.$D" >> .env
+  echo "PUBLIC_BASE_URL=https://book.$D" >> .env
+  sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=public,booking-pages/' .env
+  ```
+
+  With sslip.io, `book.203-0-113-7.sslip.io` works at once. With your own domain it needs the `book` A record from step 1.
 - **E-mail** (alerts, digests, booking records): `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL`.
 - **Photo checks:** `VISION_API_URL`, `VISION_API_KEY`.
 - **Ask AI:** `DEEPSEEK_PLATFORM_KEY`.
+
+`.env.example` in the same folder explains every setting.
 
 ## 5. Start
 
 ```bash
 docker compose up -d --build
 docker compose ps -a
-docker compose logs caddy | grep -iE "certificate obtained|error" | tail -5
+docker compose logs caddy 2>&1 | grep -iE "certificate obtained|error" | tail -5
 ```
 
-What you should see:
+The first build takes a few minutes. What you should see:
 
-- `postgres`, `valkey`, `panel`, `manager`, `scheduler` and `caddy` all show `Up`.
+- `postgres`, `valkey`, `panel`, `manager`, `scheduler` and `caddy` all show `Up`; `panel` shows `(healthy)` after about half a minute.
 - `migrate` shows `Exited (0)`.
-- Caddy logs `certificate obtained successfully` for `panel.yourdomain.com`. If it reports an error, DNS isn't pointing here yet. Wait, then `docker compose restart caddy`.
-
-The first build takes a few minutes.
+- Caddy logs `certificate obtained successfully` for your `PANEL_DOMAIN`. If it reports an error instead, ports 80/443 aren't reachable yet (step 1) or, with your own domain, DNS isn't pointing here yet. Fix that, then `docker compose restart caddy`.
 
 ## 6. First login (on your phone)
 
-Open `https://panel.yourdomain.com` and enter the password and the 6-digit code. The top bar folds into **☰ Menu** on a phone.
+Open `https://PANEL_ADDRESS` (the `PANEL_DOMAIN` value) and enter the password and the 6-digit code. The top bar folds into **☰ Menu** on a phone.
 
 ## 7. Move the Telegram account over
 
-If this is the same Telegram number that runs on the AWS server, **stop it there first**, or both servers will answer every customer:
+If this is the same Telegram number that runs on the AWS server, **stop the AWS copy first**, or both servers will answer every customer. From your own computer:
 
 ```bash
-ssh -i ~/Downloads/gateway-key.pem ubuntu@56.228.9.106 "cd ~/userbot-scale/telegram_admin_bot && docker compose stop manager scheduler"
+ssh -i ~/Downloads/gateway-key.pem ubuntu@56.228.9.106 "cd ~/userbot-scale/telegram_admin_bot && docker compose stop && docker compose ps -a"
 ```
 
-Then, in the new panel, go to **☰ Menu → New client** (the onboarding wizard):
+Every service there should now show `Exited`. Its data stays on that server; `docker compose start` there would bring it back.
+
+Then, in the new panel, open **New client** (on a phone: **☰ Menu → New client**), the onboarding wizard:
 
 1. Sign in the Telegram account (API ID and hash, phone, the code Telegram sends).
 2. Business name and industry.
@@ -131,18 +161,20 @@ Then, in the new panel, go to **☰ Menu → New client** (the onboarding wizard
 5. Check the prompt.
 6. **Go live.**
 
+Once the new server answers, you can end the old server's login in Telegram (**Settings → Devices**) and stop the AWS instance in the AWS console.
+
 ## 8. Give the client their login
 
-Go to **☰ Menu → Client logins → New**:
+Open **Client logins → New** (on a phone: **☰ Menu → Client logins**):
 
 - set a username and a temporary password (at least 10 characters);
 - tick their business, or several if they have more than one bot.
 
-Send them `https://panel.yourdomain.com/owner/` and the temporary password. They must change it on first login, and can turn on a 2-step code under Settings.
+Send them `https://PANEL_ADDRESS/owner/` and the temporary password. They must change it on first login, and can turn on a 2-step code under Settings.
 
 ## 9. Encrypted nightly backup (optional, recommended)
 
-On your own computer, install [age](https://github.com/FiloSottile/age/releases) and run `age-keygen -o my-backup-key.txt`. Keep that file private: it's the only thing that can open the backups. On the server, paste the **public** key it printed:
+On your own computer, install [age](https://github.com/FiloSottile/age/releases) and run `age-keygen -o my-backup-key.txt`. Keep that file private: it's the only thing that can open the backups. On the server, in `userbot-scale/telegram_admin_bot`, paste the **public** key it printed:
 
 ```bash
 echo 'age1...your public key...' > deploy/age-recipient.txt
@@ -153,19 +185,31 @@ bash deploy/backup.sh
 ## 10. Checks
 
 ```bash
-curl -sI http://panel.yourdomain.com | head -3          # 308 redirect to https
-curl -sI https://panel.yourdomain.com | grep -iE "strict-transport|content-security"
-sudo ss -tlnp | grep -vE "127.0.0.1|::1"                 # only 22, 80, 443
+D=$(grep '^PANEL_DOMAIN=' .env | cut -d= -f2)
+curl -sI "http://$D" | head -3                                   # 308 redirect to https
+curl -sI "https://$D" | grep -iE "strict-transport|content-security"
+sudo ss -tlnp | grep -vE '127\.0\.0\.|\[::1\]'                   # only 22, 80, 443
 sudo ufw status
 ```
 
-If there is a problem, send me the output of `docker compose ps -a` and `docker compose logs --tail 50 panel caddy`. They contain no secrets.
+## If something goes wrong
+
+See [RUNBOOK.md](RUNBOOK.md) for what to do when something breaks. The first two things to look at, and to send me if you need help (they contain no secrets):
+
+```bash
+docker compose ps -a
+docker compose logs --tail 50 panel caddy migrate
+```
 
 ## Updating later
 
 ```bash
 cd ~/userbot-scale/telegram_admin_bot && git pull && docker compose up -d --build
 ```
+
+## Moving to your own domain
+
+Add the A record from step 1 and wait until `nslookup panel.yourdomain.com` answers with `SERVER_IP`. Then change `PANEL_DOMAIN` in `.env` (and `BOOKING_DOMAIN` / `PUBLIC_BASE_URL` if you use the booking pages) and run `docker compose up -d`. Caddy gets the new certificate by itself. Tell your clients the new `/owner/` address.
 
 ## What protects what
 
@@ -176,6 +220,6 @@ cd ~/userbot-scale/telegram_admin_bot && git pull && docker compose up -d --buil
 | Admin login | Password of 14+ characters plus an authenticator code (each code works once); failed logins limited per address |
 | Client logins | Passwords hashed with scrypt, optional authenticator code, sessions stored only as hashes, cookies Secure + HttpOnly + SameSite=Strict, each client limited to their own businesses |
 | Stored secrets | Telegram logins, API keys and authenticator keys AES-GCM encrypted with `USERBOT_MASTER_KEY` |
-| Network | Only 22/80/443 open (ufw). Postgres and Valkey are reachable only inside Docker. The panel only through Caddy |
+| Network | Only 22/80/443 open (ufw). Postgres and Valkey are reachable only inside Docker. The panel only through Caddy. The public booking pages get none of the secrets in `.env` |
 | Server | Key-only SSH, fail2ban, automatic security updates |
 | Backups | Encrypted to your own key; the server can't read them |

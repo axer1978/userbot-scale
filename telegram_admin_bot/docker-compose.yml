@@ -1,3 +1,12 @@
+# Container logs capped at 3 x 10 MB per service, so a chatty container
+# can't fill the disk (deploy/bootstrap_ubuntu24.sh sets the same default
+# for the whole Docker daemon; this keeps it true on any other host).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-app-image: &app-image
   build: .
   # Shared by panel/manager/migrate: same code, same deps, same secrets. Only
@@ -31,11 +40,7 @@ x-app-image: &app-image
     # Per-worker session files and other DATA_DIR scratch state survive
     # rebuilds. The database of record is Postgres, not this volume.
     - ./data:/app/data
-  logging:
-    driver: json-file
-    options:
-      max-size: "10m"
-      max-file: "3"
+  logging: *logging
 
 services:
   # Shared state store for the whole fleet: every panel/manager/worker talks
@@ -63,6 +68,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    logging: *logging
     # Not published to the host at all: nothing outside this compose network
     # needs to reach Postgres directly, and every port opened is one more
     # thing to secure. Use `docker compose exec postgres psql ...` to poke
@@ -79,11 +85,16 @@ services:
     image: valkey/valkey:8-alpine
     container_name: userbot-valkey
     restart: unless-stopped
+    # Pub/sub only, nothing stored: no snapshots, no append-only file, so
+    # it never writes to disk (and can't refuse commands over a failed
+    # background save).
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
+    logging: *logging
     # Not published to the host, same reasoning as postgres above.
 
   # One-shot: applies pending migrations (pg.apply_migrations) and exits.
@@ -137,6 +148,14 @@ services:
     # loopback-only publish stays exactly as it is either way.
     ports:
       - "127.0.0.1:8787:8787"
+    # "healthy" in `docker compose ps` once the panel answers HTTP. The
+    # login-options route needs no login and touches nothing.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/login-options', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # The one background scheduler: once a minute it nudges every running
   # account to send due booking reminders, let unanswered requests lapse,
@@ -147,21 +166,31 @@ services:
     <<: *app-image
     container_name: userbot-scheduler
     command: ["python", "scheduler.py"]
+    # `environment` here replaces the shared block above (a YAML merge is
+    # shallow), so everything the app services share is repeated.
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
       REDIS_URL: redis://valkey:6379/0
+      DATA_DIR: /app/data
+      USERBOT_MASTER_KEY: ${USERBOT_MASTER_KEY:?USERBOT_MASTER_KEY must be set — see comment above}
 
   # OPTIONAL public pages for bookings: the calendar feed per client
   # (/cal/<token>.ics) and a read-only page per booking (/b/<token>).
-  # Only started with
-  #     docker compose --profile booking-pages up -d
-  # It serves nothing else (not the panel) and is reached only through
-  # caddy-booking below. Set BOOKING_DOMAIN and PUBLIC_BASE_URL in .env.
+  # Only started with the `booking-pages` profile (served by the `caddy`
+  # service next to the public panel) or the `booking-only` profile (served
+  # by `caddy-booking`, no public panel). It serves nothing else (not the
+  # panel). Set BOOKING_DOMAIN and PUBLIC_BASE_URL in .env.
   booking-pages:
     <<: *app-image
     container_name: userbot-booking-pages
-    profiles: ["booking-pages"]
+    # Both profiles: caddy-booking (booking-only) depends on this service,
+    # and Compose does not enable a dependency's profile by itself.
+    profiles: ["booking-pages", "booking-only"]
     command: ["python", "public_app.py"]
+    # The one app service facing the internet directly gets none of .env
+    # (admin password, authenticator key, master key, SMTP login): it needs
+    # only the database, the bus and the settings below.
+    env_file: []
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
       REDIS_URL: redis://valkey:6379/0
@@ -171,14 +200,14 @@ services:
 
   # HTTPS for the booking pages, with its own Let's Encrypt certificate for
   # BOOKING_DOMAIN (Caddyfile.booking). It uses ports 80/443 like `caddy`
-  # below, so run one of the two; to have both the panel and the booking
-  # pages public, add the booking site block to ./Caddyfile instead.
+  # below, so never run the two together.
   caddy-booking:
     image: caddy:2-alpine
     container_name: userbot-caddy-booking
-    # Only for booking pages WITHOUT the public panel. With the panel public
-    # as well, the `caddy` service serves both (set BOOKING_DOMAIN and run
-    # --profile public --profile booking-pages).
+    # Only for booking pages WITHOUT the public panel
+    # (COMPOSE_PROFILES=booking-only). With the panel public as well, the
+    # `caddy` service serves both: set BOOKING_DOMAIN and
+    # COMPOSE_PROFILES=public,booking-pages.
     profiles: ["booking-only"]
     restart: unless-stopped
     depends_on:
@@ -201,15 +230,17 @@ services:
       - ./Caddyfile.booking:/etc/caddy/Caddyfile:ro
       - caddy_booking_data:/data
       - caddy_booking_config:/config
+    logging: *logging
 
   # OPTIONAL public HTTPS front door for the panel. Only started with
   #     docker compose --profile public up -d
   # — a plain `docker compose up -d` ignores it and the panel stays
   # SSH-tunnel-only. Caddy gets a Let's Encrypt certificate for PANEL_DOMAIN
   # on its own (which is why it needs ports 80 and 443 open to the internet)
-  # and reverse-proxies to the panel; see ./Caddyfile. The panel itself
-  # still has only the shared ADMIN_PASSWORD, now rate-limited per client
-  # IP (panel.py), so pick a long one before turning this on.
+  # and reverse-proxies to the panel; see ./Caddyfile. With PANEL_DOMAIN set
+  # the panel refuses to start without ADMIN_TOTP_SECRET and an
+  # ADMIN_PASSWORD of 14+ characters (panel.py check_public_setup); logins
+  # are rate-limited per client IP.
   caddy:
     image: caddy:2-alpine
     container_name: userbot-caddy
@@ -246,6 +277,8 @@ services:
       - "443:443"
       - "443:443/udp"  # HTTP/3
     volumes:
+      # All three in one folder: Caddyfile.both imports the other two by
+      # paths relative to itself.
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./Caddyfile.booking:/etc/caddy/Caddyfile.booking:ro
       - ./Caddyfile.both:/etc/caddy/Caddyfile.both:ro
@@ -253,11 +286,7 @@ services:
       # means re-issuing certificates, and Let's Encrypt rate-limits that.
       - caddy_data:/data
       - caddy_config:/config
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *logging
 
   # The fleet manager: leases sessions from Postgres and runs a
   # SessionRuntime worker per leased session, WORKER_COUNT/SESSIONS_PER_WORKER
