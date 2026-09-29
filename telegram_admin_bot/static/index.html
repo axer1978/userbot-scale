@@ -35,6 +35,7 @@
   <button id="open-style" class="btn">Style</button>
   <button id="open-settings" class="btn" title="How this client's bot behaves: config, prompt, versions">Settings</button>
   <button id="open-safety" class="btn" title="Kill switches, billing, alerts and account health">Safety <span id="safety-count" class="count-badge"></span></button>
+  <button id="open-unanswered" class="btn" title="Customer messages the bot did not answer, across all clients">Unanswered <span id="unanswered-count" class="count-badge"></span></button>
   <button id="open-platform" class="btn" title="All clients, industries and the platform rules">Clients</button>
   <button id="open-onboarding" class="btn" title="Set up a new client step by step, or continue one">New client</button>
   <button id="open-review" class="btn" title="Review the bot's replies and export them for training">Review</button>
@@ -208,6 +209,21 @@
   </div>
 </div>
 
+<div id="unanswered">
+  <div class="pf-shell">
+    <div class="pf-top">
+      <h2>Unanswered</h2>
+      <span class="muted">customer messages the bot did not answer</span>
+      <span class="spacer"></span>
+      <button type="button" id="ua-close" class="btn">Close</button>
+    </div>
+    <div class="bk-scroll">
+      <div id="ua-tabs" class="pf-tabs"></div>
+      <div id="ua-body"></div>
+    </div>
+  </div>
+</div>
+
 <div id="outreach">
   <div class="sheet">
     <h2>Message my contacts</h2>
@@ -360,6 +376,7 @@
 <script src="/js/safety.js"></script>
 <script src="/js/review.js"></script>
 <script src="/js/onboarding.js"></script>
+<script src="/js/unanswered.js"></script>
 <script src="/js/boot.js"></script>
 </body>
 </html>
