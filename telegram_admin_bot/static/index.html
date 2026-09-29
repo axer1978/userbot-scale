@@ -39,6 +39,7 @@
   <button id="open-platform" class="btn" title="All clients, industries and the platform rules">Clients</button>
   <button id="open-onboarding" class="btn" title="Set up a new client step by step, or continue one">New client</button>
   <button id="open-review" class="btn" title="Review the bot's replies and export them for training">Review</button>
+  <button id="open-owners" class="btn" title="Logins for business owners to their own dashboard (/owner/)">Client logins</button>
   <button id="logout" class="btn">Log out</button>
   </nav>
 </header>
@@ -224,6 +225,21 @@
   </div>
 </div>
 
+<div id="owners">
+  <div class="pf-shell">
+    <div class="pf-top">
+      <h2>Client logins</h2>
+      <span class="muted">dashboard access for business owners</span>
+      <span class="spacer"></span>
+      <button type="button" id="ow-close" class="btn">Close</button>
+    </div>
+    <div class="bk-scroll">
+      <div id="ow-tabs" class="pf-tabs"></div>
+      <div id="ow-body"></div>
+    </div>
+  </div>
+</div>
+
 <div id="outreach">
   <div class="sheet">
     <h2>Message my contacts</h2>
@@ -377,6 +393,7 @@
 <script src="/js/review.js"></script>
 <script src="/js/onboarding.js"></script>
 <script src="/js/unanswered.js"></script>
+<script src="/js/owners.js"></script>
 <script src="/js/boot.js"></script>
 </body>
 </html>
