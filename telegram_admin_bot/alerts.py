@@ -191,17 +191,26 @@ def format_text(alert: dict[str, Any], tenant: str) -> str:
 
 
 async def _deliver(pool: asyncpg.Pool, alert: dict[str, Any]) -> None:
-    tenant = await _tenant_name(pool, alert.get("tenant_id"))
-    text = format_text(alert, tenant)
-    await asyncio.gather(_email(text, alert, tenant), _webhook(text, alert, tenant))
+    try:
+        tenant = await _tenant_name(pool, alert.get("tenant_id"))
+        text = format_text(alert, tenant)
+        await asyncio.gather(_email(text, alert, tenant), _webhook(text, alert, tenant))
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("Alert delivery failed")
 
 
 async def _email(text: str, alert: dict[str, Any], tenant: str) -> None:
     to = (os.getenv("ALERT_EMAIL") or "").strip()
-    settings = mailer.settings_from_env()
-    if not to or settings is None:
+    if not to:
         return
     try:
+        # Inside the try: SMTP settings that don't parse must not turn
+        # into an exception nobody retrieves in this background task.
+        settings = mailer.settings_from_env()
+        if settings is None:
+            return
         await mailer.send(
             settings, to=to, subject=f"[{alert['severity']}] {tenant}: {alert['kind']}", body=text + "\n",
             timeout=DELIVERY_TIMEOUT_SECONDS,

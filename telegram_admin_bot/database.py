@@ -100,6 +100,15 @@ def _preview(text: str, limit: int = 90) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
+def _clean(text: Optional[str]) -> Optional[str]:
+    """Text as Postgres can store it. A NUL character (which a Telegram
+    message or name can carry) makes Postgres refuse the whole row, and the
+    customer's message would be lost; it is dropped instead."""
+    if text is None or "\x00" not in text:
+        return text
+    return text.replace("\x00", "")
+
+
 # ----------------------------------------------------------------------
 # Fleet-wide session registry
 # ----------------------------------------------------------------------
@@ -453,8 +462,8 @@ class Database:
                 self._session_id,
                 tid,
                 chat_id,
-                display_name,
-                username,
+                _clean(display_name),
+                _clean(username),
                 bool(is_bot),
                 access_hash,
                 crypto.customer_ref(tid, "telegram", chat_id),
@@ -554,6 +563,7 @@ class Database:
         watch outgoing events, so the same message can arrive twice).
         `llm_model` / `prompt_version` are set on AI-written messages.
         """
+        text = _clean(text) or ""
         tid = await self.tenant_id()
         async with self._pool.acquire() as con, con.transaction():
             row = await con.fetchrow(
@@ -682,7 +692,7 @@ class Database:
         sets: list[str] = []
         params: list[Any] = [tid, message_id]
         if text is not None:
-            params.append(text)
+            params.append(_clean(text))
             sets.append(f"text = ${len(params)}")
         if attachments is not None:
             params.append(list(attachments))

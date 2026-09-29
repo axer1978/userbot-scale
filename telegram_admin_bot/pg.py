@@ -22,6 +22,28 @@ class MigrationError(RuntimeError):
     pass
 
 
+# Errors that say "the database could not be reached right now" rather than
+# "this statement is wrong": a dropped or refused connection, a server that
+# is starting or shutting down, a pool being closed, a query that got no
+# answer in time (command_timeout). Worth trying the same thing again.
+TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
+    asyncpg.exceptions.PostgresConnectionError,   # 08xxx, incl. ConnectionDoesNotExistError
+    asyncpg.exceptions.CannotConnectNowError,     # 57P03: starting up / recovering
+    asyncpg.exceptions.AdminShutdownError,        # 57P01
+    asyncpg.exceptions.CrashShutdownError,        # 57P02
+    asyncpg.exceptions.InterfaceError,            # pool closing, connection released/closed
+    ConnectionError,
+    TimeoutError,                                 # asyncio.TimeoutError on 3.11+
+    OSError,
+)
+
+
+def is_transient(exc: BaseException) -> bool:
+    """True when `exc` means the database was unreachable, not that the
+    statement itself failed."""
+    return isinstance(exc, TRANSIENT_ERRORS)
+
+
 async def create_pool(
     dsn: str,
     *,

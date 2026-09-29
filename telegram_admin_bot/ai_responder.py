@@ -99,6 +99,10 @@ BACKGROUND_HEADER = (
 MAX_ATTEMPTS = 3
 BASE_BACKOFF_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 60.0
+# One call, retries and waits included, never takes longer than this. httpx's
+# own timeout counts per read, so a server trickling bytes could otherwise
+# hold a reply (and a slot of the tenant's AI gate) for as long as it likes.
+TOTAL_DEADLINE_SECONDS = 150.0
 
 
 # Awaited with (model, token counts) after every successful completion.
@@ -611,13 +615,23 @@ async def _complete(
 
     owns_client = client is None
     http = client or httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + TOTAL_DEADLINE_SECONDS
     try:
         last_error = "DeepSeek request failed."
+        attempt = 0
         for attempt in range(1, MAX_ATTEMPTS + 1):
             delay = BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                attempt -= 1
+                break
             try:
-                response = await http.post(API_URL, json=payload, headers=headers)
-            except httpx.TimeoutException:
+                response = await asyncio.wait_for(
+                    http.post(API_URL, json=payload, headers=headers),
+                    timeout=min(REQUEST_TIMEOUT_SECONDS, remaining),
+                )
+            except (httpx.TimeoutException, asyncio.TimeoutError):
                 last_error = "DeepSeek API timed out."
             except httpx.HTTPError as exc:
                 last_error = _redact(
@@ -649,13 +663,16 @@ async def _complete(
                     )
 
             if attempt < MAX_ATTEMPTS:
+                if loop.time() + delay >= deadline:
+                    break  # no time left for another try
                 log.warning(
                     "DeepSeek attempt %s/%s failed (%s); retrying in %.1fs",
                     attempt, MAX_ATTEMPTS, last_error, delay,
                 )
                 await asyncio.sleep(delay)
 
-        raise AIResponderError(f"{last_error} Gave up after {MAX_ATTEMPTS} attempts.")
+        tries = f"{attempt} attempt{'s' if attempt != 1 else ''}"
+        raise AIResponderError(f"{last_error} Gave up after {tries}.")
     finally:
         if owns_client:
             await http.aclose()

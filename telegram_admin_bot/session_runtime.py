@@ -86,6 +86,7 @@ import humanlike
 import leasing
 import llm_usage
 import media
+import pg
 import policy
 import scheduler
 import tenant_config
@@ -124,6 +125,16 @@ ACK_SKIP = "the message is only an acknowledgement"
 # hour, so a busy chat's history isn't all notes.
 STAGING_NOTE = "Staging: not answered — not a test chat."
 STAGING_NOTE_SECONDS = 3600
+# The database dropping out for a moment (a restart, a failover):
+# storing an incoming message is tried this many times, waiting
+# STORE_RETRY_SECONDS × the attempt number in between, so the message is
+# not lost...
+STORE_ATTEMPTS = 4
+STORE_RETRY_SECONDS = 2.0
+# ...and a reply whose drafting hit it (before anything was sent) is started
+# again up to this many times, DRAFT_RETRY_SECONDS × the attempt later.
+DRAFT_DB_RETRIES = 3
+DRAFT_RETRY_SECONDS = 10.0
 
 
 class NeedsLogin(RuntimeError):
@@ -295,6 +306,12 @@ class SessionRuntime:
         self.outreach_task: Optional[asyncio.Task] = None
         self.in_flight_sends: dict[int, list[str]] = {}
         self.in_flight_media: dict[int, int] = {}
+        # Counts every attempt to hand a message to Telegram. A draft that
+        # failed before this moved may be retried; one after it never is
+        # (the message may have gone out).
+        self.delivery_attempts = 0
+        # Background tasks nobody else holds on to (a delayed stop).
+        self._background: set[asyncio.Task] = set()
 
         self.presence_online = False
         self.offline_timer: Optional[asyncio.Task] = None
@@ -414,22 +431,40 @@ class SessionRuntime:
             return
         self._stopping = True
         self.finished = True
-        await self._stop_telegram()
+        # Every step runs even when an earlier one fails (Postgres or Redis
+        # down while stopping): a half-stopped runtime whose command server
+        # still answered would act for an account it no longer runs.
+        failed: list[str] = []
+
+        async def step(name: str, coro) -> None:
+            try:
+                await coro
+            except asyncio.CancelledError:
+                if asyncio.current_task() is not None and asyncio.current_task().cancelling():
+                    raise
+            except Exception:
+                failed.append(name)
+                log.exception("[%s] Stopping: %s failed", self.session_id, name)
+
+        await step("telegram", self._stop_telegram())
         if self._lease_keeper is not None:
-            await self._lease_keeper.stop()
+            await step("lease keeper", self._lease_keeper.stop())
         if self._lease_keeper_task is not None:
-            with suppress(asyncio.CancelledError):
-                await self._lease_keeper_task
-        await leasing.release(self.pool, self.session_id, self.worker_id)
+            await step("lease keeper task", asyncio.wait_for(self._lease_keeper_task, timeout=5))
+        # Not released (Postgres down): it simply expires within LEASE_SECONDS.
+        await step("lease release", leasing.release(self.pool, self.session_id, self.worker_id))
         if self.http_client is not None:
-            await self.http_client.aclose()
+            await step("http client", self.http_client.aclose())
         self._command_stop_event.set()
         if self._command_serve_task is not None:
-            with suppress(asyncio.CancelledError):
-                await asyncio.wait_for(self._command_serve_task, timeout=5)
+            await step("command server", asyncio.wait_for(self._command_serve_task, timeout=5))
+            if not self._command_serve_task.done():
+                self._command_serve_task.cancel()
         if self.bus is not None:
-            await self.bus.close()
-        await self.db.close()
+            await step("command bus", self.bus.close())
+        await step("database", self.db.close())
+        if failed:
+            log.warning("[%s] Stopped, but these steps failed: %s", self.session_id, ", ".join(failed))
 
     async def handle_command(self, action: str, args: dict[str, Any]) -> Any:
         """Executed when this session's owning worker receives a command over
@@ -467,14 +502,7 @@ class SessionRuntime:
             return {"ok": True}
 
         if action == "scheduler_tick":
-            await self.refresh_controls()
-            await self.release_spend_cap()
-            await self.check_volume()
-            if time.monotonic() - self._logins_checked_at >= self.LOGINS_CHECK_SECONDS:
-                await self.check_logins()
-            await self.run_deferred()
-            await self.flow.tick()
-            return {"ok": True, "off": self.off_reason}
+            return await self.scheduler_tick()
 
         if action == "reload_controls":
             return {"off": await self.refresh_controls()}
@@ -562,6 +590,31 @@ class SessionRuntime:
 
         raise ValueError(f"Unknown command action: {action!r}")
 
+    async def scheduler_tick(self) -> dict[str, Any]:
+        """The timed work (see scheduler.py). Each part is guarded on its
+        own: one that fails (a database blip, one bad booking) is logged and
+        retried next minute, and does not keep the others from running.
+        Sending still re-checks the switches at the last step, so a failed
+        re-read of them here never lets anything out that shouldn't go."""
+        errors: list[str] = []
+        steps: list[tuple[str, Any]] = [
+            ("controls", self.refresh_controls),
+            ("spend cap", self.release_spend_cap),
+            ("volume", self.check_volume),
+        ]
+        if time.monotonic() - self._logins_checked_at >= self.LOGINS_CHECK_SECONDS:
+            steps.append(("logins", self.check_logins))
+        steps += [("deferred replies", self.run_deferred), ("bookings", self.flow.tick)]
+        for name, step in steps:
+            try:
+                await step()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.exception("[%s] Timed work (%s) failed; retried next tick", self.session_id, name)
+                errors.append(f"{name}: {type(exc).__name__}")
+        return {"ok": not errors, "off": self.off_reason, **({"errors": errors} if errors else {})}
+
     async def _on_lease_lost(self, session_id: str) -> None:
         """The renewal loop confirmed (or fears) another worker now owns this
         session, or the account was deactivated. Disconnect immediately —
@@ -598,7 +651,8 @@ class SessionRuntime:
         account, and says so."""
         try:
             bundle = await self.tenants.bundle_for_session(self.session_id)
-        except (tenant_config.ConfigError, ValueError) as exc:
+        except (tenant_config.ConfigError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            # (Hand-edited JSON of the wrong shape surfaces as the latter.)
             if self.bundle is None:
                 raise
             log.error("[%s] Tenant config no longer valid; keeping the last good one: %s", self.session_id, exc)
@@ -766,8 +820,22 @@ class SessionRuntime:
         log.error("[%s] HARD-OFF (%s); logged out: %s", self.session_id, reason, logged_out)
         self.finished = True
         # Stop after this command has answered; stopping closes the bus.
-        asyncio.get_running_loop().call_later(1.0, lambda: asyncio.ensure_future(self.stop()))
+        asyncio.get_running_loop().call_later(1.0, lambda: self.spawn(self.stop(), "stop after hard-off"))
         return {"logged_out": logged_out}
+
+    def spawn(self, coro: Any, what: str) -> asyncio.Task:
+        """A background task that is referenced until it ends and whose
+        failure is logged, not lost."""
+        task = asyncio.ensure_future(coro)
+        self._background.add(task)
+
+        def done(t: asyncio.Task) -> None:
+            self._background.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                log.error("[%s] %s failed: %r", self.session_id, what, t.exception())
+
+        task.add_done_callback(done)
+        return task
 
     # ------------------------------------------------------------------
     # Per chat: escalation and human takeover
@@ -1287,6 +1355,7 @@ class SessionRuntime:
             await self.check_daily_quota()
         peer = await self.resolve_peer(chat_id)
         self.in_flight_sends.setdefault(chat_id, []).append(text)
+        self.delivery_attempts += 1
         try:
             sent = await self.deliver(peer, chat_id, text, typing)
             telegram_id = getattr(sent, "id", None)
@@ -1346,6 +1415,7 @@ class SessionRuntime:
         peer = await self.resolve_peer(chat_id)
         text = media.sent_placeholder(item)
         self.in_flight_media[chat_id] = self.in_flight_media.get(chat_id, 0) + 1
+        self.delivery_attempts += 1
         try:
             sent = await self.deliver_file(peer, chat_id, item, path)
             telegram_id = getattr(sent, "id", None)
@@ -1419,6 +1489,26 @@ class SessionRuntime:
         self.cancel_draft(chat_id)
         self.draft_tasks[chat_id] = asyncio.create_task(self.draft_worker(chat_id))
 
+    def retry_draft_later(self, chat_id: int, attempt: int) -> None:
+        """Start this chat's reply again after a pause (the database was
+        unreachable while it was being written). A newer message, or any
+        cancel, replaces or stops it like a normal draft."""
+        async def later() -> None:
+            await asyncio.sleep(DRAFT_RETRY_SECONDS * attempt)
+            await self.draft_worker(chat_id, attempt)
+
+        self.draft_tasks[chat_id] = asyncio.create_task(later())
+
+    async def _best_effort(self, coro: Any, what: str) -> None:
+        """Report something (an error row, a note) without letting a failure
+        to report it (the database is down) turn into a second failure."""
+        try:
+            await coro
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("[%s] Could not %s: %s: %s", self.session_id, what, type(exc).__name__, exc)
+
     def cancel_draft(self, chat_id: int) -> None:
         task = self.draft_tasks.pop(chat_id, None)
         if task is None or task.done():
@@ -1439,7 +1529,10 @@ class SessionRuntime:
             return random.uniform(min(low, high), max(low, high))
         return humanlike.sample_reply_delay(self.config["reply_delay"])
 
-    async def draft_worker(self, chat_id: int) -> None:
+    async def draft_worker(self, chat_id: int, attempt: int = 0) -> None:
+        """Write (and send, or keep for approval) the reply to this chat.
+        `attempt` counts restarts after the database was unreachable."""
+        attempts_before = self.delivery_attempts
         try:
             overrides = self.contact_overrides(chat_id)
             delay = self.reply_delay(chat_id)
@@ -1596,17 +1689,35 @@ class SessionRuntime:
             raise
         except SendBlocked as exc:
             log.info("[%s] Not replying in chat %s: %s", self.session_id, chat_id, exc)
-            await self.push_error(chat_id, str(exc))
+            await self._best_effort(self.push_error(chat_id, str(exc)), "report a blocked send")
             # Stopped at the last step: the switches, or a send cap.
             await self.queue_unanswered(chat_id, unanswered.SOFT_OFF if self.paused() else unanswered.SKIPPED,
                                         str(exc))
         except ai_responder.AIResponderError as exc:
-            await self.push_error(chat_id, str(exc))
+            await self._best_effort(self.push_error(chat_id, str(exc)), "report an AI error")
             await self.queue_unanswered(chat_id, unanswered.AI_ERROR, str(exc))
         except Exception as exc:
-            if not await self.handle_send_failure(chat_id, exc):
+            if (pg.is_transient(exc) and self.delivery_attempts == attempts_before
+                    and attempt < DRAFT_DB_RETRIES and not self._stopping):
+                # The database (or the connection to Telegram) dropped out
+                # before anything was handed to Telegram: nothing went out,
+                # so writing the reply again later is safe.
+                log.warning("[%s] Reply to chat %s interrupted (%s: %s); trying again in %.0fs (%d/%d).",
+                            self.session_id, chat_id, type(exc).__name__, exc,
+                            DRAFT_RETRY_SECONDS * (attempt + 1), attempt + 1, DRAFT_DB_RETRIES)
+                self.retry_draft_later(chat_id, attempt + 1)
+                return
+            try:
+                handled = await self.handle_send_failure(chat_id, exc)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("[%s] Handling a failed send in chat %s failed too", self.session_id, chat_id)
+                handled = False
+            if not handled:
                 log.exception("[%s] Unexpected failure while drafting for chat %s", self.session_id, chat_id)
-                await self.push_error(chat_id, f"Drafting failed: {type(exc).__name__}: {exc}")
+                await self._best_effort(self.push_error(chat_id, f"Drafting failed: {type(exc).__name__}: {exc}"),
+                                        "report a drafting failure")
                 await self.queue_unanswered(chat_id, unanswered.AI_ERROR, f"{type(exc).__name__}: {exc}")
             else:
                 # A Telegram error that was dealt with (a halt, a blocked
@@ -1824,18 +1935,56 @@ class SessionRuntime:
         minute. Booking work runs on the scheduler's tick."""
         try:
             while True:
+                # Each part on its own: the database being away for a
+                # minute must not stop the account reporting itself later.
+                self.ensure_command_server()
                 try:
                     if time.monotonic() - self._bound_at > self.REBIND_SECONDS:
                         await self.bind_tenant()
-                    if self.telegram_state["connected"]:
-                        await health.seen(self.pool, self.tenant_id, self.session_id)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     log.exception("[%s] Rebind failed", self.session_id)
+                try:
+                    if self.telegram_state["connected"]:
+                        await health.seen(self.pool, self.tenant_id, self.session_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    log.warning("[%s] Could not report health (%s: %s); trying again in a minute.",
+                                self.session_id, type(exc).__name__, exc)
+                self.prune_memory()
                 await asyncio.sleep(self.REMINDER_TICK_SECONDS)
         except asyncio.CancelledError:
             raise
+
+    def ensure_command_server(self) -> None:
+        """The command server (commands.CommandBus.serve) reconnects by
+        itself; should it still end while this runtime runs (a bug, an
+        unexpected error), start it again, so the scheduler and the panel
+        can reach this account without a restart."""
+        task = self._command_serve_task
+        if self.bus is None or self._stopping or self._command_stop_event.is_set():
+            return
+        if task is not None and not task.done():
+            return
+        if task is not None and not task.cancelled() and task.exception() is not None:
+            log.error("[%s] Command server stopped (%r); starting it again.", self.session_id, task.exception())
+        elif task is not None:
+            log.error("[%s] Command server stopped; starting it again.", self.session_id)
+        self._command_serve_task = asyncio.create_task(
+            self.bus.serve(self.session_id, self.handle_command, self._command_stop_event)
+        )
+
+    def prune_memory(self) -> None:
+        """Per-chat bookkeeping that is only a throttle or a hint is dropped
+        once it no longer matters, so a long-running account's memory
+        doesn't grow with every chat it ever saw."""
+        now = time.monotonic()
+        for chat_id, at in list(self._staging_noted.items()):
+            if now - at >= STAGING_NOTE_SECONDS:
+                self._staging_noted.pop(chat_id, None)
+        self.flow.prune_memory()
 
     async def post_note(self, chat_id: int, text: str) -> None:
         row = await self.db.record_message(chat_id, DIR_SYSTEM, STATUS_NOTE, text, bump_preview=False)
@@ -1903,7 +2052,44 @@ class SessionRuntime:
     # Telethon handlers
     # ------------------------------------------------------------------
 
+    async def _store_with_retry(self, what: str, make: Any) -> Any:
+        """`make()` (a database write), tried again while the database is
+        unreachable: STORE_ATTEMPTS in all, with growing pauses. Anything
+        else, or the last failure, is raised."""
+        for attempt in range(1, STORE_ATTEMPTS + 1):
+            try:
+                return await make()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if attempt >= STORE_ATTEMPTS or not pg.is_transient(exc):
+                    raise
+                log.warning("[%s] Database unreachable while %s (%s: %s); trying again (%d/%d).",
+                            self.session_id, what, type(exc).__name__, exc, attempt + 1, STORE_ATTEMPTS)
+                await asyncio.sleep(STORE_RETRY_SECONDS * attempt)
+
     async def on_incoming(self, event: events.NewMessage.Event) -> None:
+        """Telethon's handler for a new message. Whatever goes wrong with
+        one message is logged here, with the account and chat, and never
+        reaches Telethon, so the next message is handled as usual."""
+        try:
+            await self._on_incoming(event)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[%s] Could not handle a message in chat %s", self.session_id,
+                          getattr(event, "chat_id", None))
+
+    async def on_outgoing(self, event: events.NewMessage.Event) -> None:
+        try:
+            await self._on_outgoing(event)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[%s] Could not handle an outgoing message in chat %s", self.session_id,
+                          getattr(event, "chat_id", None))
+
+    async def _on_incoming(self, event: events.NewMessage.Event) -> None:
         if not event.is_private:
             return
 
@@ -1913,7 +2099,10 @@ class SessionRuntime:
         except Exception:
             sender = None
         name, username, is_bot, access_hash = describe_sender(sender, chat_id)
-        conversation = await self.db.upsert_conversation(chat_id, name, username, is_bot, access_hash)
+        conversation = await self._store_with_retry(
+            "storing a conversation",
+            lambda: self.db.upsert_conversation(chat_id, name, username, is_bot, access_hash),
+        )
         await self.detect_links(conversation)
 
         text = (event.raw_text or "").strip()
@@ -1923,9 +2112,11 @@ class SessionRuntime:
 
         # Always stored: the platform keeps a complete record of every
         # conversation (the pre-platform log_all_messages switch is gone).
-        row = await self.db.record_message(
+        # Tried again while the database is briefly away; a repeat is
+        # harmless (the Telegram message id makes it a duplicate).
+        row = await self._store_with_retry("storing a message", lambda: self.db.record_message(
             chat_id, DIR_IN, STATUS_RECEIVED, stored_text, telegram_id=event.message.id, mark_unread=True,
-        )
+        ))
 
         if row is not None:
             await self.push_message(row)
@@ -2003,7 +2194,7 @@ class SessionRuntime:
         # they end.
         self.schedule_draft(chat_id)
 
-    async def on_outgoing(self, event: events.NewMessage.Event) -> None:
+    async def _on_outgoing(self, event: events.NewMessage.Event) -> None:
         if not event.is_private:
             return
 
@@ -2019,11 +2210,14 @@ class SessionRuntime:
         except Exception:
             chat = None
         name, username, is_bot, access_hash = describe_sender(chat, chat_id)
-        await self.db.upsert_conversation(chat_id, name, username, is_bot, access_hash)
-
-        row = await self.db.record_message(
-            chat_id, DIR_OUT, STATUS_SENT, text or "[non-text message]", telegram_id=event.message.id,
+        await self._store_with_retry(
+            "storing a conversation",
+            lambda: self.db.upsert_conversation(chat_id, name, username, is_bot, access_hash),
         )
+
+        row = await self._store_with_retry("storing a sent message", lambda: self.db.record_message(
+            chat_id, DIR_OUT, STATUS_SENT, text or "[non-text message]", telegram_id=event.message.id,
+        ))
         if row is None:
             return  # already stored: one of this runtime's own sends
         await self.push_message(row)
@@ -2040,6 +2234,9 @@ class SessionRuntime:
         flood_sleep_threshold = int(self.config["safety"].get("max_flood_wait_seconds", 300))
         identity = await self._resolve_identity()
         self.client = _client_from_auth(auth, proxy_url, flood_sleep_threshold, identity)
+        # Both handlers log and swallow their own failures (Telethon runs
+        # each update in a task of its own, so one bad message never holds
+        # up the next).
         self.client.add_event_handler(self.on_incoming, events.NewMessage(incoming=True))
         self.client.add_event_handler(self.on_outgoing, events.NewMessage(outgoing=True))
         self.telegram_task = asyncio.create_task(self._run_telegram())

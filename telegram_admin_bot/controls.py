@@ -189,19 +189,27 @@ async def reload_controls(pool: asyncpg.Pool, bus: Optional[commands.CommandBus]
     every tick anyway."""
     if bus is None:
         return
-    if session_ids is None:
-        rows = await pool.fetch("SELECT session_id FROM telegram_sessions WHERE lease_expires_at > now()")
-    else:
-        rows = await pool.fetch(
-            "SELECT session_id FROM telegram_sessions WHERE session_id = ANY($1) AND lease_expires_at > now()",
-            [s for s in session_ids if s],
-        )
+    try:
+        if session_ids is None:
+            rows = await pool.fetch("SELECT session_id FROM telegram_sessions WHERE lease_expires_at > now()")
+        else:
+            rows = await pool.fetch(
+                "SELECT session_id FROM telegram_sessions WHERE session_id = ANY($1) AND lease_expires_at > now()",
+                [s for s in session_ids if s],
+            )
+    except Exception:
+        log.warning("Could not list the running accounts to reload their switches; they recheck within a minute.",
+                    exc_info=True)
+        return
 
     async def one(session_id: str) -> None:
         try:
             await bus.dispatch(session_id, "reload_controls", {}, timeout=RELOAD_TIMEOUT)
-        except commands.CommandError:
-            log.warning("[%s] Did not confirm reload_controls; it rechecks within a minute.", session_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # CommandError, BusUnavailable, or anything unexpected
+            log.warning("[%s] Did not confirm reload_controls (%s); it rechecks within a minute.",
+                        session_id, type(exc).__name__)
 
     await asyncio.gather(*(one(r["session_id"]) for r in rows))
 
@@ -222,7 +230,10 @@ async def hard_off(pool: asyncpg.Pool, bus: Optional[commands.CommandBus], tenan
         try:
             result = await bus.dispatch(session_id, "hard_off", {"reason": reason}, timeout=HARD_OFF_TIMEOUT)
             logged_out, how = bool((result or {}).get("logged_out")), "by the running account"
-        except commands.CommandTimeout:
+        except (commands.CommandTimeout, commands.BusUnavailable):
+            # Nobody answered, or the bus is down: log out from here. If a
+            # worker does run it, its lease stops this (LeaseLost), and the
+            # deactivation below fences that worker within seconds.
             pass
         except commands.CommandError as exc:
             how = f"the running account failed: {exc}"

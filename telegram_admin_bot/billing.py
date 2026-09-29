@@ -21,6 +21,7 @@ the state it moves from, so running it twice changes nothing.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
@@ -161,9 +162,14 @@ async def _timezone(pool: asyncpg.Pool, tenant_id: int) -> str:
     def parsed(value):
         return json.loads(value) if isinstance(value, str) else (value or {})
 
+    if row is None:
+        return "UTC"
     try:
         return tenant_config.resolve(parsed(row["default_config"]), parsed(row["config_json"])).config.timezone
-    except tenant_config.ConfigError:
+    except (tenant_config.ConfigError, ValueError, TypeError, AttributeError):
+        # Edited by hand into something that no longer validates (or isn't
+        # even JSON): UTC rather than no billing at all.
+        log.warning("Tenant %s: config does not validate; billing uses UTC.", tenant_id)
         return "UTC"
 
 
@@ -181,62 +187,96 @@ async def tick(pool: asyncpg.Pool, bus: Optional[commands.CommandBus], now: Opti
     conf = await settings(pool)
     changed: list[str] = []
 
+    # Every step for every tenant is guarded on its own: one tenant whose
+    # row or account misbehaves (or the bus being down) must not hold up
+    # the others, and above all not their suspension. Each step is
+    # conditional on the state it moves from, so the next tick finishes
+    # whatever an error left undone.
+    async def guarded(what: str, tenant_id: int, step) -> None:
+        try:
+            await step()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Billing: %s for tenant %s failed; retried next tick", what, tenant_id)
+
     # Due yesterday or earlier (in UTC, with a day's margin for timezones;
     # the exact day is checked in the tenant's own zone below).
     for row in await pool.fetch(
         "SELECT id, name FROM tenants WHERE status = 'active' AND billing_next_due IS NOT NULL "
         "AND billing_next_due < $1::date", (now + timedelta(days=1)).date(),
     ):
-        due = await pool.fetchval("SELECT billing_next_due FROM tenants WHERE id = $1", row["id"])
-        if _local_today(await _timezone(pool, row["id"]), now) <= due:
-            continue
-        until = now + timedelta(hours=int(conf["grace_hours"]))
-        async with pool.acquire() as con, con.transaction():
-            moved = await con.fetchval(
-                "UPDATE tenants SET status = 'grace', grace_until = $2, billing_notice_sent_at = NULL, "
-                "updated_at = now() WHERE id = $1 AND status = 'active' RETURNING true", row["id"], until,
-            )
-            if not moved:
-                continue
-            await audit.record(con, tenant_id=row["id"], actor=audit.SYSTEM, event=audit.BILLING_CHANGED,
-                               reason=f"payment due {due.isoformat()} not recorded",
-                               payload={"from": {"status": ACTIVE}, "to": {"status": GRACE,
-                                                                             "grace_until": until.isoformat()}})
-        await alerts.raise_alert(pool, tenant_id=row["id"], kind="billing", severity=alerts.WARNING,
-                                 message=f"Payment due {due.isoformat()} not recorded: in grace until "
-                                         f"{until.isoformat(timespec='minutes')}, then suspended.")
-        changed.append(f"{row['id']}:grace")
+        await guarded("grace", row["id"], lambda row=row: _to_grace(pool, row, conf, now, changed))
 
     # Tell the owner, until it has been done.
     for row in await pool.fetch(
         "SELECT id, name, session_id, billing_next_due, grace_until FROM tenants "
         "WHERE status = 'grace' AND billing_notice_sent_at IS NULL AND grace_until > $1", now,
     ):
-        if await _notify_owner(pool, bus, row, conf):
-            changed.append(f"{row['id']}:notified")
+        async def notify(row=row) -> None:
+            if await _notify_owner(pool, bus, row, conf):
+                changed.append(f"{row['id']}:notified")
+
+        await guarded("owner notice", row["id"], notify)
 
     for row in await pool.fetch(
         "SELECT id FROM tenants WHERE status = 'grace' AND grace_until IS NOT NULL AND grace_until <= $1", now,
     ):
-        async with pool.acquire() as con, con.transaction():
-            moved = await con.fetchval(
-                "UPDATE tenants SET status = 'suspended', updated_at = now() "
-                "WHERE id = $1 AND status = 'grace' RETURNING true", row["id"],
-            )
-            if not moved:
-                continue
-            await audit.record(con, tenant_id=row["id"], actor=audit.SYSTEM, event=audit.BILLING_CHANGED,
-                               reason="grace period ended without a payment",
-                               payload={"from": {"status": GRACE}, "to": {"status": SUSPENDED}})
-        await controls.add_hold(pool, row["id"], controls.BILLING, "grace period ended without a payment",
-                                actor=audit.SYSTEM)
-        await alerts.raise_alert(pool, tenant_id=row["id"], kind="billing_suspended", severity=alerts.CRITICAL,
-                                 message="Suspended for non-payment: the bot sends nothing until a payment "
-                                         "is recorded.")
-        session_id = await pool.fetchval("SELECT session_id FROM tenants WHERE id = $1", row["id"])
-        await controls.reload_controls(pool, bus, [session_id] if session_id else [])
-        changed.append(f"{row['id']}:suspended")
+        await guarded("suspension", row["id"], lambda row=row: _suspend(pool, bus, row["id"], changed))
     return changed
+
+
+async def _to_grace(pool: asyncpg.Pool, row: asyncpg.Record, conf: dict[str, Any], now: datetime,
+                    changed: list[str]) -> None:
+    due = await pool.fetchval("SELECT billing_next_due FROM tenants WHERE id = $1", row["id"])
+    if due is None or _local_today(await _timezone(pool, row["id"]), now) <= due:
+        return
+    until = now + timedelta(hours=int(conf["grace_hours"]))
+    async with pool.acquire() as con, con.transaction():
+        moved = await con.fetchval(
+            "UPDATE tenants SET status = 'grace', grace_until = $2, billing_notice_sent_at = NULL, "
+            "updated_at = now() WHERE id = $1 AND status = 'active' RETURNING true", row["id"], until,
+        )
+        if not moved:
+            return
+        await audit.record(con, tenant_id=row["id"], actor=audit.SYSTEM, event=audit.BILLING_CHANGED,
+                           reason=f"payment due {due.isoformat()} not recorded",
+                           payload={"from": {"status": ACTIVE}, "to": {"status": GRACE,
+                                                                         "grace_until": until.isoformat()}})
+    changed.append(f"{row['id']}:grace")
+    await alerts.raise_alert(pool, tenant_id=row["id"], kind="billing", severity=alerts.WARNING,
+                             message=f"Payment due {due.isoformat()} not recorded: in grace until "
+                                     f"{until.isoformat(timespec='minutes')}, then suspended.")
+
+
+async def _suspend(pool: asyncpg.Pool, bus: Optional[commands.CommandBus], tenant_id: int,
+                   changed: list[str]) -> None:
+    async with pool.acquire() as con, con.transaction():
+        moved = await con.fetchval(
+            "UPDATE tenants SET status = 'suspended', updated_at = now() "
+            "WHERE id = $1 AND status = 'grace' RETURNING true", tenant_id,
+        )
+        if not moved:
+            return
+        await audit.record(con, tenant_id=tenant_id, actor=audit.SYSTEM, event=audit.BILLING_CHANGED,
+                           reason="grace period ended without a payment",
+                           payload={"from": {"status": GRACE}, "to": {"status": SUSPENDED}})
+        # In the same transaction as the status: a crash in between must not
+        # leave a suspended tenant that still sends.
+        # (controls.add_hold's insert and audit row, on this connection.)
+        if await con.fetchval(
+            "INSERT INTO tenant_holds (tenant_id, kind, reason, created_by) VALUES ($1, $2, $3, $4) "
+            "ON CONFLICT (tenant_id, kind) DO NOTHING RETURNING true",
+            tenant_id, controls.BILLING, "grace period ended without a payment", audit.SYSTEM,
+        ):
+            await audit.record(con, tenant_id=tenant_id, actor=audit.SYSTEM, event=audit.TENANT_SOFT_OFF,
+                               reason="grace period ended without a payment", payload={"kind": controls.BILLING})
+    changed.append(f"{tenant_id}:suspended")
+    await alerts.raise_alert(pool, tenant_id=tenant_id, kind="billing_suspended", severity=alerts.CRITICAL,
+                             message="Suspended for non-payment: the bot sends nothing until a payment "
+                                     "is recorded.")
+    session_id = await pool.fetchval("SELECT session_id FROM tenants WHERE id = $1", tenant_id)
+    await controls.reload_controls(pool, bus, [session_id] if session_id else [])
 
 
 async def _notify_owner(pool: asyncpg.Pool, bus: Optional[commands.CommandBus], row: asyncpg.Record,
@@ -250,7 +290,9 @@ async def _notify_owner(pool: asyncpg.Pool, bus: Optional[commands.CommandBus], 
                                     {"text": text, "reason": "billing notice to the owner"}, timeout=NOTICE_TIMEOUT)
         sent = bool((result or {}).get("sent"))
         problem = "" if sent else (result or {}).get("error") or "the owner could not be reached (booking.provider)"
-    except commands.CommandError as exc:
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # CommandError (incl. the bus being down), or anything unexpected
         sent, problem = False, f"the account did not answer ({type(exc).__name__})"
     if sent:
         await pool.execute("UPDATE tenants SET billing_notice_sent_at = now() WHERE id = $1", row["id"])

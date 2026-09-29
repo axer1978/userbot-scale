@@ -20,6 +20,7 @@ an alert (kind "digest", one open per client).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -56,7 +57,7 @@ async def effective_config(pool: asyncpg.Pool, tenant_id: int) -> Optional[tenan
         return None
     try:
         return tenant_config.resolve(_parsed(row["default_config"]), _parsed(row["config_json"])).config
-    except tenant_config.ConfigError as exc:
+    except (tenant_config.ConfigError, ValueError, TypeError, AttributeError) as exc:
         log.warning("Tenant %s: config does not validate, no digest: %s", tenant_id, exc)
         return None
 
@@ -103,12 +104,16 @@ async def _by_telegram(pool: asyncpg.Pool, bus: Optional[commands.CommandBus], s
     if bus is None:
         return "no command bus"
     # One nobody runs would only time out, holding up the scheduler.
-    if not await _running(pool, session_id):
-        return "the account is not running"
     try:
+        if not await _running(pool, session_id):
+            return "the account is not running"
         result = await bus.dispatch(session_id, "owner_notice", {"text": text, "reason": "weekly digest"},
                                     timeout=NOTICE_TIMEOUT)
-    except commands.CommandError as exc:
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # CommandError (incl. the bus being down), or anything unexpected
+        # The week is already claimed: whatever happens here must still let
+        # the e-mail be tried and the outcome be written down.
         return f"the account did not answer ({type(exc).__name__})"
     if (result or {}).get("sent"):
         return ""
@@ -131,7 +136,9 @@ async def _by_email(cfg: tenant_config.TenantConfig, business: str, since: datet
     try:
         await mailer.send(settings, to=to, subject=f"Weekly summary: {business}, {since:%d.%m}–{last_day:%d.%m}",
                           body=text)
-    except mailer.MailError as exc:
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # mailer.MailError, or anything unexpected
         return f"e-mail failed: {exc}"
     return ""
 

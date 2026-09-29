@@ -28,6 +28,7 @@ import asyncio
 import logging
 import os
 import signal
+from contextlib import suppress
 from datetime import datetime
 from typing import Optional
 
@@ -43,6 +44,10 @@ log = logging.getLogger("scheduler")
 
 TICK_SECONDS = 60
 TICK_TIMEOUT_SECONDS = 45
+TICK_GRACE_SECONDS = 10
+# After losing its database connection (and with it the lock), how long it
+# waits before trying again.
+RETRY_SECONDS = 5
 # Arbitrary but fixed: the advisory lock that makes this a singleton.
 LOCK_KEY = 0x5C4ED
 
@@ -105,12 +110,23 @@ async def tick(pool: asyncpg.Pool, bus: commands.CommandBus) -> dict[str, str]:
     sessions = await live_sessions(pool)
 
     async def one(session_id: str) -> tuple[str, str]:
+        # Bounded here as well as inside dispatch: one account (or a bus
+        # that stopped answering) can't hold the round up past the timeout,
+        # and whatever goes wrong for one account is its own result only.
         try:
-            await bus.dispatch(session_id, "scheduler_tick", {}, timeout=TICK_TIMEOUT_SECONDS)
+            await asyncio.wait_for(
+                bus.dispatch(session_id, "scheduler_tick", {}, timeout=TICK_TIMEOUT_SECONDS),
+                TICK_TIMEOUT_SECONDS + TICK_GRACE_SECONDS,
+            )
             return session_id, "ok"
-        except commands.CommandError as exc:
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            log.warning("scheduler_tick for %s did not finish in time", session_id)
+            return session_id, "timed out"
+        except Exception as exc:
             log.warning("scheduler_tick for %s failed: %s", session_id, exc)
-            return session_id, str(exc)
+            return session_id, str(exc) or type(exc).__name__
 
     return dict(await asyncio.gather(*(one(s) for s in sessions)))
 
@@ -118,12 +134,15 @@ async def tick(pool: asyncpg.Pool, bus: commands.CommandBus) -> dict[str, str]:
 async def platform_tick(pool: asyncpg.Pool, bus: commands.CommandBus) -> None:
     """The rounds that don't go through an account. Each part is guarded
     on its own, so one failing does not skip the others."""
-    await pool.execute(
-        "INSERT INTO platform_settings (key, value, updated_by) VALUES ('scheduler_heartbeat', to_jsonb(now()), "
-        "'scheduler') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"
-    )
-    for name, step in (("health", lambda: health.check_all(pool)), ("billing", lambda: billing.tick(pool, bus)),
-                       ("digest", lambda: digest.tick(pool, bus))):
+
+    async def heartbeat() -> None:
+        await pool.execute(
+            "INSERT INTO platform_settings (key, value, updated_by) VALUES ('scheduler_heartbeat', to_jsonb(now()), "
+            "'scheduler') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"
+        )
+
+    for name, step in (("heartbeat", heartbeat), ("health", lambda: health.check_all(pool)),
+                       ("billing", lambda: billing.tick(pool, bus)), ("digest", lambda: digest.tick(pool, bus))):
         try:
             await step()
         except Exception:
@@ -132,14 +151,37 @@ async def platform_tick(pool: asyncpg.Pool, bus: commands.CommandBus) -> None:
 
 async def run(pool: asyncpg.Pool, bus: commands.CommandBus, stop: asyncio.Event,
               tick_seconds: float = TICK_SECONDS) -> None:
+    """Tick until `stop` is set, while holding the lock. Postgres going away
+    does not end it: the lock went with the connection, so it waits a
+    little, takes the lock again (or waits for whoever has it now) and goes
+    on."""
+    while not stop.is_set():
+        try:
+            if await _run_locked(pool, bus, stop, tick_seconds):
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Scheduler lost its database connection; trying again in %ss.", RETRY_SECONDS)
+        if await _wait(stop, min(tick_seconds, RETRY_SECONDS)):
+            return
+
+
+async def _run_locked(pool: asyncpg.Pool, bus: commands.CommandBus, stop: asyncio.Event,
+                      tick_seconds: float) -> bool:
+    """One stretch of holding the lock. True when stopped; raises when the
+    lock's connection is lost (the lock is gone with it)."""
     async with pool.acquire() as lock_con:
         while not await lock_con.fetchval("SELECT pg_try_advisory_lock($1)", LOCK_KEY):
             log.info("Another scheduler holds the lock; waiting.")
             if await _wait(stop, tick_seconds):
-                return
+                return True
         log.info("Scheduler running (tick every %ss).", tick_seconds)
         try:
             while not stop.is_set():
+                # The lock lives as long as this connection. If it died, a
+                # second scheduler may already hold the lock: stop ticking.
+                await lock_con.fetchval("SELECT 1")
                 try:
                     await tick(pool, bus)
                 except Exception:
@@ -149,9 +191,11 @@ async def run(pool: asyncpg.Pool, bus: commands.CommandBus, stop: asyncio.Event,
                 except Exception:
                     log.exception("Scheduler platform round failed")
                 if await _wait(stop, tick_seconds):
-                    return
+                    return True
+            return True
         finally:
-            await lock_con.execute("SELECT pg_advisory_unlock($1)", LOCK_KEY)
+            with suppress(Exception):
+                await lock_con.execute("SELECT pg_advisory_unlock($1)", LOCK_KEY)
 
 
 async def _wait(stop: asyncio.Event, seconds: float) -> bool:
