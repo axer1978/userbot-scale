@@ -12,8 +12,8 @@ deleted when taken), so a missed, doubled or late tick changes nothing.
 It also does the platform's own rounds (phase 3), which need no account
 running: the health watchdog (health.py: an account that is down, logged
 out or rate-limited raises an alert within a few minutes), billing grace
-and suspension (billing.py), and a heartbeat the panel shows, so a dead
-scheduler is visible too.
+and suspension (billing.py), the owners' weekly digest (digest.py, phase
+4), and a heartbeat the panel shows, so a dead scheduler is visible too.
 
 Only one scheduler runs at a time: it holds a Postgres advisory lock for as
 long as it lives, and a second copy waits for the lock instead of ticking.
@@ -35,6 +35,7 @@ import asyncpg
 
 import billing
 import commands
+import digest
 import health
 import pg
 
@@ -63,8 +64,11 @@ async def clear_deferred(pool: asyncpg.Pool, tenant_id: int, chat_id: int) -> No
     await pool.execute("DELETE FROM deferred_replies WHERE tenant_id = $1 AND chat_id = $2", tenant_id, chat_id)
 
 
-async def clear_all_deferred(pool: asyncpg.Pool, tenant_id: int) -> None:
-    await pool.execute("DELETE FROM deferred_replies WHERE tenant_id = $1", tenant_id)
+async def clear_all_deferred(pool: asyncpg.Pool, tenant_id: int) -> list[int]:
+    """Drop every held reply of this tenant. Returns the chats they were
+    for (soft-off queues them as unanswered)."""
+    rows = await pool.fetch("DELETE FROM deferred_replies WHERE tenant_id = $1 RETURNING chat_id", tenant_id)
+    return [r["chat_id"] for r in rows]
 
 
 async def take_due_deferred(pool: asyncpg.Pool, tenant_id: int, now: datetime) -> list[int]:
@@ -118,7 +122,8 @@ async def platform_tick(pool: asyncpg.Pool, bus: commands.CommandBus) -> None:
         "INSERT INTO platform_settings (key, value, updated_by) VALUES ('scheduler_heartbeat', to_jsonb(now()), "
         "'scheduler') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"
     )
-    for name, step in (("health", lambda: health.check_all(pool)), ("billing", lambda: billing.tick(pool, bus))):
+    for name, step in (("health", lambda: health.check_all(pool)), ("billing", lambda: billing.tick(pool, bus)),
+                       ("digest", lambda: digest.tick(pool, bus))):
         try:
             await step()
         except Exception:

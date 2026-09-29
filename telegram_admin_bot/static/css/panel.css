@@ -389,3 +389,20 @@ legend { padding: 0 6px; color: var(--accent); font-size: 12px; text-transform: 
 #session-menu .s-row.active { background: var(--accent-dim); }
 #session-menu .s-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #session-menu .s-empty { padding: 11px 13px; color: var(--muted); font-size: 13px; }
+/* ---------- unanswered ---------- */
+#unanswered {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+  justify-content: center; padding: 24px;
+}
+#unanswered.open { display: flex; }
+#unanswered .pf-shell { max-width: 980px; }
+#unanswered .bk-nav select { width: auto; }
+.ua-item.ua-reviewed, .ua-item.ua-added_to_template { opacity: .7; }
+.ua-text { white-space: pre-wrap; word-break: break-word; margin-bottom: 4px; }
+.ua-why { font-size: 12px; margin-top: 2px; }
+.ua-reason.ua-r-escalated, .ua-reason.ua-r-ai_error, .ua-reason.ua-r-policy_hold { background: rgba(242,86,90,.3); }
+.ua-reason.ua-r-fallback, .ua-reason.ua-r-skipped { background: rgba(169,130,31,.3); }
+.ua-promote { margin-top: 8px; }
+@media (max-width: 640px) {
+  #unanswered { padding: 0; }
+}

@@ -36,6 +36,12 @@ panel) makes the bot keep quiet there for `takeover_hours`. The account
 reports its health (health.py) and checks its Telegram logins for new ones
 (anomaly.py).
 
+Phase 4: every customer message the bot ends up not answering (a reply
+limit, a failed model call, soft-off, a paused chat, an escalation, a
+policy hold, staging) or answering with one of the tenant's fallback
+phrases goes into the unanswered queue (unanswered.py), decided here in
+code. Staging mode (`staging.*`) answers only the listed test chats.
+
 `media.MediaLibrary` is still files, kept per tenant under
 DATA_DIR/tenants/<tenant id> (tenants.tenant_data_dir).
 """
@@ -84,6 +90,7 @@ import policy
 import scheduler
 import tenant_config
 import tenants
+import unanswered
 import vision
 from database import (
     DIR_IN,
@@ -109,6 +116,14 @@ log = logging.getLogger("session_runtime")
 # Telegram's own service account: login codes and "new login" notices come
 # from it. Never answered; a message from it triggers a login check.
 TELEGRAM_SERVICE_ID = 777000
+
+# reply_skip_reason's answer for a bare "ok" / "thanks". It is skipped like
+# the others but not queued as unanswered: it needed no answer.
+ACK_SKIP = "the message is only an acknowledgement"
+# In staging, a chat that is not a test chat gets this note at most once an
+# hour, so a busy chat's history isn't all notes.
+STAGING_NOTE = "Staging: not answered — not a test chat."
+STAGING_NOTE_SECONDS = 3600
 
 
 class NeedsLogin(RuntimeError):
@@ -297,6 +312,8 @@ class SessionRuntime:
         self.finished = False
         self.LOGINS_CHECK_SECONDS = 300
         self._logins_checked_at = 0.0
+        # chat id -> when (monotonic) the staging note was last posted there.
+        self._staging_noted: dict[int, float] = {}
 
         self._ai_gate: Optional[asyncio.Semaphore] = None
         self._ai_gate_size = 0
@@ -654,10 +671,16 @@ class SessionRuntime:
             # Not the task asking (a draft that just tripped an anomaly
             # still has to store itself as held).
             current = asyncio.current_task()
+            dropped: set[int] = set()
             for chat_id, task in list(self.draft_tasks.items()):
                 if task is not current:
+                    if not task.done() and chat_id not in self.sending_chats:
+                        dropped.add(chat_id)
                     self.cancel_draft(chat_id)
-            await scheduler.clear_all_deferred(self.pool, self.tenant_id)
+            dropped.update(await scheduler.clear_all_deferred(self.pool, self.tenant_id))
+            # Resuming replays nothing, so these customers are not answered.
+            for chat_id in sorted(dropped):
+                await self.queue_unanswered(chat_id, unanswered.SOFT_OFF, reason)
         elif was and not reason:
             log.info("[%s] Resumed (was: %s).", self.session_id, was)
             if self.config["outreach"]["enabled"]:
@@ -830,6 +853,74 @@ class SessionRuntime:
         for chat_id in await scheduler.take_due_deferred(self.pool, self.tenant_id, self.utcnow()):
             if not self.paused():
                 self.schedule_draft(chat_id)
+
+    # ------------------------------------------------------------------
+    # Unanswered queue (unanswered.py) and staging
+    # ------------------------------------------------------------------
+
+    async def queue_unanswered(self, chat_id: int, reason: str, detail: str = "",
+                               message_id: Optional[int] = None) -> None:
+        """Put the customer's message (by default their newest one in this
+        chat) into the unanswered queue. One entry per message: the first
+        reason recorded wins. Never raises: the queue is a report, and a
+        failure writing it must not cost the customer a reply."""
+        try:
+            if chat_id == TELEGRAM_SERVICE_ID:
+                return
+            # The owner talking to their own bot is not a customer.
+            if chat_id == await self.flow.provider_chat_id():
+                return
+            if message_id is None:
+                message_id = await unanswered.last_customer_message(self.pool, self.tenant_id, chat_id)
+            if message_id is None:
+                return
+            item = await unanswered.record(
+                self.pool, tenant_id=self.tenant_id, session_id=self.session_id, chat_id=chat_id,
+                message_id=message_id, reason=reason, detail=detail,
+            )
+            if item is not None:
+                log.info("[%s]   chat %s: queued as unanswered (%s).", self.session_id, chat_id, reason)
+                await self.hub.broadcast({"type": "unanswered", "chat_id": chat_id, "reason": reason})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[%s] Could not queue chat %s as unanswered (%s)", self.session_id, chat_id, reason)
+
+    def fallback_phrase(self, text: str) -> str:
+        """The first of unanswered.fallback_phrases in this reply (any case),
+        or "". A reply with one still goes out; it is only queued."""
+        low = (text or "").lower()
+        for phrase in self.config["unanswered"]["fallback_phrases"]:
+            if phrase.strip() and phrase.strip().lower() in low:
+                return phrase.strip()
+        return ""
+
+    def staging_on(self) -> bool:
+        return bool(self.config["staging"]["enabled"])
+
+    def is_test_chat(self, chat_id: int, username: Optional[str]) -> bool:
+        """A staging test chat: its username (no @, any case) or its numeric
+        chat id is listed in staging.test_chats."""
+        listed = self.config["staging"]["test_chats"]
+        name = (username or "").strip().lstrip("@").lower()
+        return (bool(name) and name in listed) or str(chat_id) in listed
+
+    async def staged_out(self, chat_id: int, username: Optional[str]) -> bool:
+        """Staging is on and this is neither a test chat nor the owner's own
+        chat (booking.provider): stored, never answered."""
+        if not self.staging_on() or self.is_test_chat(chat_id, username):
+            return False
+        return chat_id != await self.flow.provider_chat_id()
+
+    async def staging_skip(self, chat_id: int, message_id: Optional[int]) -> None:
+        """A message staging keeps the bot out of: a note in the chat (at
+        most once an hour per chat) and a queue entry."""
+        now = time.monotonic()
+        last = self._staging_noted.get(chat_id)
+        if last is None or now - last >= STAGING_NOTE_SECONDS:
+            self._staging_noted[chat_id] = now
+            await self.post_note(chat_id, STAGING_NOTE)
+        await self.queue_unanswered(chat_id, unanswered.STAGING, "staging: not a test chat", message_id)
 
     def paused(self) -> bool:
         """Soft-off: a hold on the tenant or the global stop (controls.py).
@@ -1369,10 +1460,19 @@ class SessionRuntime:
                 return
 
             # The switches may have been thrown while waiting.
-            if await self.refresh_controls():
+            if off := await self.refresh_controls():
+                await self.queue_unanswered(chat_id, unanswered.SOFT_OFF, off)
                 return
             conversation = await self.db.get_conversation(chat_id)
-            if conversation is None or self.silenced(conversation):
+            if conversation is None:
+                return
+            if quiet := self.silenced(conversation):
+                await self.queue_unanswered(chat_id, unanswered.PAUSED, quiet)
+                return
+            # Staging may have been switched on after this reply was
+            # scheduled (a reply held back by quiet hours, say).
+            if await self.staged_out(chat_id, conversation.get("username")):
+                await self.staging_skip(chat_id, None)
                 return
 
             history = await self.db.get_history_for_ai(chat_id, limit=30)
@@ -1384,7 +1484,9 @@ class SessionRuntime:
             # has to say (taken, confirmed, offered times).
             await self.flow.wait_scan(chat_id)
             note = await self.flow.reply_note(chat_id)
-            if await self.ai_limit_reason():
+            if limit := await self.ai_limit_reason():
+                # A limit puts the client soft-off (a spend_cap hold).
+                await self.queue_unanswered(chat_id, unanswered.SOFT_OFF, limit)
                 return
             if not note.has_news:
                 skip = await self.reply_skip_reason(chat_id, history)
@@ -1453,6 +1555,9 @@ class SessionRuntime:
             verdict = await self.check_policy(chat_id, text, prompt)
             model = self.config["ai"]["model"]
             version = prompt.version_tag if prompt else None
+            # Found before sending, queued after: the reply still goes out
+            # (or is drafted) as normal.
+            fallback = self.fallback_phrase(text)
 
             if self.config["auto_send"] and not hold and verdict.ok:
                 self.sending_chats.add(chat_id)
@@ -1477,6 +1582,12 @@ class SessionRuntime:
                 if row is not None:
                     await self.push_message(row)
                 log.info("[%s] Draft awaiting approval for chat %s.", self.session_id, chat_id)
+                # Waiting for approval because auto_send is off or for a
+                # video is a normal draft; held by policy is unanswered.
+                if not verdict.ok:
+                    await self.queue_unanswered(chat_id, unanswered.POLICY_HOLD, "; ".join(verdict.reasons))
+            if fallback:
+                await self.queue_unanswered(chat_id, unanswered.FALLBACK, f"the reply contains “{fallback}”")
             await self.flow.delivered(chat_id, note)
             await scheduler.clear_deferred(self.pool, self.tenant_id, chat_id)
             self.schedule_go_offline(chat_id)
@@ -1486,12 +1597,22 @@ class SessionRuntime:
         except SendBlocked as exc:
             log.info("[%s] Not replying in chat %s: %s", self.session_id, chat_id, exc)
             await self.push_error(chat_id, str(exc))
+            # Stopped at the last step: the switches, or a send cap.
+            await self.queue_unanswered(chat_id, unanswered.SOFT_OFF if self.paused() else unanswered.SKIPPED,
+                                        str(exc))
         except ai_responder.AIResponderError as exc:
             await self.push_error(chat_id, str(exc))
+            await self.queue_unanswered(chat_id, unanswered.AI_ERROR, str(exc))
         except Exception as exc:
             if not await self.handle_send_failure(chat_id, exc):
                 log.exception("[%s] Unexpected failure while drafting for chat %s", self.session_id, chat_id)
                 await self.push_error(chat_id, f"Drafting failed: {type(exc).__name__}: {exc}")
+                await self.queue_unanswered(chat_id, unanswered.AI_ERROR, f"{type(exc).__name__}: {exc}")
+            else:
+                # A Telegram error that was dealt with (a halt, a blocked
+                # chat, a rate limit): the reply did not go out.
+                await self.queue_unanswered(chat_id, unanswered.SOFT_OFF if self.paused() else unanswered.SKIPPED,
+                                            f"Telegram: {type(exc).__name__}")
         finally:
             if chat_id in self.active_chats:
                 self.schedule_go_offline(chat_id)
@@ -1512,13 +1633,18 @@ class SessionRuntime:
         last = history[-1] if history else {}
         if (replies["skip_acknowledgements"] and last.get("role") == "user"
                 and ai_limits.is_acknowledgement(last.get("content", ""), replies["acknowledgements"])):
-            return "the message is only an acknowledgement"
+            return ACK_SKIP
         return await ai_limits.reply_limit(self.pool, self.tenant_id, chat_id, replies)
 
     async def skip_reply(self, chat_id: int, reason: str) -> None:
         log.info("[%s]   not replying in chat %s: %s", self.session_id, chat_id, reason)
         await self.post_note(chat_id, f"No reply: {reason}.")
         await self.write_audit(audit.REPLY_SKIPPED, reason=reason, payload={"chat_id": chat_id})
+        # A reply limit or the tenant's no-reply instruction left a
+        # customer without an answer: queued. A bare acknowledgement
+        # ("ok", "thanks") needed none, so it is not.
+        if reason != ACK_SKIP:
+            await self.queue_unanswered(chat_id, unanswered.SKIPPED, reason)
 
     async def check_policy(
         self, chat_id: int, text: str, prompt: Optional[Any]
@@ -1815,6 +1941,11 @@ class SessionRuntime:
 
         is_provider = self.flow.enabled() and chat_id == await self.flow.provider_chat_id()
         quiet = self.silenced(conversation)
+        # Staging: only the test chats get the normal flow; the owner's own
+        # chat is never held back. Decided up front so a photo from anyone
+        # else costs no vision call either.
+        staged = await self.staged_out(chat_id, username)
+        message_id = row["id"] if row is not None else None
         if is_provider:
             if has_photo and await self.save_owner_photo(event, text):
                 return
@@ -1823,7 +1954,7 @@ class SessionRuntime:
                 return
             log.info("[%s]   message from the booking owner; replying as usual.", self.session_id)
 
-        if has_photo and not is_provider and not self.paused() and not quiet:
+        if has_photo and not is_provider and not self.paused() and not quiet and not staged:
             seen = await self.read_photo(chat_id, event)
             if seen is not None and row is not None:
                 label = f"{text}\n{seen}" if has_text else seen
@@ -1841,22 +1972,32 @@ class SessionRuntime:
         if keyword:
             log.info("[%s]   escalation keyword — the chat is paused and the owner pinged.", self.session_id)
             await self.escalate(chat_id, name, text, keyword)
+            await self.queue_unanswered(chat_id, unanswered.ESCALATED, f"keyword “{keyword}”", message_id)
             return
         # Off in memory: make sure it still is (a resume may not have
         # reached this runtime yet).
         if self.paused() and await self.refresh_controls():
             log.info("[%s]   soft-off (%s) — not answering.", self.session_id, self.off_reason)
+            await self.queue_unanswered(chat_id, unanswered.SOFT_OFF, self.off_reason, message_id)
+            return
+        # Staging keeps escalation (above) — a customer asking for a person
+        # still pauses the chat and reaches the owner — but nothing else.
+        if staged:
+            log.info("[%s]   staging: chat %s is not a test chat — not answering.", self.session_id, chat_id)
+            await self.staging_skip(chat_id, message_id)
             return
         if quiet:
             log.info("[%s]   not answering in this chat: %s.", self.session_id, quiet)
+            await self.queue_unanswered(chat_id, unanswered.PAUSED, quiet, message_id)
             return
 
         if self.flow.enabled() and not is_provider:
             await self.flow.on_customer_message(chat_id, text)
 
         conversation = await self.db.get_conversation(chat_id)
-        if self.silenced(conversation):
+        if quiet := self.silenced(conversation):
             log.info("[%s]   this conversation is paused — skipping.", self.session_id)
+            await self.queue_unanswered(chat_id, unanswered.PAUSED, quiet, message_id)
             return
         # Quiet hours do not skip the reply; draft_worker holds it until
         # they end.
@@ -2019,6 +2160,8 @@ class SessionRuntime:
             "off_reason": self.off_reason,
             "auto_send": self.config["auto_send"],
             "tenant_id": self.tenant_id,
+            # Staging: only the test chats are answered.
+            "staging": self.staging_on(),
             # Kept under its old name for the panel: true once the business
             # sections of the prompt say anything at all.
             "persona_configured": bool(self.bundle and self.bundle.prompt.business_text.strip()),
