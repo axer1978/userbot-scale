@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0e1116">
+<title>My business</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234c8dff'/%3E%3Cpath d='M7 16.5l17-7-6 16-3.5-6z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/owner/owner.css">
+</head>
+<body>
+
+<!-- sign in -->
+<section id="screen-login" class="screen" hidden>
+  <div class="card narrow">
+    <div class="logo" aria-hidden="true">
+      <svg width="24" height="24" viewBox="0 0 32 32"><path d="M7 16.5l17-7-6 16-3.5-6z" fill="#fff"/></svg>
+    </div>
+    <h1>Sign in</h1>
+    <p class="hint">Your bookings, messages and weekly numbers.</p>
+    <div id="login-notice" class="notice" role="alert" hidden></div>
+    <form id="login-form" autocomplete="on">
+      <label class="field">Username
+        <input id="login-username" name="username" type="text" autocomplete="username" autocapitalize="none"
+               spellcheck="false" required></label>
+      <label class="field">Password
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required></label>
+      <label class="field" id="login-code-field" hidden>Code from your authenticator app
+        <input id="login-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+               maxlength="7" placeholder="6 digits"></label>
+      <button type="submit" class="btn primary block">Sign in</button>
+    </form>
+  </div>
+</section>
+
+<!-- forced password change -->
+<section id="screen-change" class="screen" hidden>
+  <div class="card narrow">
+    <h1>Choose your password</h1>
+    <p class="hint">You signed in with a temporary password. Choose your own to continue
+      (at least 10 characters).</p>
+    <div id="change-notice" class="notice" role="alert" hidden></div>
+    <form id="change-form" autocomplete="on">
+      <input type="text" name="username" autocomplete="username" hidden>
+      <label class="field">Temporary password
+        <input id="change-current" type="password" autocomplete="current-password" required></label>
+      <label class="field">New password
+        <input id="change-new" type="password" autocomplete="new-password" minlength="10" required></label>
+      <label class="field">New password again
+        <input id="change-repeat" type="password" autocomplete="new-password" minlength="10" required></label>
+      <button type="submit" class="btn primary block">Save and continue</button>
+    </form>
+    <button type="button" id="change-logout" class="btn ghost block">Sign out</button>
+  </div>
+</section>
+
+<!-- dashboard -->
+<section id="screen-app" class="screen" hidden>
+  <header class="topbar">
+    <div class="who">
+      <span class="brand">My business</span>
+      <span id="app-user" class="muted small"></span>
+    </div>
+    <button type="button" id="refresh" class="btn ghost" title="Load the latest numbers">Refresh</button>
+    <button type="button" id="open-settings" class="btn">Settings</button>
+  </header>
+  <div id="switcher-row" class="switcher" hidden>
+    <label for="switcher" class="sr-only">Business</label>
+    <select id="switcher"></select>
+  </div>
+  <main id="content"></main>
+</section>
+
+<!-- settings sheet -->
+<div id="settings" class="sheet-backdrop" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="sheet-head">
+      <h2 id="settings-title">Settings</h2>
+      <button type="button" id="close-settings" class="btn ghost">Close</button>
+    </div>
+
+    <section class="block">
+      <h3>Change password</h3>
+      <form id="password-form" autocomplete="on">
+        <input type="text" name="username" autocomplete="username" hidden>
+        <label class="field">Current password
+          <input id="pw-current" type="password" autocomplete="current-password" required></label>
+        <label class="field">New password
+          <input id="pw-new" type="password" autocomplete="new-password" minlength="10" required></label>
+        <label class="field">New password again
+          <input id="pw-repeat" type="password" autocomplete="new-password" minlength="10" required></label>
+        <button type="submit" class="btn primary block">Change password</button>
+      </form>
+      <p class="hint">Changing it signs you out on your other devices.</p>
+    </section>
+
+    <section class="block">
+      <h3>Two-step sign-in</h3>
+      <div id="totp-box"></div>
+    </section>
+
+    <section class="block">
+      <button type="button" id="logout" class="btn danger block">Sign out</button>
+    </section>
+  </div>
+</div>
+
+<div id="toasts" aria-live="polite"></div>
+
+<script src="/owner/owner.js"></script>
+</body>
+</html>

@@ -30,6 +30,7 @@
   <button id="open-settings" class="btn" title="How this client's bot behaves: config, prompt, versions">Settings</button>
   <button id="open-safety" class="btn" title="Kill switches, billing, alerts and account health">Safety <span id="safety-count" class="count-badge"></span></button>
   <button id="open-platform" class="btn" title="All clients, industries and the platform rules">Clients</button>
+  <button id="open-owners" class="btn" title="Logins for business owners to their own dashboard (/owner/)">Client logins</button>
   <button id="logout" class="btn">Log out</button>
 </header>
 <div id="safety-banner" class="safety-banner" hidden></div>
@@ -168,6 +169,21 @@
     <div class="bk-scroll">
       <div id="sf-tabs" class="pf-tabs"></div>
       <div id="sf-body"></div>
+    </div>
+  </div>
+</div>
+
+<div id="owners">
+  <div class="pf-shell">
+    <div class="pf-top">
+      <h2>Client logins</h2>
+      <span class="muted">dashboard access for business owners</span>
+      <span class="spacer"></span>
+      <button type="button" id="ow-close" class="btn">Close</button>
+    </div>
+    <div class="bk-scroll">
+      <div id="ow-tabs" class="pf-tabs"></div>
+      <div id="ow-body"></div>
     </div>
   </div>
 </div>
@@ -322,6 +338,7 @@
 <script src="/js/platform.js"></script>
 <script src="/js/bookings.js"></script>
 <script src="/js/safety.js"></script>
+<script src="/js/owners.js"></script>
 <script src="/js/boot.js"></script>
 </body>
 </html>

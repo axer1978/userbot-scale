@@ -389,3 +389,24 @@ legend { padding: 0 6px; color: var(--accent); font-size: 12px; text-transform: 
 #session-menu .s-row.active { background: var(--accent-dim); }
 #session-menu .s-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #session-menu .s-empty { padding: 11px 13px; color: var(--muted); font-size: 13px; }
+
+/* ---------- client logins ---------- */
+#owners {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+  justify-content: center; padding: 24px;
+}
+#owners.open { display: flex; }
+#owners .pf-shell { max-width: 860px; }
+.ow-card .title { flex-wrap: wrap; }
+.ow-badges { display: inline-flex; gap: 6px; flex-wrap: wrap; font-weight: normal; }
+.ow-card.ow-disabled { opacity: .7; }
+.ow-meta { margin: 6px 0 4px; }
+.ow-picker { max-height: 200px; margin-bottom: 4px; }
+.ow-pw-row { margin-top: 0; }
+.ow-pw-row input { font-family: ui-monospace, Consolas, monospace; }
+.ow-secret { border-color: var(--accent); }
+.ow-password { display: inline-block; font-size: 16px; padding: 6px 10px; border-radius: 8px;
+  background: var(--bg); border: 1px solid var(--border); user-select: all; word-break: break-all; }
+@media (max-width: 640px) {
+  #owners { padding: 0; }
+}
