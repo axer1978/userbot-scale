@@ -99,3 +99,11 @@ def test_escalation_keywords_match_a_word_start_in_any_case():
     assert policy.escalation_match("напишу жалобу", words) == "жалоб"
     assert policy.escalation_match("my paralawyer friend", words) == ""
     assert policy.escalation_match("anything", []) == ""
+
+
+def test_the_platforms_own_booking_pages_are_always_allowed(monkeypatch):
+    link = "Your booking: https://book.203-0-113-7.sslip.io/b/abc123"
+    assert policy.check_outbound(link, cfg(), "").tripwire          # unknown domain without it
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://book.203-0-113-7.sslip.io/")
+    assert policy.check_outbound(link, cfg(), "").ok
+    assert policy.check_outbound("see https://evil.example.ru", cfg(), "").tripwire

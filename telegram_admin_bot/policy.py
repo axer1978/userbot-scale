@@ -29,6 +29,7 @@ IBAN into its own prompt, the bot repeating it is expected.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -53,6 +54,7 @@ _WALLETS = (
 _IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,3})?\b")
 _EMAIL = re.compile(r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
 _PHONE = re.compile(r"(?<![\w+])(?:\+|00)?\d(?:[\s-]?\d){7,14}(?![\w])")
+_FULL_URL = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
 _DATE_LIKE = re.compile(r"^\d{4}-\d{2}-\d{2}$|^\d{2}-\d{2}-\d{4}$")
 _MONEY = re.compile(
     r"(?i)(?:€|eur\b|euro\b|eiro\b|евро\b)\s*(\d+(?:[.,]\d{1,2})?)"
@@ -134,6 +136,16 @@ def _price_problems(text: str, floors: dict[str, float]) -> list[str]:
     return problems
 
 
+def platform_domains() -> list[str]:
+    """The platform's own public address (PUBLIC_BASE_URL, the booking
+    pages). Reminders link there, so it is always allowed; without this the
+    first reminder with a booking link would trip the trip-wire."""
+    from urllib.parse import urlparse
+
+    host = urlparse((os.getenv("PUBLIC_BASE_URL") or "").strip()).hostname
+    return [host] if host else []
+
+
 def check_outbound(text: str, config: dict[str, Any], business_text: str = "") -> Verdict:
     """Everything wrong with `text` as an automatic reply, as sentences an
     operator can act on. An empty list means it may go out."""
@@ -142,9 +154,10 @@ def check_outbound(text: str, config: dict[str, Any], business_text: str = "") -
     business_digits = _digits(business_text or "")
     shareable = [c.strip().lower() for c in config.get("shareable_contacts", []) if c.strip()]
     shareable_digits = [_digits(c) for c in shareable if _digits(c)]
+    allowed_domains = list(config.get("allowed_link_domains", [])) + platform_domains()
 
     for domain in _links(text):
-        if not _domain_allowed(domain, config.get("allowed_link_domains", []), business_lower):
+        if not _domain_allowed(domain, allowed_domains, business_lower):
             verdict.tripwire.append(f"links to {domain}, which is not an allowed domain")
 
     for label, pattern in _WALLETS:
@@ -158,11 +171,14 @@ def check_outbound(text: str, config: dict[str, Any], business_text: str = "") -
     verdict.tripwire = list(dict.fromkeys(verdict.tripwire))
     verdict.reasons.extend(verdict.tripwire)
 
-    for match in _EMAIL.finditer(text):
+    # A link was judged above as a whole; digits or an @ inside it (an IP
+    # written with dashes, a path) are not a phone number or an address.
+    plain = _FULL_URL.sub(" ", text)
+    for match in _EMAIL.finditer(plain):
         email = match.group(0).lower()
         if email not in shareable and email not in business_lower:
             verdict.reasons.append(f"shares the e-mail address {email}, which is not in shareable_contacts")
-    for match in _PHONE.finditer(text):
+    for match in _PHONE.finditer(plain):
         raw = match.group(0).strip()
         if _DATE_LIKE.match(raw):
             continue
