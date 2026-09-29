@@ -65,6 +65,8 @@ ANOMALY_DETECTED = "anomaly_detected"
 ESCALATED = "escalated"
 HUMAN_TAKEOVER = "human_takeover"
 TAKEOVER_ENDED = "takeover_ended"
+# payload.proxy: type, host, port, user; never the password.
+PROXY_CHANGED = "proxy_changed"
 
 Executor = Union[asyncpg.Pool, asyncpg.Connection]
 

@@ -281,6 +281,34 @@ async function sfClient(box) {
   }
   box.appendChild(hl);
 
+  // Telegram proxy
+  const px = el("div", "pf-section");
+  px.appendChild(el("div", "title", "Telegram proxy"));
+  px.appendChild(el("p", "pf-note", c.proxy
+    ? `Connects through ${c.proxy.type}://${c.proxy.host}:${c.proxy.port}` +
+      (c.proxy.username ? ` as ${c.proxy.username}` : "") + ". The password is stored encrypted and never shown."
+    : "Connects directly from this server. A residential or mobile proxy in the account's country makes it " +
+      "connect from there instead."));
+  if (c.tenant.session_id) {
+    const pxRow = el("div", "pf-actions");
+    const pxInput = el("input");
+    pxInput.type = "password";
+    pxInput.autocomplete = "off";
+    pxInput.placeholder = "socks5://user:password@host:port";
+    const pxSave = el("button", "btn small primary", c.proxy ? "Replace" : "Use this proxy");
+    pxSave.addEventListener("click", () => sfProxy(id, pxInput.value.trim()));
+    pxRow.append(pxInput, pxSave);
+    if (c.proxy) {
+      const pxClear = el("button", "btn small warn", "Connect directly");
+      pxClear.addEventListener("click", () => {
+        if (confirm("Stop using the proxy and connect from this server's own address?")) sfProxy(id, "");
+      });
+      pxRow.appendChild(pxClear);
+    }
+    px.appendChild(pxRow);
+  }
+  box.appendChild(px);
+
   // Hard-off
   const hard = el("div", "pf-section danger");
   hard.appendChild(el("div", "title", "Hard-off"));
@@ -320,6 +348,15 @@ async function sfPost(path, body) {
   if (state.sessionId) {
     try { applyStatus(await sApi("GET", "/status")); } catch (_) {}
   }
+}
+
+async function sfProxy(id, url) {
+  try {
+    const r = await api("PUT", `/api/tenants/${id}/proxy`, { proxy_url: url });
+    toast((url ? "Proxy saved. " : "Proxy removed. ") +
+      (r.reconnected ? "The account reconnected." : "The account uses it when it next starts."), "info");
+  } catch (err) { toast(err.message); }
+  await sfRender();
 }
 
 async function sfPut(path, body) {

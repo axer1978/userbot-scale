@@ -20,6 +20,7 @@ from telethon import TelegramClient, errors
 from telethon.sessions import StringSession
 
 import device_profiles
+import proxies
 from database import SessionRegistry
 
 log = logging.getLogger("login")
@@ -158,8 +159,13 @@ class LoginFlow:
         phone: str,
         *,
         label: str = "",
+        proxy_url: str = "",
     ) -> None:
         """Send the login code. On return the flow is at the code step.
+
+        With `proxy_url`, the sign-in goes through that proxy and it is saved
+        as the account's proxy, so Telegram sees the same address from the
+        first login on (proxies.py).
 
         Creates (or overwrites the credentials on) the `telegram_sessions`
         row identified by `session_id` before talking to Telegram, so a
@@ -175,10 +181,15 @@ class LoginFlow:
         # auth key (session_runtime._resolve_identity falls back to the same
         # deterministic derive()), not Telethon's default "PC 64bit".
         identity = device_profiles.derive(session_id)
+        try:
+            proxy = proxies.telethon_tuple(proxy_url or None)
+        except proxies.ProxyError as exc:
+            raise LoginError(str(exc)) from None
         client = TelegramClient(
             StringSession(),
             api_id,
             api_hash,
+            proxy=proxy,
             device_model=identity["device_model"],
             system_version=identity["system_version"],
             app_version=identity["app_version"],
@@ -220,6 +231,7 @@ class LoginFlow:
         # a rejected phone number or bad api_id/api_hash never creates one.
         try:
             await self._registry.create(session_id, label=label, api_id=api_id, api_hash=api_hash)
+            await self._registry.set_proxy(session_id, proxy_url or None)
         except Exception as exc:
             await client.disconnect()
             raise LoginError(f"Could not save this session's credentials: {exc}")

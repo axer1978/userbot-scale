@@ -95,10 +95,12 @@ $("l-credentials").addEventListener("submit", async (ev) => {
     phone: $("l-phone").value.trim(),
     deepseek_api_key: $("l-deepseek").value.trim(),
     label: $("l-label").value.trim(),
+    proxy_url: $("l-proxy").value.trim(),
   });
   if (ok) {
     $("l-api-hash").value = "";
     $("l-deepseek").value = "";
+    $("l-proxy").value = "";
     $("l-code").value = "";
   }
 });

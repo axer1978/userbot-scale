@@ -88,6 +88,7 @@ import llm_usage
 import media
 import pg
 import policy
+import proxies
 import scheduler
 import tenant_config
 import tenants
@@ -205,29 +206,9 @@ def _client_from_auth(
 
 
 def _parse_proxy(proxy_url: Optional[str]) -> Optional[tuple]:
-    """A generic socks5://user:pass@host:port -> Telethon's proxy tuple.
-
-    Provider-agnostic on purpose (plan decision: proxy provider not chosen
-    yet). None (no proxy configured) means a direct connection, which is
-    the expected state until Ops Item 2/3 supply real credentials.
-    """
-    if not proxy_url:
-        return None
-    from urllib.parse import urlparse
-
-    parsed = urlparse(proxy_url)
-    if parsed.scheme not in ("socks5", "socks5h"):
-        raise ValueError(f"Unsupported proxy scheme {parsed.scheme!r}; expected socks5://")
-    if not parsed.hostname or not parsed.port:
-        raise ValueError(f"Proxy URL missing host or port: {proxy_url!r}")
-    return (
-        "socks5",
-        parsed.hostname,
-        parsed.port,
-        True,  # rdns — resolve hostnames through the proxy, not locally
-        parsed.username,
-        parsed.password,
-    )
+    """The account's proxy URL (socks5://, socks5h:// or http://) ->
+    Telethon's proxy tuple; None means a direct connection (proxies.py)."""
+    return proxies.telethon_tuple(proxy_url)
 
 
 class Hub:
@@ -513,6 +494,11 @@ class SessionRuntime:
             return {"sent": row is not None, "error": "" if row is not None else (
                 f"sending is off ({self.off_reason})" if self.off_reason else
                 "the owner could not be reached (booking.provider)")}
+
+        if action == "reconnect":
+            # The proxy (or the stored login) changed in the panel: connect
+            # again with what is stored now.
+            return await self.reconnect()
 
         if action == "hard_off":
             return await self.hard_off(str(args.get("reason") or ""))
@@ -2229,6 +2215,19 @@ class SessionRuntime:
     # ------------------------------------------------------------------
     # Runners
     # ------------------------------------------------------------------
+
+    async def reconnect(self) -> dict[str, Any]:
+        """Drop the Telegram connection and open it again with the login and
+        proxy stored now. Drafts in progress are cancelled like on a stop."""
+        auth = await self.registry.load_auth(self.session_id)
+        if auth is None or not auth.get("auth_key"):
+            raise ValueError("This account has no login to reconnect with.")
+        proxy_url = await self.registry.load_proxy(self.session_id)
+        log.warning("[%s] Reconnecting to Telegram (%s).", self.session_id,
+                    "through a proxy" if proxy_url else "directly")
+        await self._stop_telegram()
+        await self._start_telegram(auth, proxy_url)
+        return {"ok": True, "proxy": proxies.describe(proxy_url)}
 
     async def _start_telegram(self, auth: dict[str, Any], proxy_url: Optional[str]) -> None:
         flood_sleep_threshold = int(self.config["safety"].get("max_flood_wait_seconds", 300))

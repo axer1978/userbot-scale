@@ -20,8 +20,11 @@ from pydantic import BaseModel, Field
 import alerts
 import audit
 import billing
+import commands
 import controls
 import health
+import proxies
+from database import SessionRegistry
 
 log = logging.getLogger("safety_api")
 
@@ -186,7 +189,53 @@ async def api_controls(tenant_id: int) -> dict[str, Any]:
         **await controls.overview(pool, tenant_id),
         "health": await health.overview(pool, tenant_id),
         "alerts": await alerts.list_alerts(pool, tenant_id=tenant_id, limit=50),
+        # Host, port and user only: the password never leaves the server.
+        "proxy": proxies.describe(await SessionRegistry(pool).load_proxy(tenant["session_id"]))
+        if tenant["session_id"] else None,
     }
+
+
+class ProxyBody(BaseModel):
+    # socks5://user:pass@host:port, or "" for a direct connection.
+    proxy_url: str = Field("", max_length=500)
+
+
+RECONNECT_TIMEOUT = 30.0
+
+
+@router.put("/api/tenants/{tenant_id}/proxy")
+async def api_set_proxy(tenant_id: int, body: ProxyBody) -> dict[str, Any]:
+    """Set, change or clear the account's Telegram proxy. The server first
+    checks it can reach the proxy at all; then the running account
+    reconnects through it."""
+    tenant = await _tenant(tenant_id)
+    if not tenant["session_id"]:
+        raise HTTPException(status_code=400, detail="This client has no Telegram account.")
+    url = body.proxy_url.strip()
+    pool = _get_pool()
+    if url:
+        try:
+            ok, why = await proxies.reachable(url)
+        except proxies.ProxyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        if not ok:
+            raise HTTPException(status_code=400, detail=f"The proxy is not reachable from the server: {why}.")
+    await SessionRegistry(pool).set_proxy(tenant["session_id"], url or None)
+    described = proxies.describe(url or None)
+    await audit.record(pool, tenant_id=tenant_id, actor=ACTOR, event=audit.PROXY_CHANGED,
+                       reason="proxy set" if url else "proxy removed",
+                       payload={"proxy": described})
+    reconnected = False
+    bus = _get_bus()
+    if bus is not None:
+        try:
+            await bus.dispatch(tenant["session_id"], "reconnect", {}, timeout=RECONNECT_TIMEOUT)
+            reconnected = True
+        except commands.CommandTimeout:
+            pass  # not running: it uses the proxy when it next starts
+        except commands.CommandError as exc:
+            log.warning("[%s] Reconnect after a proxy change failed: %s", tenant["session_id"], exc)
+    return {"proxy": described, "reconnected": reconnected}
 
 
 class ReasonBody(BaseModel):

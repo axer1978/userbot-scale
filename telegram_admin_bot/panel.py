@@ -564,6 +564,9 @@ class AuthStartBody(BaseModel):
     phone: str = ""
     deepseek_api_key: str = ""
     label: str = ""
+    # Optional: socks5://user:pass@host:port (proxies.py). The sign-in and
+    # the account then both go through it.
+    proxy_url: str = ""
 
 
 class AuthCodeBody(BaseModel):
@@ -648,6 +651,7 @@ async def api_auth_start(body: AuthStartBody) -> dict[str, Any]:
     try:
         await login_flow.start(
             session_id, int(api_id_raw), api_hash, phone, label=body.label.strip() or phone,
+            proxy_url=body.proxy_url.strip(),
         )
     except LoginError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -89,6 +89,10 @@
       <p class="hint" style="margin-top:-6px">Both come from <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a> → API development tools.</p>
       <div class="field"><label for="l-phone">Phone number</label>
         <input id="l-phone" type="tel" placeholder="+34600123456 — international format" required></div>
+      <div class="field"><label for="l-proxy">Proxy <span style="color:var(--muted)">(optional)</span></label>
+        <input id="l-proxy" type="password" placeholder="socks5://user:password@host:port" autocomplete="off"></div>
+      <p class="hint" style="margin-top:-6px">A residential or mobile proxy in the account's own country, so it
+        signs in and runs from there instead of from this server. Leave empty to connect directly.</p>
       <div class="field"><label for="l-deepseek">DeepSeek API key</label>
         <input id="l-deepseek" type="password" placeholder="sk-…" autocomplete="off"></div>
       <p class="hint" style="margin-top:-6px">From <a href="https://platform.deepseek.com" target="_blank" rel="noopener">platform.deepseek.com</a>. Used to write the replies.</p>

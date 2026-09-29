@@ -154,7 +154,7 @@ Every service there should now show `Exited`. Its data stays on that server; `do
 
 Then, in the new panel, open **New client** (on a phone: **☰ Menu → New client**), the onboarding wizard:
 
-1. Sign in the Telegram account (API ID and hash, phone, the code Telegram sends).
+1. Sign in the Telegram account (API ID and hash, phone, the code Telegram sends). If you use a proxy for this account, fill in the **Proxy** field here, so the sign-in already goes through it (see "Proxy for the Telegram accounts" below).
 2. Business name and industry.
 3. Key settings: timezone, the owner's Telegram, bookings, auto-send, quiet hours.
 4. Staging: enter your own test chat. Only it gets answers. Send a few test messages.
@@ -162,6 +162,23 @@ Then, in the new panel, open **New client** (on a phone: **☰ Menu → New clie
 6. **Go live.**
 
 Once the new server answers, you can end the old server's login in Telegram (**Settings → Devices**) and stop the AWS instance in the AWS console.
+
+### Proxy for the Telegram accounts (optional)
+
+Without a proxy, every account connects to Telegram from this server's datacenter address. That works, but Telegram sees a Latvian number, say, logging in from a German datacenter. A **residential or mobile proxy in the account's own country** makes the account connect from an ordinary address there instead.
+
+- **What to buy:** a SOCKS5 proxy (HTTP also works), residential or mobile, **static or "sticky"** (the same address every time, not one that rotates per connection), in the country of the phone number. One per account. The provider gives you host, port, username and password.
+- **Put it together as one line:** `socks5://USERNAME:PASSWORD@HOST:PORT`. If the password contains `@`, `:` or `/`, write them as `%40`, `%3A`, `%2F`.
+- **New account:** paste it into the **Proxy** field when signing in (wizard step 1, or **+ Add account**). The sign-in and everything after it go through the proxy.
+- **Existing account:** **Safety → This client → Telegram proxy**, paste it, **Use this proxy**. The server first checks that it can reach the proxy (a typo is refused), then the account reconnects through it within seconds. **Connect directly** removes it.
+
+The password is stored encrypted like the Telegram login and is never shown again; the panel shows only host, port and user.
+
+If the account shows **not connected** after adding a proxy, the proxy refused it (wrong user or password, or the proxy doesn't allow Telegram's ports). Check with the provider, or click **Connect directly** to go back.
+
+### The web side is already behind a proxy
+
+The panel is never reached directly: Caddy sits in front of it (HTTPS, certificates, and it hides the app). You can later put **Cloudflare** in front of Caddy to hide the server's address, but only with your own domain (Cloudflare can't proxy an sslip.io name), and it needs the real-visitor-address setup in Caddy first so login limits keep working. Not needed for now; ask me when you get there.
 
 ## 8. Give the client their login
 
@@ -216,9 +233,9 @@ Add the A record from step 1 and wait until `nslookup panel.yourdomain.com` answ
 | Layer | What it does |
 |---|---|
 | HTTPS (Caddy, Let's Encrypt) | TLS 1.2/1.3 only, certificates renewed automatically, HTTP redirected to HTTPS, HSTS for 2 years |
-| Browser headers | A strict Content-Security-Policy (no inline scripts), no framing, no referrer, no caching of API answers |
+| Browser headers | A strict Content-Security-Policy (no inline scripts, live connection to this host only), no framing, no referrer, no caching of API answers. Requests from another website are refused, which matters on a shared name like sslip.io |
 | Admin login | Password of 14+ characters plus an authenticator code (each code works once); failed logins limited per address |
-| Client logins | Passwords hashed with scrypt, optional authenticator code, sessions stored only as hashes, cookies Secure + HttpOnly + SameSite=Strict, each client limited to their own businesses |
+| Client logins | Passwords hashed with scrypt, optional authenticator code, sessions stored only as hashes, cookies Secure + HttpOnly + SameSite=Strict with the `__Host-` prefix (no other site can plant one), each client limited to their own businesses |
 | Stored secrets | Telegram logins, API keys and authenticator keys AES-GCM encrypted with `USERBOT_MASTER_KEY` |
 | Network | Only 22/80/443 open (ufw). Postgres and Valkey are reachable only inside Docker. The panel only through Caddy. The public booking pages get none of the secrets in `.env` |
 | Server | Key-only SSH, fail2ban, automatic security updates |
