@@ -47,7 +47,9 @@ def matching_counter(
 ) -> Optional[int]:
     """The time step `code` belongs to, or None. Accepts one step either
     side of now, for clock drift and codes typed just as they rolled over."""
-    code = "".join(ch for ch in code if ch.isdigit())
+    # ASCII digits only: str.isdigit() also passes "²" or Arabic-Indic
+    # digits, which would reach compare_digest as non-ASCII and raise.
+    code = "".join(ch for ch in code if ch in "0123456789")
     if len(code) != DIGITS:
         return None
     current = int((time.time() if now is None else now) // STEP_SECONDS)

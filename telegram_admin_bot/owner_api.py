@@ -20,7 +20,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -116,6 +116,10 @@ async def api_login(body: LoginBody, request: Request) -> JSONResponse:
         # The password was right: ask for the code (not counted as a failure).
         raise HTTPException(status_code=401, detail=owner_auth.CODE_REQUIRED) from None
     owner_auth.clear_failures(ip, body.username)
+    # A session already in this browser is ended, not left alive beside the new one.
+    previous = owner_auth.token_from(request)
+    if previous:
+        await owner_auth.delete_session(pool, previous)
     token = await owner_auth.create_session(pool, row["id"], ip)
     await pool.execute("UPDATE owners SET last_login_at = now() WHERE id = $1", row["id"])
     owner = await owner_auth.session_owner(pool, token)
@@ -128,7 +132,7 @@ async def api_login(body: LoginBody, request: Request) -> JSONResponse:
 @router.post("/api/owner/logout")
 async def api_logout(request: Request) -> JSONResponse:
     """Works with or without a valid session: it always clears the cookie."""
-    token = request.cookies.get(owner_auth.COOKIE)
+    token = owner_auth.token_from(request)
     if token:
         await owner_auth.delete_session(_get_pool(), token)
     response = JSONResponse({"ok": True})
@@ -164,7 +168,7 @@ async def api_password(body: PasswordBody, request: Request,
             "UPDATE owners SET password_hash = $2, must_change_password = false, updated_at = now() WHERE id = $1",
             owner["id"], owner_auth.hash_password(body.new),
         )
-        await owner_auth.kill_sessions(con, owner["id"], keep_token=request.cookies.get(owner_auth.COOKIE))
+        await owner_auth.kill_sessions(con, owner["id"], keep_token=owner_auth.token_from(request))
     await _audit(owner, EVENT_PASSWORD, reason="changed by the owner")
     return {"ok": True}
 
@@ -355,8 +359,14 @@ async def api_unanswered(tenant_id: Optional[int] = None, status: str = "open",
     return {"items": items}
 
 
+# Postgres ids are int4: a bigger number is refused here (422) instead of
+# reaching the query and failing there.
+MAX_ID = 2 ** 31 - 1
+
+
 @router.post("/api/owner/unanswered/{item_id}/reviewed")
-async def api_unanswered_reviewed(item_id: int, owner: dict = Depends(owner_auth.current_owner)) -> dict[str, Any]:
+async def api_unanswered_reviewed(item_id: int = Path(ge=1, le=MAX_ID),
+                                  owner: dict = Depends(owner_auth.current_owner)) -> dict[str, Any]:
     item = await unanswered.set_status(_get_pool(), owner["tenant_ids"], item_id, unanswered.REVIEWED,
                                        by=owner_auth.actor(owner))
     if item is None:
