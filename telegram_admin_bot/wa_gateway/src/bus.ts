@@ -15,7 +15,17 @@
 import { Redis } from 'ioredis';
 import type pino from 'pino';
 
-export type ErrorKind = 'stale_epoch' | 'not_connected' | 'busy' | 'bad_request' | 'not_found' | 'session_lost' | 'other';
+export type ErrorKind =
+  | 'stale_epoch'
+  | 'not_connected'
+  | 'busy'
+  | 'bad_request'
+  | 'not_found'
+  | 'session_lost'
+  | 'rate_limited'
+  | 'not_on_whatsapp'
+  | 'blocked'
+  | 'other';
 
 export class GatewayError extends Error {
   readonly kind: ErrorKind;
