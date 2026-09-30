@@ -34,6 +34,7 @@ import redis.asyncio as aioredis
 
 import commands
 import controls
+import wa_device_profiles
 import wa_store
 from transport import (
     PEER_FLOOD,
@@ -93,6 +94,8 @@ def gateway_error(exc: commands.CommandError) -> GatewayError:
     if isinstance(exc, commands.CommandTimeout):
         return GatewayError("not_connected", "the WhatsApp gateway is not answering")
     kind, _, detail = str(exc).partition(":")
+    if getattr(exc, "kind", None):
+        return GatewayError(exc.kind, detail.strip() if kind.strip() == exc.kind else str(exc))
     kind = kind.strip()
     if not kind or " " in kind:
         return GatewayError("other", str(exc))
@@ -160,9 +163,10 @@ class WhatsAppTransport(Transport):
 
     def _open_args(self) -> dict[str, Any]:
         args: dict[str, Any] = {"session_id": self.rt.session_id, "epoch": self.rt.lease_epoch}
+        # The device identity the number was paired with (stored by the
+        # panel), else the same deterministic one the panel would pick.
         browser = (self.rt.account.get("identity") or {}).get("wa_browser")
-        if browser:
-            args["browser"] = list(browser)
+        args["browser"] = list(browser) if browser else list(wa_device_profiles.derive(self.rt.session_id))
         return args
 
     async def start(self) -> None:

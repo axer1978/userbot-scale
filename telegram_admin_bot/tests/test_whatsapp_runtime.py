@@ -21,6 +21,7 @@ import controls
 import crypto
 import health
 import session_runtime
+import wa_device_profiles
 import wa_store
 from conftest import FakeHub, seed_session
 from database import DIR_OUT, STATUS_ERROR, STATUS_PENDING, STATUS_RECEIVED, STATUS_SENT
@@ -131,7 +132,7 @@ async def test_open_carries_the_lease_epoch_and_connects(wa, pg_pool):
     await wa.transport._open_once()
     (target, action, args), = wa.bus.calls
     assert (target, action) == (GATEWAY, "open")
-    assert args == {"session_id": SID, "epoch": 7}
+    assert args == {"session_id": SID, "epoch": 7, "browser": list(wa_device_profiles.derive(SID))}
     assert wa.transport.connected
     row = await wa.registry.get(SID)
     assert row["state"] == "running"
@@ -254,6 +255,8 @@ def test_gateway_error_strings_are_parsed():
     assert gateway_error(commands.CommandTimeout("nobody")).kind == "not_connected"
     assert gateway_error(commands.CommandError("TypeError: boom here")).kind == "TypeError"
     assert gateway_error(commands.CommandError("something odd happened")).kind == "other"
+    tagged = gateway_error(commands.CommandError("busy: pairing running", kind="busy"))
+    assert (tagged.kind, tagged.detail) == ("busy", "pairing running")
 
 
 @pytest.mark.asyncio
