@@ -163,9 +163,21 @@ def _background(coro) -> None:
 
 
 async def drain() -> None:
-    """Wait for deliveries still running (tests, and a clean shutdown)."""
-    while _pending:
-        await asyncio.gather(*list(_pending), return_exceptions=True)
+    """Wait for deliveries still running (tests, and a clean shutdown).
+
+    Only this event loop's deliveries can be waited for. One started on a
+    loop that has since closed (a finished test's) can never report done,
+    since its done-callback runs on that loop, so it is forgotten here
+    instead of being waited on forever."""
+    loop = asyncio.get_running_loop()
+    while True:
+        for task in list(_pending):
+            if task.get_loop() is not loop and (task.done() or task.get_loop().is_closed()):
+                _pending.discard(task)
+        mine = [t for t in _pending if t.get_loop() is loop]
+        if not mine:
+            return
+        await asyncio.gather(*mine, return_exceptions=True)
 
 
 async def notify(pool: asyncpg.Pool, *, tenant_id: Optional[int], text: str, severity: str = INFO,
