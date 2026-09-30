@@ -93,7 +93,7 @@ Envelope is `commands.py`'s, so Python calls
 | `pair_cancel` | `pair_id` | `{"cancelled": true}` | `not_found` |
 | `open` | `session_id`, `epoch`, `browser` | `{"state": "opening"}` (or the existing state on the same epoch) | `stale_epoch`, `not_found` (no creds: pair first), `bad_request` (channel not whatsapp, malformed), `busy` (pairing in progress), `session_lost` (same epoch, device already lost) |
 | `close` | `session_id`, `epoch` | `{"closed": bool}`; `false` when nothing to close or `epoch` < the socket's | `bad_request` |
-| `status` | | `[{session_id, epoch, state, lost, me}]` | |
+| `status` | | `[{session_id, epoch, state, lost, me, inbox_pending}]` | |
 
 `pair` wipes the session's `wa_auth_state` first (a re-pair is a new linked
 device), runs a pairing socket, streams `qr` (each rotation) or requests a
@@ -140,13 +140,32 @@ in Unix seconds. Ephemeral/view-once envelopes are unwrapped. Dropped: groups,
 `status@broadcast`, broadcast lists, newsletters, protocol/reaction/stub
 messages, undecryptable messages. `from_me` messages are kept and flagged.
 
-Ack semantics planned for step 5: the gateway inserts one `wa_inbox` row per
-message and publishes the `inbox` nudge; the Python runtime reads, persists
-into its own tables and deletes the row. At-least-once delivery, deduplicated
-by `(session_id, wa_message_id)`.
+### Delivery to the runtime (step 5)
 
-In step 3 qualifying messages are only logged (session, jid, message id,
-from_me, type, text length) and nothing is forwarded.
+For every qualifying message (`notify` and offline `append` alike) the gateway
+runs `INSERT INTO wa_inbox (session_id, wa_message_id, payload) VALUES
+($1,$2,$3::jsonb) ON CONFLICT (session_id, wa_message_id) DO NOTHING` (the
+tenant trigger fills `tenant_id`), then publishes
+`{"v":1,"type":"inbox","session_id","epoch"}` on `wa:ev:<session_id>`. The
+runtime reads the rows, persists the messages into its own tables, deletes
+the rows (the ack) and dedupes by `wa_message_id`. At-least-once delivery:
+a message stays in memory until its insert succeeded; while Postgres is down
+the insert is retried with backoff (1 s doubling to 30 s) and nothing is
+dropped; a backlog of 5000 or more rows per session is logged at warn. The
+writer is per session, not per socket, so a message received just before a
+socket was replaced still lands. Offline redelivery after downtime inserts
+each message exactly once thanks to the conflict clause. Pending rows exist
+only in memory: a restart during a Postgres outage loses them (logged at
+error on shutdown).
+
+Echo suppression: a `from_me` message whose id this socket produced itself
+(the send primitive of step 6 records it) is the server echoing our own send; it is not forwarded (the
+runtime already stored it). Other `from_me` messages, typed on the phone,
+are forwarded with `from_me: true`.
+
+Log lines carry session, jid, message id, from_me, type and text length,
+never the text.
+
 
 ## Watchdog
 

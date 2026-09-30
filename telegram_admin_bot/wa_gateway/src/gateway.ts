@@ -8,12 +8,13 @@ import { parseBrowserTuple, type BrowserTuple } from './browser.ts';
 import { GatewayError, type Command } from './bus.ts';
 import { hasCreds, ping, readSessionRow, type Pool } from './db.ts';
 import { decideClose, decideOpen, postgresSilentTooLong, watchdogVerdict, WATCHDOG_INTERVAL_MS, type SocketState } from './fencing.ts';
+import { InboxWriter } from './inbox.ts';
 import { PairingRun, type PairEvent, type PairMethod } from './pairing.ts';
 import { SessionSocket, type SessionEvent } from './session.ts';
 
 export type Publish = (channel: string, payload: unknown) => Promise<boolean>;
 
-export type StatusEntry = { session_id: string; epoch: number; state: SocketState; lost: string | null; me: unknown };
+export type StatusEntry = { session_id: string; epoch: number; state: SocketState; lost: string | null; me: unknown; inbox_pending: number };
 
 function str(args: Record<string, unknown>, name: string): string {
   const v = args[name];
@@ -37,6 +38,7 @@ export class Gateway {
   private readonly sessions = new Map<string, SessionSocket>();
   private readonly pairings = new Map<string, PairingRun>();
   private readonly pairingBySession = new Map<string, string>();
+  private readonly inboxes = new Map<string, InboxWriter>();
   private watchdog: NodeJS.Timeout | null = null;
   private lastPgOkMs = Date.now();
   private stopping = false;
@@ -121,6 +123,15 @@ export class Gateway {
 
   // ---------------------------------------------------------------- sockets
 
+  private inboxFor(sessionId: string): InboxWriter {
+    let writer = this.inboxes.get(sessionId);
+    if (!writer) {
+      writer = new InboxWriter(this.pool, sessionId, this.publish, this.log);
+      this.inboxes.set(sessionId, writer);
+    }
+    return writer;
+  }
+
   private async open(args: Record<string, unknown>): Promise<{ state: SocketState | 'opening' }> {
     const sessionId = str(args, 'session_id');
     const epoch = int(args, 'epoch');
@@ -157,8 +168,7 @@ export class Gateway {
       browser: tuple,
       log: this.log,
       emit: (event: SessionEvent) => void this.publish(`wa:ev:${sessionId}`, event),
-      // Step 3: log only (SessionSocket already logged); step 5 persists.
-      onMessage: () => undefined,
+      onMessage: (payload) => this.inboxFor(sessionId).enqueue(payload),
     });
     this.sessions.set(sessionId, session);
     try {
@@ -180,7 +190,14 @@ export class Gateway {
   }
 
   status(): StatusEntry[] {
-    return [...this.sessions.values()].map((s) => ({ session_id: s.sessionId, epoch: s.epoch, state: s.state, lost: s.lost, me: s.me }));
+    return [...this.sessions.values()].map((s) => ({
+      session_id: s.sessionId,
+      epoch: s.epoch,
+      state: s.state,
+      lost: s.lost,
+      me: s.me,
+      inbox_pending: this.inboxes.get(s.sessionId)?.pending ?? 0,
+    }));
   }
 
   private async dropSession(session: SessionSocket, reason: string): Promise<void> {
@@ -239,11 +256,19 @@ export class Gateway {
     }
   }
 
-  async shutdown(reason: string): Promise<void> {
+  async shutdown(reason: string, inboxFlushMs = 5_000): Promise<void> {
     this.stopping = true;
     if (this.watchdog) clearInterval(this.watchdog);
     this.watchdog = null;
     for (const run of this.pairings.values()) run.cancel(`gateway shutdown: ${reason}`);
     await Promise.all([...this.sessions.values()].map((s) => this.dropSession(s, `gateway shutdown: ${reason}`)));
+    // Give queued inbox rows a bounded chance to land; memory-only, so a
+    // Postgres outage across a restart loses what is still pending.
+    const pending = [...this.inboxes.values()].filter((w) => w.pending > 0);
+    if (pending.length) {
+      await Promise.race([Promise.all(pending.map((w) => w.flush())), new Promise((r) => setTimeout(r, inboxFlushMs))]);
+      const left = pending.reduce((n, w) => n + w.pending, 0);
+      if (left) this.log.error({ pending: left }, 'shutting down with inbox rows still unwritten (postgres unreachable)');
+    }
   }
 }

@@ -3,10 +3,10 @@
  * (transient/restart) and refuses them on session loss. Emits the
  * `wa:ev:<session_id>` events; the gateway publishes them.
  *
- * It never decides to send anything. Step 3 only logs qualifying inbound
- * messages (never their text).
+ * It never decides to send anything. Qualifying inbound messages go to
+ * the gateway's InboxWriter (step 5); their text is never logged.
  */
-import type { WASocket } from 'baileys';
+import type { WASocket, proto } from 'baileys';
 import type pino from 'pino';
 import { usePostgresAuthState, type PostgresAuthState } from './authstate.ts';
 import type { BrowserTuple } from './browser.ts';
@@ -15,8 +15,9 @@ import { backoffMs, classifyDisconnect, type SessionLostReason } from './disconn
 import type { SocketState } from './fencing.ts';
 import { isPnJid } from './jid.ts';
 import { baileysLogger } from './log.ts';
+import { LruCache } from './lru.ts';
 import { describeForLog, normalizeMessage, type InboxPayload, type MessageLike } from './normalize.ts';
-import { makeGatewaySocket } from './socket.ts';
+import { GET_MESSAGE_CACHE_SIZE, makeGatewaySocket } from './socket.ts';
 
 export type Me = { jid: string | null; lid: string | null; name: string | null };
 
@@ -32,11 +33,14 @@ export type SessionSocketOptions = {
   browser: BrowserTuple;
   log: pino.Logger;
   emit: (event: SessionEvent) => void;
-  /** Step 3: the gateway logs. Step 5: persist to wa_inbox and nudge. */
+  /** Qualifying, non-echo inbound messages (step 5: the gateway's InboxWriter). */
   onMessage?: (payload: InboxPayload) => void;
   /** Called once when the socket will not come back (session lost). */
   onLost?: (reason: SessionLostReason) => void;
 };
+
+/** How many of our own sent message ids we remember for echo suppression. */
+export const SENT_ID_CACHE_SIZE = 2_000;
 
 function stripDevice(jid: string): string {
   const [user, server] = jid.split('@');
@@ -48,6 +52,16 @@ export function meFromUser(user: { id?: string; lid?: string; phoneNumber?: stri
   const pn = isPnJid(user.id) ? user.id : (user.phoneNumber ?? null);
   const lid = user.lid ?? (user.id.endsWith('@lid') ? user.id : null);
   return { jid: pn ? stripDevice(pn) : null, lid: lid ? stripDevice(lid) : null, name: user.name ?? null };
+}
+
+/**
+ * Echo suppression: a from_me message whose id we sent ourselves (step 6's
+ * send_text records it) is the server echoing our own send; the runtime
+ * already has it. A from_me message typed on the phone is not in the cache
+ * and is forwarded (flagged from_me).
+ */
+export function isEcho(payload: InboxPayload, sentIds: LruCache<string, true>): boolean {
+  return payload.from_me && sentIds.get(payload.wa_message_id) === true;
 }
 
 export class SessionSocket {
@@ -64,6 +78,8 @@ export class SessionSocket {
   private closedByUs = false;
   private attempt = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private readonly outbox = new LruCache<string, proto.IMessage>(GET_MESSAGE_CACHE_SIZE);
+  protected readonly sentIds = new LruCache<string, true>(SENT_ID_CACHE_SIZE);
 
   constructor(opts: SessionSocketOptions) {
     this.opts = opts;
@@ -94,6 +110,7 @@ export class SessionSocket {
       state: this.auth.state,
       browser: this.opts.browser,
       logger: baileysLogger(this.sessionId),
+      outbox: this.outbox,
     });
     this.sock = sock;
     const auth = this.auth;
@@ -124,6 +141,10 @@ export class SessionSocket {
         try {
           const payload = normalizeMessage(raw as unknown as MessageLike, { sessionId: this.sessionId, epoch: this.epoch });
           if (!payload) continue;
+          if (isEcho(payload, this.sentIds)) {
+            this.log.debug({ wa_message_id: payload.wa_message_id }, 'own send echoed back; not forwarded');
+            continue;
+          }
           this.log.info(describeForLog(payload), 'inbound message');
           this.opts.onMessage?.(payload);
         } catch (exc) {
