@@ -521,3 +521,52 @@ async def test_owner_is_a_phone_number_and_replies_match_by_quoted_id(wa, pg_poo
     assert (await wa_store.peer(pg_pool, SID, chat_id))["jid"] == "34600555666@s.whatsapp.net"
     assert wa.flow.owner_message_ref({"wa_message_id": "3EB0OWN", "telegram_id": None}) == \
         {"provider_wa_message_id": "3EB0OWN"}
+
+
+# ------------------------------------------------- failed after sending
+
+
+@pytest.mark.asyncio
+async def test_a_message_refused_after_sending_turns_red_and_pauses(wa, pg_pool):
+    chat_id = await a_chat(wa, pg_pool)
+    row = await wa.send_as_me(chat_id, "See you at 3", guard=False)
+    await wa.transport._on_event(json.dumps({
+        "v": 1, "type": "message_failed", "session_id": SID, "epoch": 7, "wa_message_id": row["wa_message_id"],
+        "jid": ANNA_PN, "code": 403, "error_kind": "blocked",
+    }))
+    assert (await wa.db.get_message(row["id"]))["status"] == STATUS_ERROR
+    assert (await wa.db.get_conversation(chat_id))["automation_paused"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limit_after_sending_halts(wa, pg_pool):
+    chat_id = await a_chat(wa, pg_pool)
+    row = await wa.send_as_me(chat_id, "Hello", guard=False)
+    await wa.transport._on_event(json.dumps({
+        "v": 1, "type": "message_failed", "session_id": SID, "epoch": 7, "wa_message_id": row["wa_message_id"],
+        "jid": ANNA_PN, "code": 429, "error_kind": "rate_limited",
+    }))
+    assert [h["kind"] for h in await controls.holds(pg_pool, wa.tenant_id)] == [controls.WHATSAPP]
+
+
+@pytest.mark.asyncio
+async def test_an_unexplained_failure_is_shown(wa, pg_pool):
+    chat_id = await a_chat(wa, pg_pool)
+    row = await wa.send_as_me(chat_id, "Hello", guard=False)
+    await wa.transport._on_event(json.dumps({
+        "v": 1, "type": "message_failed", "session_id": SID, "epoch": 7, "wa_message_id": row["wa_message_id"],
+        "jid": ANNA_PN, "code": 500, "error_kind": "other",
+    }))
+    shown = [m["text"] for m in await wa.db.get_messages(chat_id) if m["status"] == STATUS_ERROR]
+    assert "Hello" in shown and any("did not deliver" in t for t in shown)
+
+
+@pytest.mark.asyncio
+async def test_an_account_restriction_halts(wa, pg_pool):
+    chat_id = await a_chat(wa, pg_pool)
+    row = await wa.send_as_me(chat_id, "Hello", guard=False)
+    await wa.transport._on_event(json.dumps({
+        "v": 1, "type": "message_failed", "session_id": SID, "epoch": 7, "wa_message_id": row["wa_message_id"],
+        "jid": ANNA_PN, "code": 463, "error_kind": "other",
+    }))
+    assert [h["kind"] for h in await controls.holds(pg_pool, wa.tenant_id)] == [controls.WHATSAPP]

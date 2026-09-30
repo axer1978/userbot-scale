@@ -34,6 +34,7 @@ import redis.asyncio as aioredis
 
 import commands
 import controls
+from database import STATUS_ERROR
 import wa_device_profiles
 import wa_store
 from transport import (
@@ -61,6 +62,8 @@ ACTION_TIMEOUT = 10.0
 LOGOUT_TIMEOUT = 30.0
 # How many of a chat's newest received messages a read receipt covers.
 READ_BATCH = 10
+# Baileys rc14's code for "account restricted / reach-out timelocked".
+ACCOUNT_RESTRICTED = 463
 DRAIN_BATCH = 50
 EVENT_RETRY_SECONDS = 2.0
 
@@ -309,6 +312,8 @@ class WhatsAppTransport(Transport):
                 await self.session_lost(str(event.get("reason") or "unknown"), event.get("code"))
             elif kind == "inbox":
                 await self.drain()
+            elif kind == "message_failed":
+                await self.delivery_failed(event)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -322,6 +327,38 @@ class WhatsAppTransport(Transport):
         why = SESSION_LOST.get(reason, reason)
         self.state["error"] = f"WhatsApp session lost: {why}"
         await self.rt.on_session_lost(reason, why, code)
+
+    async def delivery_failed(self, event: dict[str, Any]) -> None:
+        """WhatsApp refused a message after it was sent (Baileys does not
+        wait for the server, so this arrives as a later status update). The
+        message turns red in the thread, and the failure is acted on like a
+        refused send: a rate limit halts, a blocked recipient pauses."""
+        rt = self.rt
+        wa_message_id = str(event.get("wa_message_id") or "")
+        kind = str(event.get("error_kind") or "other")
+        code = event.get("code")
+        if code == ACCOUNT_RESTRICTED:
+            # WhatsApp has restricted the account (no new chats). Treated
+            # like a rate limit: everything halts until a person looks.
+            kind = "rate_limited"
+        row = await rt.pool.fetchrow(
+            "SELECT id, chat_id FROM messages WHERE session_id = $1 AND wa_message_id = $2",
+            rt.session_id, wa_message_id,
+        )
+        chat_id = row["chat_id"] if row else None
+        if chat_id is None and event.get("jid"):
+            phone_jid, lid = wa_store.split_jid(event.get("jid"))
+            if phone_jid or lid:
+                chat_id, _ = await wa_store.chat_for(rt.pool, rt.session_id, phone_jid=phone_jid, lid=lid)
+        log.warning("[%s] WhatsApp did not deliver message %s (%s, code %s).", rt.session_id, wa_message_id,
+                    kind, code)
+        if row is not None:
+            updated = await rt.db.update_message(row["id"], status=STATUS_ERROR)
+            if updated is not None:
+                await rt.push_message(updated)
+        failure = GatewayError(kind, f"delivery failed (code {code})")
+        if not await rt.handle_send_failure(chat_id, failure):
+            await rt.push_error(chat_id, f"WhatsApp did not deliver a message ({kind}, code {code}).")
 
     # --------------------------------------------------------- inbound
 
