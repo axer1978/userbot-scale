@@ -80,7 +80,7 @@ Envelope is `commands.py`'s, so Python calls
 - Reply on `cmdresp:<command_id>`:
   `{"ok": true, "result": ...}` or
   `{"ok": false, "error": "<kind>: <detail>", "error_kind": "<kind>"}`,
-  `error_kind` in `stale_epoch | not_connected | busy | bad_request | not_found | session_lost | other`.
+  `error_kind` in `stale_epoch | not_connected | busy | bad_request | not_found | session_lost | rate_limited | not_on_whatsapp | blocked | other`.
 - Each command runs concurrently; a failing handler never stops the loop.
   The subscriber reconnects and re-subscribes with backoff when Valkey drops
   (ioredis does this natively, which is why it was chosen over node-redis).
@@ -93,7 +93,11 @@ Envelope is `commands.py`'s, so Python calls
 | `pair_cancel` | `pair_id` | `{"cancelled": true}` | `not_found` |
 | `open` | `session_id`, `epoch`, `browser` | `{"state": "opening"}` (or the existing state on the same epoch) | `stale_epoch`, `not_found` (no creds: pair first), `bad_request` (channel not whatsapp, malformed), `busy` (pairing in progress), `session_lost` (same epoch, device already lost) |
 | `close` | `session_id`, `epoch` | `{"closed": bool}`; `false` when nothing to close or `epoch` < the socket's | `bad_request` |
-| `status` | | `[{session_id, epoch, state, lost, me}]` | |
+| `status` | | `[{session_id, epoch, state, lost, me, inbox_pending}]` | |
+| `send_text` | `session_id`, `epoch`, `jid`, `text` | `{"message_id": "<wa id>", "ts": <unix seconds>}` | `not_connected`, `stale_epoch`, `session_lost`, `rate_limited`, `not_on_whatsapp`, `blocked`, `bad_request`, `other` |
+| `read` | `session_id`, `epoch`, `jid`, `message_ids: [..]` | `{"ok": true}` (keys `{remoteJid: jid, id, fromMe: false}` via `readMessages`) | same fencing/mapping as `send_text` |
+| `presence` | `session_id`, `epoch`, `state`, `jid?` | `{"ok": true}`; `composing`/`paused` need `jid`, `available`/`unavailable` take none | same |
+| `logout` | `session_id`, `epoch` | `{"logged_out": bool}` | `stale_epoch`, `not_found`, `busy`, `other` (timeout 25 s) |
 
 `pair` wipes the session's `wa_auth_state` first (a re-pair is a new linked
 device), runs a pairing socket, streams `qr` (each rotation) or requests a
@@ -106,7 +110,8 @@ partial auth state.
 `open` verifies the row: `channel = 'whatsapp'`, `is_active`,
 `lease_expires_at > now()`, `lease_epoch = epoch`. An existing socket with a
 lower epoch is closed first; equal epoch is idempotent; higher epoch wins
-(`stale_epoch`). `close` is a normal end, never a logout.
+(`stale_epoch`). A missing or malformed `browser` falls back to the derived
+tuple (`src/browser.ts`) with a warning. `close` is a normal end, never a logout.
 
 ### Events
 
@@ -122,8 +127,29 @@ lower epoch is closed first; equal epoch is idempotent; higher epoch wins
 ```
 {"v":1,"type":"connection","session_id","epoch","state":"connecting"|"open"|"closed","me":{"jid","lid","name"}|null}
 {"v":1,"type":"session_lost","session_id","epoch","reason":"loggedOut"|"forbidden"|"badSession"|"connectionReplaced"|"multideviceMismatch","code"}
-{"v":1,"type":"inbox","session_id","epoch"}      (nudge; not emitted until step 5)
+{"v":1,"type":"inbox","session_id","epoch"}      (a wa_inbox row was inserted)
+{"v":1,"type":"message_failed","session_id","epoch","wa_message_id","jid","code":<number|null>,"error_kind":"rate_limited"|"blocked"|"not_on_whatsapp"|"other"}
 ```
+
+`message_failed` is emitted at most once per message id (a 2000-entry LRU)
+for a message this socket sent that the server refused. Normal status
+moves (server ack, delivered, read) are not forwarded.
+
+Where these failures surface in Baileys 7.0.0-rc14 (from its source):
+`relayMessage` never waits for the server ack, so a rejected message comes
+back later as a stanza `<ack class="message" error="<code>">`.
+`messages-recv.js` `handleBadAck` turns it into a `messages.update` entry
+`{key: {remoteJid, fromMe: true, id}, update: {status: ERROR,
+messageStubParameters: ["<code>", ...]}}`; that is the only server-side
+path that sets status ERROR in rc14 (receipts only move a message forward),
+so the gateway reads exactly that shape. Confidence: high that failures
+arrive this way and are reported once; medium on what each code means.
+The code is mapped like send errors: 429 -> `rate_limited`, 403 ->
+`blocked`, 404 -> `not_on_whatsapp`; everything else -> `other` with the
+code attached, including the codes rc14 itself names: 463 (account
+restricted / "reachout timelocked": WhatsApp blocks starting new chats,
+existing chats keep working; rc14 also tries to fetch a privacy token) and
+479 (stanza rejected, likely a stale device session).
 
 ### Inbox payload v1 (built now, persisted from step 5)
 
@@ -140,13 +166,71 @@ in Unix seconds. Ephemeral/view-once envelopes are unwrapped. Dropped: groups,
 `status@broadcast`, broadcast lists, newsletters, protocol/reaction/stub
 messages, undecryptable messages. `from_me` messages are kept and flagged.
 
-Ack semantics planned for step 5: the gateway inserts one `wa_inbox` row per
-message and publishes the `inbox` nudge; the Python runtime reads, persists
-into its own tables and deletes the row. At-least-once delivery, deduplicated
-by `(session_id, wa_message_id)`.
+### Delivery to the runtime (step 5)
 
-In step 3 qualifying messages are only logged (session, jid, message id,
-from_me, type, text length) and nothing is forwarded.
+For every qualifying message (`notify` and offline `append` alike) the gateway
+runs `INSERT INTO wa_inbox (session_id, wa_message_id, payload) VALUES
+($1,$2,$3::jsonb) ON CONFLICT (session_id, wa_message_id) DO NOTHING` (the
+tenant trigger fills `tenant_id`), then publishes
+`{"v":1,"type":"inbox","session_id","epoch"}` on `wa:ev:<session_id>`. The
+runtime reads the rows, persists the messages into its own tables, deletes
+the rows (the ack) and dedupes by `wa_message_id`. At-least-once delivery:
+a message stays in memory until its insert succeeded; while Postgres is down
+the insert is retried with backoff (1 s doubling to 30 s) and nothing is
+dropped; a backlog of 5000 or more rows per session is logged at warn. The
+writer is per session, not per socket, so a message received just before a
+socket was replaced still lands. Offline redelivery after downtime inserts
+each message exactly once thanks to the conflict clause. Pending rows exist
+only in memory: a restart during a Postgres outage loses them (logged at
+error on shutdown).
+
+Echo suppression: a `from_me` message whose id was produced by `send_text`
+on this socket is the server echoing our own send; it is not forwarded (the
+runtime already stored it). Other `from_me` messages, typed on the phone,
+are forwarded with `from_me: true`.
+
+Log lines carry session, jid, message id, from_me, type and text length,
+never the text.
+
+## Socket-bound primitives (step 6)
+
+All four are fenced like `close`: no socket for the session, or one not in
+state `open`, gives `not_connected`; a socket under a different epoch (lower
+or higher) gives `stale_epoch`; a socket whose device is gone gives
+`session_lost`. Arguments are validated after fencing (`bad_request`).
+
+- `send_text {session_id, epoch, jid, text}` -> `{"message_id", "ts"}`. The
+  sent message goes into the `getMessage` LRU (retry receipts) and the
+  echo-suppression cache. Never retried inside the gateway: once Baileys has
+  handed the stanza to the socket it may have gone out.
+- `read {session_id, epoch, jid, message_ids}` -> `{"ok": true}`.
+- `presence {session_id, epoch, state, jid?}` -> `{"ok": true}`.
+- `logout {session_id, epoch}` -> `{"logged_out": bool}`: the deliberate
+  hard-off. With a socket on that epoch: `sock.logout()`, wipe
+  `wa_auth_state`, drop the socket, no `session_lost` event (logged at
+  warn). Without a socket: the lease row is verified like `open` (the caller
+  holds a lease with that epoch), a temporary quiet socket is opened from the
+  stored creds, logged out and wiped. `logged_out: false` (with a log line)
+  when there were no stored creds or the device was already gone (the auth
+  state is wiped in that case too). Overall timeout 25 s.
+
+### Error mapping for sends (Baileys 7.0.0-rc14, from its source)
+
+How failures actually surface: `relayMessage` only `sendNode`s the stanza
+and never waits for the server's ack, so a message WhatsApp rejects does
+not throw from `sendMessage`; it shows up later as a receipt/status update.
+What can throw around a send are the IQ queries made first (USync device
+lookup, pre-key fetch) and the gateway's own `onWhatsApp` existence check.
+IQ errors are `Boom(<stanza text>, { data: <code> })`.
+
+| error_kind | mapped from | confidence |
+|---|---|---|
+| `rate_limited` | code 429 or text `rate-overlimit` | high for IQ-level limits; a per-message throttle never throws (see above) |
+| `not_on_whatsapp` | `onWhatsApp` reports no `exists` for a PN jid (checked before each send, positive answers cached per jid); also code 404 / `item-not-found` | high: without the check a send to an unknown number goes to our own devices only, silently. LIDs are not checked |
+| `blocked` | code 403 or text `not-authorized` / `forbidden` | medium: a blocked recipient usually still accepts the stanza; the 403 appears on pre-key fetches in some cases |
+| `session_lost` | code 401, `Not authenticated`, `Intentional Logout` | high |
+| `not_connected` | code 428 (`Connection Closed`), 408 (`Timed Out`), 503 | high |
+| `other` | anything else (e.g. `All encryptions failed` 500) | |
 
 ## Watchdog
 
