@@ -35,7 +35,17 @@ import redis.asyncio as aioredis
 import commands
 import controls
 import wa_store
-from transport import WHATSAPP, Inbound, NeedsLogin, PeerInfo, Transport
+from transport import (
+    PEER_FLOOD,
+    SESSION_REJECTED,
+    UNREACHABLE,
+    WHATSAPP,
+    Failure,
+    Inbound,
+    NeedsLogin,
+    PeerInfo,
+    Transport,
+)
 
 log = logging.getLogger("session_runtime")
 
@@ -43,6 +53,13 @@ GATEWAY = "@wa-gateway"
 KEEPALIVE_SECONDS = 15.0
 OPEN_TIMEOUT = 10.0
 CLOSE_TIMEOUT = 5.0
+# A send waits for WhatsApp's server ack; presence and read receipts are
+# quick on the gateway's side.
+SEND_TIMEOUT = 45.0
+ACTION_TIMEOUT = 10.0
+LOGOUT_TIMEOUT = 30.0
+# How many of a chat's newest received messages a read receipt covers.
+READ_BATCH = 10
 DRAIN_BATCH = 50
 EVENT_RETRY_SECONDS = 2.0
 
@@ -60,14 +77,38 @@ def event_channel(session_id: str) -> str:
     return f"wa:ev:{session_id}"
 
 
+class GatewayError(RuntimeError):
+    """wa-gateway refused a command. `kind` is its error_kind: stale_epoch,
+    not_connected, busy, bad_request, not_found, session_lost,
+    rate_limited, not_on_whatsapp, blocked or other."""
+
+    def __init__(self, kind: str, detail: str) -> None:
+        super().__init__(f"{kind}: {detail}" if detail else kind)
+        self.kind = kind
+        self.detail = detail
+
+
+def gateway_error(exc: commands.CommandError) -> GatewayError:
+    """The gateway's error string is "<error_kind>: <detail>"."""
+    if isinstance(exc, commands.CommandTimeout):
+        return GatewayError("not_connected", "the WhatsApp gateway is not answering")
+    kind, _, detail = str(exc).partition(":")
+    kind = kind.strip()
+    if not kind or " " in kind:
+        return GatewayError("other", str(exc))
+    return GatewayError(kind, detail.strip())
+
+
 class WhatsAppTransport(Transport):
     channel = WHATSAPP
     network = "WhatsApp"
     id_field = "wa_message_id"
     hold_kind = controls.WHATSAPP
-    # Sending arrives in step 6 of the WhatsApp build: until then every
-    # reply is kept for approval and nothing is sent.
-    can_send = False
+    can_send = True
+    # A send WhatsApp refused is stored red in the thread, text and all.
+    record_failed_sends = True
+    # Only text goes out on WhatsApp for now: no media library in replies.
+    can_send_files = False
 
     def __init__(self, rt: Any) -> None:
         super().__init__(rt)
@@ -80,6 +121,8 @@ class WhatsAppTransport(Transport):
         self._drain_lock = asyncio.Lock()
         self._redis: Optional[aioredis.Redis] = None
         self._gateway_down_logged = False
+        # chat_id -> the newest received message id already marked read.
+        self._read_upto: dict[int, str] = {}
 
     # ----------------------------------------------------------- state
 
@@ -338,22 +381,92 @@ class WhatsAppTransport(Transport):
             raise RuntimeError(f"Cannot resolve chat {chat_id}. Receive a message from them first.")
         return row["jid"]
 
+    async def _call(self, action: str, args: dict[str, Any], timeout: float) -> Any:
+        """A socket-bound gateway command, fenced by this runtime's lease
+        epoch. Raises GatewayError."""
+        rt = self.rt
+        if rt.bus is None:
+            raise GatewayError("not_connected", "the bus is not connected")
+        try:
+            return await rt.bus.dispatch(
+                GATEWAY, action, {"session_id": rt.session_id, "epoch": rt.lease_epoch, **args}, timeout=timeout,
+            )
+        except commands.CommandError as exc:
+            raise gateway_error(exc) from exc
+
     async def send_text(self, peer: Any, chat_id: int, text: str, typing_seconds: Optional[float]) -> Any:
-        raise RuntimeError("Sending on WhatsApp is not switched on yet; the draft stays for approval.")
+        """Send one text. With `typing_seconds` the chat shows "typing…"
+        (composing) that long first; the message goes out while it shows,
+        then the indicator is cleared. A failed indicator never stops the
+        message; a failed send is never retried here (it may have gone)."""
+        if typing_seconds is not None:
+            try:
+                await self._call("presence", {"jid": peer, "state": "composing"}, ACTION_TIMEOUT)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("[%s] Typing indicator unavailable (%s); sending anyway.", self.rt.session_id,
+                            type(exc).__name__)
+            await asyncio.sleep(typing_seconds)
+        try:
+            return await self._call("send_text", {"jid": peer, "text": text}, SEND_TIMEOUT)
+        finally:
+            if typing_seconds is not None:
+                with suppress(Exception):
+                    await self._call("presence", {"jid": peer, "state": "paused"}, ACTION_TIMEOUT)
 
     async def send_file(self, peer: Any, chat_id: int, path: Path, is_video: bool, show_upload: bool) -> Any:
-        raise RuntimeError("Sending files on WhatsApp is not switched on yet.")
+        raise GatewayError("bad_request", "sending files on WhatsApp is not supported")
 
     def message_id(self, sent: Any) -> Any:
-        return (sent or {}).get("message_id") if isinstance(sent, dict) else None
+        return sent.get("message_id") if isinstance(sent, dict) else None
+
+    def classify(self, exc: BaseException) -> Optional[Failure]:
+        if not isinstance(exc, GatewayError):
+            return None
+        if exc.kind == "rate_limited":
+            # WhatsApp publishes no wait to sleep through: like Telegram's
+            # PeerFlood, the account halts (safety.halt_on_peer_flood).
+            return Failure(PEER_FLOOD, "a rate limit (rate-overlimit)")
+        if exc.kind == "session_lost":
+            return Failure(SESSION_REJECTED, "session lost")
+        if exc.kind in ("not_on_whatsapp", "blocked"):
+            return Failure(UNREACHABLE, "not on WhatsApp" if exc.kind == "not_on_whatsapp" else "blocked")
+        return None
 
     # ---------------------------------------------------- chat actions
 
     async def mark_read(self, chat_id: int, message_id: Any = None) -> None:
-        return None  # read receipts arrive with sending (build step 6)
+        """Blue ticks for the chat's newest received messages not yet marked
+        (or just `message_id`). Whether the sender sees them depends on the
+        account's own read-receipt privacy setting."""
+        rt = self.rt
+        if message_id is not None:
+            ids = [message_id]
+        else:
+            rows = await rt.pool.fetch(
+                """
+                SELECT wa_message_id FROM messages
+                 WHERE session_id = $1 AND chat_id = $2 AND direction = 'in' AND wa_message_id IS NOT NULL
+                 ORDER BY id DESC LIMIT $3
+                """,
+                rt.session_id, chat_id, READ_BATCH,
+            )
+            ids = []
+            for row in rows:
+                if row["wa_message_id"] == self._read_upto.get(chat_id):
+                    break
+                ids.append(row["wa_message_id"])
+        if not ids:
+            return
+        row = await wa_store.peer(rt.pool, rt.session_id, chat_id)
+        if row is None:
+            return
+        await self._call("read", {"jid": row["jid"], "message_ids": list(reversed(ids))}, ACTION_TIMEOUT)
+        self._read_upto[chat_id] = ids[0]
 
     async def set_presence(self, online: bool) -> None:
-        return None  # presence arrives with sending (build step 6)
+        await self._call("presence", {"state": "available" if online else "unavailable"}, ACTION_TIMEOUT)
 
     # --------------------------------------------------------- lookups
 
@@ -370,4 +483,6 @@ class WhatsAppTransport(Transport):
         return None  # photos are not fetched from WhatsApp yet
 
     async def log_out(self) -> bool:
-        return False  # hard-off for WhatsApp arrives with build step 6
+        """Hard-off: unlink this device on WhatsApp's side."""
+        result = await self._call("logout", {}, LOGOUT_TIMEOUT)
+        return bool((result or {}).get("logged_out"))

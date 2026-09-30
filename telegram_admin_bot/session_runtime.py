@@ -1145,7 +1145,7 @@ class SessionRuntime:
         return await self.db.find_by_telegram_id(chat_id, value)
 
     def media_prompt(self) -> str:
-        if not self.config["media"].get("enabled", True):
+        if not self.config["media"].get("enabled", True) or not self.transport.can_send_files:
             return ""
         self.media_library.refresh()
         return media.prompt_section(
@@ -1293,7 +1293,13 @@ class SessionRuntime:
         self.in_flight_sends.setdefault(chat_id, []).append(text)
         self.delivery_attempts += 1
         try:
-            sent = await self.deliver(peer, chat_id, text, typing)
+            try:
+                sent = await self.deliver(peer, chat_id, text, typing)
+            except Exception:
+                if self.transport.record_failed_sends:
+                    await self._best_effort(self.keep_failed_send(chat_id, text, draft_id, llm_model, prompt_version),
+                                            "keep a failed send in the thread")
+                raise
             ids = self.external_id(self.transport.message_id(sent))
             if draft_id is not None:
                 row = await self.db.update_message(
@@ -1319,6 +1325,18 @@ class SessionRuntime:
         if row is not None:
             await self.push_message(row)
         return row or {}
+
+    async def keep_failed_send(self, chat_id: int, text: str, draft_id: Optional[int],
+                               llm_model: Optional[str], prompt_version: Optional[str]) -> None:
+        """A message the network refused stays in the thread, red, with its
+        text: never silently dropped."""
+        if draft_id is not None:
+            row = await self.db.update_message(draft_id, text=text, status=STATUS_ERROR)
+        else:
+            row = await self.db.record_message(chat_id, DIR_OUT, STATUS_ERROR, text, bump_preview=False,
+                                               llm_model=llm_model, prompt_version=prompt_version)
+        if row is not None:
+            await self.push_message(row)
 
     async def deliver_file(self, peer: Any, chat_id: int, item: dict[str, Any], path: Path) -> Any:
         return await self.transport.send_file(
@@ -2240,6 +2258,27 @@ async def log_out_session(pool: asyncpg.Pool, session_id: str) -> bool:
         import telegram_transport
 
         return await telegram_transport.log_out_stored(pool, session_id)
+    finally:
+        await leasing.release(pool, session_id, worker_id)
+
+
+async def log_out_whatsapp(pool: asyncpg.Pool, bus: Any, session_id: str) -> bool:
+    """Hard-off for a WhatsApp account no worker is running: take its lease
+    (so no worker starts it meanwhile) and have wa-gateway unlink the device
+    with the stored login, fenced by that lease's epoch. True when WhatsApp
+    confirmed. The caller deletes the login either way."""
+    from whatsapp_transport import GATEWAY, LOGOUT_TIMEOUT
+
+    if bus is None:
+        return False
+    worker_id = f"hard-off:{socket.gethostname()}"
+    lease = await leasing.acquire(pool, session_id, worker_id)
+    if lease is None:
+        raise leasing.LeaseLost(f"session {session_id!r} is running somewhere; ask that worker instead")
+    try:
+        result = await bus.dispatch(GATEWAY, "logout", {"session_id": session_id, "epoch": lease.epoch},
+                                    timeout=LOGOUT_TIMEOUT)
+        return bool((result or {}).get("logged_out"))
     finally:
         await leasing.release(pool, session_id, worker_id)
 

@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
+import alerts
 import audit
 import commands
 import controls
@@ -22,8 +23,8 @@ import health
 import session_runtime
 import wa_store
 from conftest import FakeHub, seed_session
-from database import DIR_OUT, STATUS_PENDING, STATUS_RECEIVED, STATUS_SENT
-from whatsapp_transport import GATEWAY, WhatsAppTransport
+from database import DIR_OUT, STATUS_ERROR, STATUS_PENDING, STATUS_RECEIVED, STATUS_SENT
+from whatsapp_transport import GATEWAY, GatewayError, WhatsAppTransport, gateway_error
 
 SID = "wa34600111222"
 ANNA_PN = "34600123456@s.whatsapp.net"
@@ -32,17 +33,29 @@ ANNA_LID = "111222333@lid"
 
 class FakeBus:
     """The bus as the WhatsApp transport uses it; `replies[action]` is what
-    the gateway answers (an exception is raised)."""
+    the gateway answers (an exception is raised, a callable is called)."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict]] = []
-        self.replies: dict[str, Any] = {"open": {"state": "open"}, "close": {"closed": True}}
+        self.sent = 0
+        self.replies: dict[str, Any] = {
+            "open": {"state": "open"}, "close": {"closed": True}, "presence": {"ok": True},
+            "read": {"ok": True}, "logout": {"logged_out": True}, "send_text": self._sent,
+        }
+
+    def _sent(self, args):
+        self.sent += 1
+        return {"message_id": f"3EB0OUT{self.sent}", "ts": 1_900_000_000}
 
     async def dispatch(self, target, action, args=None, *, timeout=30.0):
         self.calls.append((target, action, dict(args or {})))
+        if target != GATEWAY:
+            raise commands.CommandTimeout(f"no worker runs {target}")
         reply = self.replies.get(action)
         if isinstance(reply, BaseException):
             raise reply
+        if callable(reply):
+            return reply(args)
         return reply
 
     async def publish_event(self, session_id, payload):
@@ -67,6 +80,10 @@ async def wa(pg_pool, tmp_path, monkeypatch):
     monkeypatch.setattr(rt, "schedule_draft", lambda chat_id: scheduled.append(chat_id))
     rt.scheduled = scheduled
     yield rt
+    # Halts and hard-offs raise alerts, delivered in the background: let
+    # them finish on this test's loop, or a later test's drain() waits on
+    # a task whose loop is gone.
+    await alerts.drain()
     await rt.db.close()
 
 
@@ -146,11 +163,154 @@ async def test_stop_closes_the_socket_with_the_epoch(wa):
     assert wa.bus.calls == [(GATEWAY, "close", {"session_id": SID, "epoch": 7})]
 
 
+async def a_chat(wa, pg_pool, *, connected: bool = True) -> int:
+    chat_id, _ = await wa_store.chat_for(pg_pool, SID, phone_jid=ANNA_PN, push_name="Anna")
+    await wa.db.upsert_conversation(chat_id, "Anna", None, False, None)
+    if connected:
+        await wa.transport._open_once()
+        wa.bus.calls.clear()
+    return chat_id
+
+
 @pytest.mark.asyncio
-async def test_sending_is_not_switched_on_yet(wa):
-    assert wa.transport.can_send is False
-    with pytest.raises(RuntimeError):
-        await wa.transport.send_text(ANNA_PN, 1, "hi", None)
+async def test_a_send_goes_to_the_gateway_fenced_by_the_epoch(wa, pg_pool):
+    chat_id = await a_chat(wa, pg_pool)
+    row = await wa.send_as_me(chat_id, "See you at 3", guard=False)
+    assert wa.bus.calls == [(GATEWAY, "send_text", {"session_id": SID, "epoch": 7, "jid": ANNA_PN,
+                                                    "text": "See you at 3"})]
+    assert (row["status"], row["wa_message_id"], row["telegram_id"]) == (STATUS_SENT, "3EB0OUT1", None)
+
+
+@pytest.mark.asyncio
+async def test_typing_shows_while_the_message_goes_out(wa, pg_pool, monkeypatch):
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(session_runtime.asyncio, "sleep", fake_sleep)
+    chat_id = await a_chat(wa, pg_pool)
+    wa.config["human"]["typing_indicator"] = True
+    await wa.send_as_me(chat_id, "x" * 24, typing=True, guard=False)
+    assert [(a, args.get("state")) for _, a, args in wa.bus.calls] == [
+        ("presence", "composing"), ("send_text", None), ("presence", "paused")]
+    assert len(slept) == 1 and slept[0] > 0
+
+
+@pytest.mark.asyncio
+async def test_a_failed_typing_indicator_never_stops_the_message(wa, pg_pool, monkeypatch):
+    async def fake_sleep(seconds):
+        pass
+
+    monkeypatch.setattr(session_runtime.asyncio, "sleep", fake_sleep)
+    chat_id = await a_chat(wa, pg_pool)
+    wa.bus.replies["presence"] = commands.CommandError("not_connected: socket is reconnecting")
+    wa.config["human"]["typing_indicator"] = True
+    row = await wa.send_as_me(chat_id, "Hello", typing=True, guard=False)
+    assert row["status"] == STATUS_SENT
+
+
+@pytest.mark.asyncio
+async def test_a_refused_send_stays_red_in_the_thread(wa, pg_pool):
+    chat_id = await a_chat(wa, pg_pool)
+    wa.bus.replies["send_text"] = commands.CommandError("not_on_whatsapp: 34600123456 is not on WhatsApp")
+    with pytest.raises(GatewayError) as caught:
+        await wa.send_as_me(chat_id, "Are you there?", guard=False)
+    assert caught.value.kind == "not_on_whatsapp"
+    (row,) = [m for m in await wa.db.get_messages(chat_id) if m["direction"] == DIR_OUT]
+    assert (row["status"], row["text"]) == (STATUS_ERROR, "Are you there?")
+    # And the failure is acted on: this person can't be messaged, the chat pauses.
+    assert await wa.handle_send_failure(chat_id, caught.value) is True
+    assert (await wa.db.get_conversation(chat_id))["automation_paused"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_refused_approved_draft_is_kept_not_dropped(wa, pg_pool):
+    chat_id = await a_chat(wa, pg_pool)
+    draft = await wa.db.record_message(chat_id, DIR_OUT, STATUS_PENDING, "Draft reply", bump_preview=False)
+    wa.bus.replies["send_text"] = commands.CommandError("blocked: the person blocked this number")
+    with pytest.raises(GatewayError):
+        await wa.handle_command("approve_draft", {"draft_id": draft["id"]})
+    row = await wa.db.get_message(draft["id"])
+    assert (row["status"], row["text"]) == (STATUS_ERROR, "Draft reply")
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limit_halts_like_peer_flood(wa, pg_pool):
+    chat_id = await a_chat(wa, pg_pool)
+    assert await wa.handle_send_failure(chat_id, GatewayError("rate_limited", "rate-overlimit")) is True
+    assert [h["kind"] for h in await controls.holds(pg_pool, wa.tenant_id)] == [controls.WHATSAPP]
+    assert "WhatsApp returned a rate limit" in wa.off_reason
+
+
+@pytest.mark.asyncio
+async def test_unknown_gateway_errors_are_not_classified(wa):
+    assert wa.transport.classify(GatewayError("stale_epoch", "")) is None
+    assert wa.transport.classify(ValueError("x")) is None
+
+
+def test_gateway_error_strings_are_parsed():
+    assert gateway_error(commands.CommandError("rate_limited: slow down")).kind == "rate_limited"
+    assert gateway_error(commands.CommandTimeout("nobody")).kind == "not_connected"
+    assert gateway_error(commands.CommandError("TypeError: boom here")).kind == "TypeError"
+    assert gateway_error(commands.CommandError("something odd happened")).kind == "other"
+
+
+@pytest.mark.asyncio
+async def test_read_receipts_cover_new_messages_once(wa, pg_pool):
+    chat_id = await a_chat(wa, pg_pool)
+    for wid in ("IN1", "IN2"):
+        await wa.db.record_message(chat_id, "in", STATUS_RECEIVED, "hi", wa_message_id=wid)
+    await wa.mark_read(chat_id)
+    await wa.mark_read(chat_id)           # nothing new: nothing sent
+    await wa.db.record_message(chat_id, "in", STATUS_RECEIVED, "again", wa_message_id="IN3")
+    await wa.mark_read(chat_id)
+    reads = [args for _, a, args in wa.bus.calls if a == "read"]
+    assert [r["message_ids"] for r in reads] == [["IN1", "IN2"], ["IN3"]]
+    assert reads[0]["jid"] == ANNA_PN and reads[0]["epoch"] == 7
+    wa.config["human"]["mark_read"] = False
+    await wa.db.record_message(chat_id, "in", STATUS_RECEIVED, "more", wa_message_id="IN4")
+    await wa.mark_read(chat_id)
+    assert len([a for _, a, _ in wa.bus.calls if a == "read"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_presence_online_and_offline(wa, pg_pool):
+    await a_chat(wa, pg_pool)
+    await wa.set_presence(True)
+    await wa.set_presence(False)
+    assert [(a, args["state"]) for _, a, args in wa.bus.calls] == [("presence", "available"),
+                                                                    ("presence", "unavailable")]
+
+
+@pytest.mark.asyncio
+async def test_no_media_library_in_whatsapp_replies(wa):
+    wa.config["media"]["enabled"] = True
+    assert wa.media_prompt() == ""
+
+
+@pytest.mark.asyncio
+async def test_hard_off_of_a_running_account_unlinks_the_device(wa, pg_pool, monkeypatch):
+    await a_chat(wa, pg_pool)
+    monkeypatch.setattr(wa, "spawn", lambda coro, what: coro.close())
+    result = await wa.handle_command("hard_off", {"reason": "leaked phone"})
+    assert result == {"logged_out": True}
+    assert wa.bus.calls[-1] == (GATEWAY, "logout", {"session_id": SID, "epoch": 7})
+
+
+@pytest.mark.asyncio
+async def test_hard_off_of_an_idle_account_goes_through_the_gateway(wa, pg_pool):
+    await pair(pg_pool)
+    bus = FakeBus()
+    result = await controls.hard_off(pg_pool, bus, wa.tenant_id, reason="phone stolen", actor=audit.ADMIN)
+    # Nobody answered the account's own channel (FakeBus answers only the
+    # gateway), so the gateway logged the device out under a hard-off lease.
+    logout = [args for _, a, args in bus.calls if a == "logout"]
+    assert logout and logout[0]["session_id"] == SID and logout[0]["epoch"] > 0
+    assert result["logged_out"] is True
+    assert not await wa_store.has_login(pg_pool, SID)
+    row = await wa.registry.get(SID)
+    assert (row["state"], row["is_active"]) == ("revoked", False)
 
 
 def test_prompt_names_whatsapp():
@@ -270,11 +430,11 @@ async def test_inbox_event_triggers_a_drain(wa, pg_pool):
     assert await inbox_count(pg_pool) == 0
 
 
-# ---------------------------------------------------- nothing is sent yet
+# ------------------------------------------------------------- auto-send
 
 
 @pytest.mark.asyncio
-async def test_auto_send_still_drafts_for_approval(wa, pg_pool, monkeypatch):
+async def test_auto_send_replies_through_the_gateway(wa, pg_pool, monkeypatch):
     import ai_responder
 
     async def reply(**kw):
@@ -293,13 +453,13 @@ async def test_auto_send_still_drafts_for_approval(wa, pg_pool, monkeypatch):
     wa.config["auto_send"] = True
     wa.config["quiet_hours"]["enabled"] = False
     wa.config["api_spend_cap_eur"] = 0
-    chat_id, _ = await wa_store.chat_for(pg_pool, SID, phone_jid=ANNA_PN, push_name="Anna")
-    await wa.db.upsert_conversation(chat_id, "Anna", None, False, None)
+    wa.config["human"]["typing_indicator"] = False
+    chat_id = await a_chat(wa, pg_pool)
     await wa.db.record_message(chat_id, "in", STATUS_RECEIVED, "Open today?", wa_message_id="X1")
     await wa.draft_worker(chat_id)
-    drafts = [m for m in await wa.db.get_messages(chat_id) if m["status"] == STATUS_PENDING]
-    assert [d["text"] for d in drafts] == ["Yes, until 7."]
-    assert "send_text" not in wa.bus.actions()
+    sent = [m for m in await wa.db.get_messages(chat_id) if m["direction"] == DIR_OUT]
+    assert [(m["status"], m["text"]) for m in sent] == [(STATUS_SENT, "Yes, until 7.")]
+    assert "send_text" in wa.bus.actions() and "read" in wa.bus.actions()
 
 
 # --------------------------------------------------------- session lost

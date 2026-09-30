@@ -93,6 +93,11 @@ class Transport:
     hold_kind: str = ""
     # Whether the bot may send on its own yet (auto-send).
     can_send: bool = True
+    # Whether files (the media library) can go out on it.
+    can_send_files: bool = True
+    # Whether a send the network refused is kept in the thread (as an
+    # error row with its text) rather than only reported.
+    record_failed_sends: bool = False
 
     def __init__(self, rt: Any) -> None:
         self.rt = rt
