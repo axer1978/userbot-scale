@@ -51,7 +51,8 @@ Background, and what each reason means: `telegram_admin_bot/README.md`, section 
 | Symptom | Cause | Fix |
 |---|---|---|
 | Pairing says *"The WhatsApp gateway is not running"*; manager log says `The WhatsApp gateway is not answering; retrying every 15s.`; every WhatsApp account is red | `wa-gateway` is down, restarting, or can't reach Valkey | `docker compose ps -a wa-gateway`; `docker compose logs --tail 50 wa-gateway`; `docker compose up -d wa-gateway`. Accounts reconnect within ~15 s, no re-pair. Exit code 2 / "refusing to boot without a master key": `USERBOT_MASTER_KEY` is missing. Exit code 3 / "another wa-gateway holds the singleton advisory lock": a second gateway uses the same Postgres. Find it (`docker ps -a \| grep wa-gateway`, e.g. a leftover `docker compose run wa-gateway …`) and remove it |
-| Pairing refused: *"already running … Stop it before pairing it again"* | The number has a live lease: it runs, or it was halted after a session loss (the runtime keeps the lease on purpose) | Take it out of rotation (the `UPDATE telegram_sessions SET is_active = false …` in the README, *Operations*), wait 10 s for the grey dot, pair again |
+| Pairing refused: *"already running … Stop it before pairing it again"* | The number has a live lease and is healthy: it runs | Take it out of rotation (the `UPDATE telegram_sessions SET is_active = false …` in the README, *Operations*), wait 10 s for the grey dot, pair again |
+| Pairing refused: *"lost its WhatsApp session and is being stopped; try again in half a minute"* | The account was halted by a session loss; pairing again deactivated it, but its runtime had not let go of the lease yet | Wait half a minute and pair again. If it keeps saying so, `docker compose logs manager` for that account |
 | Pairing ends *failed* or *expired* | The QR was not scanned in time, the phone was offline, or the pairing code was asked for another number | Start again. For a pairing code, the number must be the phone's own, with country code. `docker compose logs --tail 30 wa-gateway \| grep -i pair` shows the reason |
 | **Session lost**: `loggedOut`, `badSession`, `multideviceMismatch` | The linked device is gone: removed on the phone, corrupt, or out of step | [WhatsApp session dropped](#whatsapp-session-dropped), then pair again and resume the `whatsapp` hold |
 | **Session lost: `forbidden`** (state `revoked`) | WhatsApp refused the account: **likely banned** | **Stop. Do not re-pair.** Check WhatsApp on the phone for a ban notice. Keep the account out of rotation until you know what triggered it |
@@ -96,19 +97,9 @@ docker compose logs --since 24h wa-gateway | grep -E "SESSION LOST|HARD-OFF|conn
 | `badSession`, `multideviceMismatch` | Yes |
 | The number is lost again within hours of a re-pair | **No.** Stop and find the cause; linking again and again is itself a ban signal |
 
-**4. Take the account out of rotation.** The runtime still holds the lease (that is why the dot is red), so pairing is refused until it lets go:
+**4. Pair again.** Panel: **+ Add account → WhatsApp**, the same number, DeepSeek key blank (the stored one is kept). History and settings stay. The halted runtime still holds the lease (that is why the dot is red): pairing again deactivates the account and waits up to about 25 s for that runtime to let go before it shows the QR or code. If it says *"try again in half a minute"*, do that. Once linked, the account becomes active and a worker picks it up within about 15 s: `docker compose logs -f manager` shows `Started (picked up while running)` and `WhatsApp connected as …`, and the dot turns green.
 
-```bash
-docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
-#   UPDATE telegram_sessions SET is_active = false WHERE session_id = 'wa34600123456';
-#   \q
-```
-
-Wait about 10 s; the dot turns grey.
-
-**5. Pair again.** Panel: **+ Add account → WhatsApp**, the same number, DeepSeek key blank (the stored one is kept). History and settings stay. The account becomes active and a worker picks it up within about 15 s: `docker compose logs -f manager` shows `Started (picked up while running)` and `WhatsApp connected as …`, and the dot turns green.
-
-**6. Resume.** It still sends nothing on its own: **Safety → the client → Resume** the `whatsapp` hold, once you are happy with the cause.
+**5. Resume.** It still sends nothing on its own: **Safety → the client → Resume** the `whatsapp` hold, once you are happy with the cause.
 
 ## The scheduler (reminders, digests, billing, health alerts)
 

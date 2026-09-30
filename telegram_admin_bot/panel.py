@@ -86,6 +86,7 @@ import unanswered_api
 import totp
 import wa_device_profiles
 import wa_pairing
+import wa_store
 from database import (
     CHANNEL_TELEGRAM,
     CHANNEL_WHATSAPP,
@@ -781,6 +782,37 @@ async def _wa_browser_for(session_id: str) -> list[str]:
     return browser
 
 
+# A halted account keeps its lease after its WhatsApp session was lost (so
+# its dot stays red). To pair it again it is deactivated first; its runtime
+# then fails its next lease renewal and stops. This is how long to wait.
+WA_RELEASE_WAIT_SECONDS = 25.0
+WA_RELEASE_POLL_SECONDS = 0.5
+
+
+async def _release_lost_whatsapp(session_id: str, row: dict[str, Any]) -> bool:
+    """Let go of an account whose WhatsApp session was lost, so it can be
+    paired again: only one halted by a session loss (state needs_login or
+    revoked, no stored login left), never a healthy running one. True once
+    no worker holds it any more."""
+    if row.get("state") not in ("needs_login", "revoked"):
+        return False
+    if await wa_store.has_login(pool, session_id):
+        return False
+    log.warning("[%s] Re-pairing a WhatsApp account whose session was lost: deactivating it so its "
+                "halted runtime lets go (%s).", session_id, row.get("state_reason") or row.get("state"))
+    await registry.set_active(session_id, False)
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + WA_RELEASE_WAIT_SECONDS
+    while loop.time() < deadline:
+        current = await registry.get(session_id)
+        if current is None or not _lease_is_live(current):
+            return True
+        await asyncio.sleep(WA_RELEASE_POLL_SECONDS)
+    return False
+
+
 async def _wa_paired(pairing: wa_pairing.Pairing, event: dict[str, Any]) -> None:
     session_id = pairing.session_id
     if pairing.deepseek_key:
@@ -803,7 +835,12 @@ async def api_wa_pair_start(body: WaPairStartBody) -> dict[str, Any]:
     existing = await registry.get(session_id)
     if existing is not None and existing.get("channel") != CHANNEL_WHATSAPP:
         raise HTTPException(status_code=409, detail=f"{session_id} is a {existing.get('channel')} account.")
-    if existing is not None and _lease_is_live(existing):
+    if existing is not None and _lease_is_live(existing) and not await _release_lost_whatsapp(session_id, existing):
+        if existing.get("state") in ("needs_login", "revoked"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{phone} lost its WhatsApp session and is being stopped; try again in half a minute.",
+            )
         raise HTTPException(
             status_code=409,
             detail=f"{phone} is already running ({session_id}). Stop it before pairing it again.",

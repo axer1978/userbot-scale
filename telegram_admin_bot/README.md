@@ -293,8 +293,8 @@ How WhatsApp accounts are identified:
   new linked device: the old device's keys are wiped first.
 - **A number that is running is refused** ("already running … Stop it before
   pairing it again"). Take it out of rotation first (see
-  [Operations](#operations)); this is also the case after a session loss,
-  see below.
+  [Operations](#operations)). The exception is an account halted by a
+  session loss (below): pairing it again releases it by itself.
 
 ### Safety defaults for a new WhatsApp account
 
@@ -390,12 +390,14 @@ raised, the stored login is **deleted**, and the account's state becomes
 | `multideviceMismatch` (411) | WhatsApp's multi-device state no longer matches this login | Pair again |
 
 Recovery, every time: **find out why** (the checklist *WhatsApp session
-dropped* in [`RUNBOOK.md`](../RUNBOOK.md#whatsapp-session-dropped)), **take
-the account out of rotation** (the SQL under [Operations](#operations); the
-runtime still holds the lease, so pairing is refused until then), **pair
+dropped* in [`RUNBOOK.md`](../RUNBOOK.md#whatsapp-session-dropped)), **pair
 again** from **+ Add account → WhatsApp** with the same number, then **resume
-the `whatsapp` hold** in Safety. Pairing again brings the account back, but it
-sends nothing on its own until the hold is lifted.
+the `whatsapp` hold** in Safety. The halted runtime still holds the account's
+lease (that is why the dot is red); pairing again deactivates the account,
+waits up to about 25 s for that runtime to let go, then pairs, and a
+successful pairing makes it active again. If the runtime has not let go in
+time, the panel says so: try again half a minute later. Pairing again brings
+the account back, but it sends nothing on its own until the hold is lifted.
 
 ### Restarts and recovery
 

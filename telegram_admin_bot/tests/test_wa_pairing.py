@@ -280,6 +280,69 @@ async def test_a_running_number_is_not_paired_again(panel_client, pg_pool, gatew
     assert gateway.calls == []
 
 
+async def hold_lease(pg_pool, *, state: str, reason: str = "") -> None:
+    async with pg_pool.acquire() as con:
+        await con.execute(
+            "UPDATE telegram_sessions SET lease_worker_id = 'w1', lease_expires_at = $2, state = $3, "
+            "state_reason = $4, is_active = true WHERE session_id = $1",
+            SESSION_ID, datetime.now(timezone.utc) + timedelta(minutes=1), state, reason,
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_number_whose_session_was_lost_is_released_and_paired_again(panel_client, pg_pool, gateway):
+    """Halted after a session loss, the account still holds its lease (red
+    dot). Pairing it again deactivates it, waits for its runtime to let go,
+    then pairs — no SQL by hand."""
+    import asyncio
+
+    await SessionRegistry(pg_pool).create(SESSION_ID, label="x", channel="whatsapp")
+    await hold_lease(pg_pool, state="needs_login", reason="WhatsApp session lost (loggedOut)")
+
+    async def worker_lets_go():
+        # What the halted runtime does once its renewal fails on is_active.
+        for _ in range(100):
+            if not await pg_pool.fetchval("SELECT is_active FROM telegram_sessions WHERE session_id = $1",
+                                          SESSION_ID):
+                break
+            await asyncio.sleep(0.05)
+        await pg_pool.execute("UPDATE telegram_sessions SET lease_worker_id = NULL, lease_expires_at = NULL "
+                              "WHERE session_id = $1", SESSION_ID)
+
+    letting_go = asyncio.create_task(worker_lets_go())
+    r = await panel_client.post("/api/wa/pair/start", json=start_body())
+    await letting_go
+    assert r.status_code == 200, r.text
+    assert [c for c in gateway.calls if c[0] == "pair"]
+    assert (await session_row(pg_pool))["is_active"] is False
+    pair_id = r.json()["pair_id"]
+    await gateway.emit(pair_id, {"type": "paired", "jid": "34600123456@s.whatsapp.net", "lid": None,
+                                 "push_name": "Salon"})
+    await wait_for(panel_client, pair_id, "paired")
+    assert (await session_row(pg_pool))["is_active"] is True    # the manager picks it up again
+
+
+@pytest.mark.asyncio
+async def test_a_lost_session_that_does_not_let_go_is_refused_for_now(panel_client, pg_pool, gateway, monkeypatch):
+    import panel
+
+    monkeypatch.setattr(panel, "WA_RELEASE_WAIT_SECONDS", 0.3)
+    await SessionRegistry(pg_pool).create(SESSION_ID, label="x", channel="whatsapp")
+    await hold_lease(pg_pool, state="needs_login")
+    r = await panel_client.post("/api/wa/pair/start", json=start_body())
+    assert r.status_code == 409 and "try again in half a minute" in r.json()["detail"]
+    assert gateway.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_running_number_is_never_deactivated(panel_client, pg_pool, gateway):
+    await SessionRegistry(pg_pool).create(SESSION_ID, label="x", channel="whatsapp")
+    await hold_lease(pg_pool, state="running")
+    r = await panel_client.post("/api/wa/pair/start", json=start_body())
+    assert r.status_code == 409 and "Stop it before pairing it again" in r.json()["detail"]
+    assert (await session_row(pg_pool))["is_active"] is True
+
+
 @pytest.mark.asyncio
 async def test_a_telegram_row_under_that_id_is_never_turned_into_whatsapp(panel_client, pg_pool, gateway):
     await SessionRegistry(pg_pool).create(SESSION_ID, label="tg", channel="telegram")
