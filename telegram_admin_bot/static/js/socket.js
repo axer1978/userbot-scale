@@ -96,7 +96,7 @@ function handleEvent(data) {
       break;
 
     case "halted":
-      toast("Stopped after a Telegram error: " + data.reason);
+      toast(`Stopped after a ${channelName(currentChannel())} error: ` + data.reason);
       sfPoll();
       break;
 
@@ -171,14 +171,18 @@ function applyStatus(status) {
     $("brand-instance").textContent = status.instance;
     document.title = `${status.instance} — Telegram AI Assistant`;
   }
+  applyChannel();
+  // telegram_connected: the account's own network, WhatsApp included (the
+  // field name is kept for compatibility).
+  const network = channelName(currentChannel());
   const dot = $("conn-dot");
   if (status.telegram_connected) {
     dot.classList.add("on");
     $("conn-text").textContent = status.me && status.me.name
-      ? `connected as ${status.me.name}` : "connected";
+      ? `${network} connected as ${status.me.name}` : `${network} connected`;
   } else {
     dot.classList.remove("on");
-    $("conn-text").textContent = "Telegram offline";
+    $("conn-text").textContent = `${network} offline`;
     if (status.telegram_error) toast(status.telegram_error);
   }
   if (status.persona_configured === false) {
