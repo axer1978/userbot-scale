@@ -87,6 +87,12 @@ class Transport:
     channel: str = ""
     # How the network is named in messages to the operator.
     network: str = ""
+    # The messages column its message ids are stored in (database.py).
+    id_field: str = "telegram_id"
+    # The hold (controls.py) and alert kind a halt caused by it raises.
+    hold_kind: str = ""
+    # Whether the bot may send on its own yet (auto-send).
+    can_send: bool = True
 
     def __init__(self, rt: Any) -> None:
         self.rt = rt
@@ -114,6 +120,10 @@ class Transport:
     def is_service_chat(self, chat_id: int) -> bool:
         """The network's own service account (never a customer)."""
         return False
+
+    def adapt_prompt(self, text: str) -> str:
+        """The system prompt, reworded for this network if it needs it."""
+        return text
 
     # ------------------------------------------------------- lifecycle
 
@@ -199,4 +209,8 @@ def make_transport(channel: str, rt: Any) -> Transport:
         from telegram_transport import TelegramTransport
 
         return TelegramTransport(rt)
+    if channel == WHATSAPP:
+        from whatsapp_transport import WhatsAppTransport
+
+        return WhatsAppTransport(rt)
     raise ValueError(f"No transport for channel {channel!r}")

@@ -59,6 +59,7 @@ LABELS = {
     SPEND_CAP: "AI limit reached",
     ANOMALY: "anomaly",
     TELEGRAM: "stopped after a Telegram error",
+    WHATSAPP: "stopped after a WhatsApp error",
 }
 
 RELOAD_TIMEOUT = 5.0

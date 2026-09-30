@@ -712,12 +712,13 @@ async def backfill(pool: asyncpg.Pool) -> dict[str, Any]:
 
     refs = 0
     missing = await pool.fetch(
-        "SELECT tenant_id, session_id, chat_id FROM conversations WHERE customer_ref IS NULL"
+        "SELECT c.tenant_id, c.session_id, c.chat_id, t.channel FROM conversations c "
+        "JOIN tenants t ON t.id = c.tenant_id WHERE c.customer_ref IS NULL"
     )
     for row in missing:
         await pool.execute(
             "UPDATE conversations SET customer_ref = $3 WHERE tenant_id = $1 AND chat_id = $2",
-            row["tenant_id"], row["chat_id"], crypto.customer_ref(row["tenant_id"], "telegram", row["chat_id"]),
+            row["tenant_id"], row["chat_id"], crypto.customer_ref(row["tenant_id"], row["channel"], row["chat_id"]),
         )
         refs += 1
     return {"imported": imported, "customer_refs": refs}

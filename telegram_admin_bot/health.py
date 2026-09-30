@@ -157,6 +157,7 @@ async def check_all(pool: asyncpg.Pool, now: Optional[datetime] = None) -> dict[
           JOIN telegram_sessions s ON s.session_id = t.session_id
           LEFT JOIN sessions_health h ON h.tenant_id = t.id
          WHERE s.auth_key_enc IS NOT NULL OR s.state IN ('needs_login', 'revoked')
+            OR EXISTS (SELECT 1 FROM wa_auth_state a WHERE a.session_id = s.session_id AND a.kind = 'creds')
         """
     )
     out: dict[int, str] = {}

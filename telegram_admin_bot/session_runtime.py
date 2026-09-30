@@ -88,6 +88,7 @@ import tenant_config
 import tenants
 import unanswered
 import vision
+import wa_store
 from transport import (
     PEER_FLOOD,
     RATE_LIMITED,
@@ -314,6 +315,7 @@ class SessionRuntime:
         # lease nobody is using and that session could never be claimed again.
         try:
             await self.db.connect()
+            await self._choose_transport()
             self.bus = await commands.CommandBus.connect(self.redis_url)
             self._command_serve_task = asyncio.create_task(
                 self.bus.serve(self.session_id, self.handle_command, self._command_stop_event)
@@ -333,6 +335,16 @@ class SessionRuntime:
         except BaseException:
             await self._release_partial_start()
             raise
+
+    async def _choose_transport(self) -> None:
+        """The account row says which network it is on (migration 0006);
+        a WhatsApp account swaps the default Telegram transport for one that
+        drives its socket in wa-gateway."""
+        row = await self.registry.get(self.session_id)
+        channel = (row or {}).get("channel") or TELEGRAM
+        if channel != self.transport.channel:
+            self.transport = make_transport(channel, self)
+        self.db.channel = channel
 
     async def _release_partial_start(self) -> None:
         """Undo what start() managed to do before it failed, so a session that
@@ -607,6 +619,7 @@ class SessionRuntime:
             self.data_dir = tenants.tenant_data_dir(self.data_root, self.tenant_id, self.session_id)
             self.media_library = media.MediaLibrary(self.data_dir / "media")
             self.booking_store = booking_store.BookingStore(self.pool, self.tenant_id, self.session_id)
+            self.booking_store.channel = self.transport.channel
             imported = await self.booking_store.import_legacy_file(self.data_dir / "bookings.json")
             if imported:
                 log.info("[%s] Imported %s bookings from bookings.json.", self.session_id, imported)
@@ -966,7 +979,8 @@ class SessionRuntime:
         should look at it before this account starts sending again.
         """
         log.error("[%s] HALTING ALL AUTOMATION: %s", self.session_id, reason)
-        await controls.add_hold(self.pool, self.tenant_id, controls.TELEGRAM, reason, actor=audit.SYSTEM)
+        kind = self.transport.hold_kind or controls.TELEGRAM
+        await controls.add_hold(self.pool, self.tenant_id, kind, reason, actor=audit.SYSTEM)
         await self.write_audit(audit.ACCOUNT_HALTED, actor=audit.SYSTEM, reason=reason)
         await self.refresh_controls()
         for chat_id in list(self.draft_tasks):
@@ -975,7 +989,7 @@ class SessionRuntime:
         await self.hub.broadcast({"type": "halted", "reason": reason})
         await self.push_error(None, f"Automation halted: {reason}")
         await health.error(self.pool, self.tenant_id, self.session_id, reason)
-        await alerts.raise_alert(self.pool, tenant_id=self.tenant_id, kind="telegram", severity=alerts.CRITICAL,
+        await alerts.raise_alert(self.pool, tenant_id=self.tenant_id, kind=kind, severity=alerts.CRITICAL,
                                  message=f"Stopped: {reason}")
 
     async def check_daily_quota(self) -> None:
@@ -1118,6 +1132,17 @@ class SessionRuntime:
                 chat_id, DIR_SYSTEM, STATUS_ERROR, text, bump_preview=False
             )
         await self.hub.broadcast({"type": "error", "chat_id": chat_id, "text": text, "message": row})
+
+    def external_id(self, value: Any) -> dict[str, Any]:
+        """A network message id as the keyword for the messages column it
+        is stored in (telegram_id, or wa_message_id for WhatsApp)."""
+        return {self.transport.id_field: value}
+
+    async def find_by_external_id(self, chat_id: int, ids: dict[str, Any]) -> Optional[dict[str, Any]]:
+        (field, value), = ids.items()
+        if field == "wa_message_id":
+            return await self.db.find_by_wa_message_id(chat_id, value)
+        return await self.db.find_by_telegram_id(chat_id, value)
 
     def media_prompt(self) -> str:
         if not self.config["media"].get("enabled", True):
@@ -1269,19 +1294,19 @@ class SessionRuntime:
         self.delivery_attempts += 1
         try:
             sent = await self.deliver(peer, chat_id, text, typing)
-            telegram_id = self.transport.message_id(sent)
+            ids = self.external_id(self.transport.message_id(sent))
             if draft_id is not None:
                 row = await self.db.update_message(
-                    draft_id, text=text, status=STATUS_SENT, telegram_id=telegram_id
+                    draft_id, text=text, status=STATUS_SENT, **ids
                 )
                 await self.db.set_conversation_preview(chat_id, text)
             else:
                 row = await self.db.record_message(
-                    chat_id, DIR_OUT, STATUS_SENT, text, telegram_id=telegram_id,
+                    chat_id, DIR_OUT, STATUS_SENT, text, **ids,
                     llm_model=llm_model, prompt_version=prompt_version,
                 )
                 if row is None:
-                    row = await self.db.find_by_telegram_id(chat_id, telegram_id)
+                    row = await self.find_by_external_id(chat_id, ids)
         finally:
             pending = self.in_flight_sends.get(chat_id) or []
             if text in pending:
@@ -1318,18 +1343,18 @@ class SessionRuntime:
         self.delivery_attempts += 1
         try:
             sent = await self.deliver_file(peer, chat_id, item, path)
-            telegram_id = self.transport.message_id(sent)
+            ids = self.external_id(self.transport.message_id(sent))
             if draft_id is not None:
                 row = await self.db.update_message(
-                    draft_id, text=text, status=STATUS_SENT, telegram_id=telegram_id, attachments=[item_id],
+                    draft_id, text=text, status=STATUS_SENT, attachments=[item_id], **ids,
                 )
                 await self.db.set_conversation_preview(chat_id, text)
             else:
                 row = await self.db.record_message(
-                    chat_id, DIR_OUT, STATUS_SENT, text, telegram_id=telegram_id, attachments=[item_id],
+                    chat_id, DIR_OUT, STATUS_SENT, text, attachments=[item_id], **ids,
                 )
                 if row is None:
-                    row = await self.db.find_by_telegram_id(chat_id, telegram_id)
+                    row = await self.find_by_external_id(chat_id, ids)
                     if row is not None:
                         row = await self.db.update_message(row["id"], text=text, attachments=[item_id])
         finally:
@@ -1518,7 +1543,7 @@ class SessionRuntime:
                     background=background,
                     booking_note=note.text,
                     media_note=media_note,
-                    system_prompt=prompt.text if prompt else None,
+                    system_prompt=self.transport.adapt_prompt(prompt.text) if prompt else None,
                     language_locked=self.config["language_policy"] != "mirror",
                     burst_max=self.config["burst"]["max_messages"],
                     usage_sink=self.usage_sink("reply"),
@@ -1552,7 +1577,7 @@ class SessionRuntime:
             # (or is drafted) as normal.
             fallback = self.fallback_phrase(text)
 
-            if self.config["auto_send"] and not hold and verdict.ok:
+            if self.config["auto_send"] and self.transport.can_send and not hold and verdict.ok:
                 self.sending_chats.add(chat_id)
                 try:
                     await self.send_burst(
@@ -1994,7 +2019,7 @@ class SessionRuntime:
         # Tried again while the database is briefly away; a repeat is
         # harmless (the network's message id makes it a duplicate).
         row = await self._store_with_retry("storing a message", lambda: self.db.record_message(
-            chat_id, DIR_IN, STATUS_RECEIVED, stored_text, telegram_id=message.external_id, mark_unread=True,
+            chat_id, DIR_IN, STATUS_RECEIVED, stored_text, mark_unread=True, **self.external_id(message.external_id),
         ))
 
         if row is not None:
@@ -2092,7 +2117,7 @@ class SessionRuntime:
         )
 
         row = await self._store_with_retry("storing a sent message", lambda: self.db.record_message(
-            chat_id, DIR_OUT, STATUS_SENT, text or "[non-text message]", telegram_id=message.external_id,
+            chat_id, DIR_OUT, STATUS_SENT, text or "[non-text message]", **self.external_id(message.external_id),
         ))
         if row is None:
             return  # already stored: one of this runtime's own sends
@@ -2169,9 +2194,25 @@ class SessionRuntime:
         # Nothing more to run; the worker drops this runtime and its lease.
         self.finished = True
 
+    async def on_session_lost(self, reason: str, why: str, code: Any = None) -> None:
+        """The network ended this login for good (WhatsApp: logged out,
+        banned, replaced). Never reconnected quietly: everything halts with
+        the reason, the dead login is deleted so nothing can reopen it, and
+        the account needs pairing again. The runtime keeps its lease, so the
+        panel's dot shows red until someone deals with it."""
+        net = self.transport.network
+        text = f"{net} session lost ({reason}): {why}. Pair the account again from the panel."
+        with suppress(Exception):
+            await wa_store.forget_login(self.pool, self.session_id)
+        state = "revoked" if reason == "forbidden" else "needs_login"
+        await self.registry.set_state(self.session_id, state, text)
+        await self.halt_everything(text)
+        await self.hub.broadcast({"type": "status", "status": self.status()})
+
     def status(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
+            "channel": self.transport.channel,
             "telegram_connected": self.transport.connected,
             "telegram_error": self.transport.error,
             "me": self.me_info,

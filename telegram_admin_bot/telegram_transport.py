@@ -24,6 +24,7 @@ from telethon.tl.types import InputPeerUser, User
 
 import anomaly
 import config_store
+import controls
 import device_profiles
 import proxies
 from database import SessionRegistry
@@ -110,6 +111,7 @@ def _parse_proxy(proxy_url: Optional[str]) -> Optional[tuple]:
 class TelegramTransport(Transport):
     channel = TELEGRAM
     network = "Telegram"
+    hold_kind = controls.TELEGRAM
 
     def __init__(self, rt: Any) -> None:
         super().__init__(rt)
