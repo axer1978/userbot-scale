@@ -343,20 +343,15 @@ class BookingFlow:
     async def provider_chat_id(self) -> Optional[int]:
         value = (self.settings.get("provider") or "").strip()
         rt = self.rt
-        if not value or rt.client is None or not rt.telegram_state["connected"]:
+        if not value or not rt.transport.ready:
             return None
         cached_value, cached_id, resolved_at = self._provider
         now = asyncio.get_running_loop().time()
         if cached_value == value and (cached_id is not None or now - resolved_at < self.PROVIDER_RETRY_SECONDS):
             return cached_id
         try:
-            from session_runtime import describe_sender
-
-            target: Any = int(value) if value.lstrip("-").isdigit() else value
-            entity = await rt.client.get_entity(target)
-            chat_id = int(entity.id)
-            name, username, is_bot, access_hash = describe_sender(entity, chat_id)
-            await rt.db.upsert_conversation(chat_id, name, username, is_bot, access_hash)
+            chat_id, peer = await rt.transport.resolve_owner(value)
+            await rt.db.upsert_conversation(chat_id, peer.name, peer.username, peer.is_bot, peer.access_hash)
         except Exception as exc:
             log.warning("[%s] Cannot resolve the booking owner %r: %s", rt.session_id, value, type(exc).__name__)
             self._provider = (value, None, now)

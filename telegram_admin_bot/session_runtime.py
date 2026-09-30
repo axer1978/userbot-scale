@@ -1,6 +1,8 @@
-"""Per-session runtime: the Telethon client lifecycle + business logic for
-one Telegram account, ported from the original single-account `main.py` to
-run against the fleet's shared Postgres pool.
+"""Per-session runtime: the business logic for one account, ported from the
+original single-account `main.py` to run against the fleet's shared
+Postgres pool. Everything that talks to the network itself (connecting,
+sending, typing, read receipts, presence) sits behind `self.transport`
+(transport.py; telegram_transport.py for Telegram).
 
 One `SessionRuntime` instance == one Telegram account == one row in
 `telegram_sessions`, owned by exactly one tenant. `manager.py`'s workers
@@ -61,12 +63,6 @@ from typing import Any, Optional
 
 import asyncpg
 import httpx
-from telethon import TelegramClient, errors, events
-from telethon.crypto import AuthKey
-from telethon.sessions import MemorySession
-from telethon.tl.functions.account import GetAuthorizationsRequest, UpdateStatusRequest
-from telethon.tl.functions.contacts import GetContactsRequest
-from telethon.tl.types import InputPeerUser, User
 
 import ai_limits
 import ai_responder
@@ -80,7 +76,6 @@ import commands
 import config_store
 import context_link
 import controls
-import device_profiles
 import health
 import humanlike
 import leasing
@@ -88,12 +83,23 @@ import llm_usage
 import media
 import pg
 import policy
-import proxies
 import scheduler
 import tenant_config
 import tenants
 import unanswered
 import vision
+from transport import (
+    PEER_FLOOD,
+    RATE_LIMITED,
+    SESSION_REJECTED,
+    TELEGRAM,
+    TELEGRAM_SERVICE_ID,  # noqa: F401  (re-exported; tests use session_runtime.TELEGRAM_SERVICE_ID)
+    UNREACHABLE,
+    Inbound,
+    NeedsLogin,
+    Transport,
+    make_transport,
+)
 from database import (
     DIR_IN,
     DIR_OUT,
@@ -115,10 +121,6 @@ from database import (
 
 log = logging.getLogger("session_runtime")
 
-# Telegram's own service account: login codes and "new login" notices come
-# from it. Never answered; a message from it triggers a login check.
-TELEGRAM_SERVICE_ID = 777000
-
 # reply_skip_reason's answer for a bare "ok" / "thanks". It is skipped like
 # the others but not queued as unanswered: it needed no answer.
 ACK_SKIP = "the message is only an acknowledgement"
@@ -138,10 +140,6 @@ DRAFT_DB_RETRIES = 3
 DRAFT_RETRY_SECONDS = 10.0
 
 
-class NeedsLogin(RuntimeError):
-    """Raised by start() when the session has no usable auth_key yet."""
-
-
 class SendBlocked(Exception):
     """A send was deliberately not attempted, with a reason worth showing."""
 
@@ -149,66 +147,6 @@ class SendBlocked(Exception):
 def _ov_int(overrides: dict[str, Any], key: str, fallback: int) -> int:
     value = overrides.get(key)
     return value if isinstance(value, int) else fallback
-
-
-def describe_sender(sender: Any, fallback_id: int) -> tuple[str, Optional[str], bool, Optional[int]]:
-    """(display_name, username, is_bot, access_hash) for a private-chat peer."""
-    username = getattr(sender, "username", None)
-    access_hash = getattr(sender, "access_hash", None)
-    is_bot = bool(getattr(sender, "bot", False))
-
-    if isinstance(sender, User) or hasattr(sender, "first_name"):
-        parts = [getattr(sender, "first_name", None), getattr(sender, "last_name", None)]
-        name = " ".join(p for p in parts if p).strip()
-    else:
-        name = (getattr(sender, "title", None) or "").strip()
-
-    if not name:
-        name = username or f"Chat {fallback_id}"
-    return name, username, is_bot, access_hash
-
-
-def _client_from_auth(
-    auth: dict[str, Any],
-    proxy: Optional[str],
-    flood_sleep_threshold: int,
-    identity: dict[str, Any],
-) -> TelegramClient:
-    """Build a Telethon client from SessionRegistry.load_auth()'s dict.
-
-    Reconstructs the same (dc_id, server_address, port, auth_key) state a
-    StringSession would decode from its base64 blob, except sourced from
-    Postgres columns instead of a string — MemorySession is what
-    StringSession itself subclasses, so this is exactly equivalent.
-    A session with no auth_key yet gets an empty MemorySession, ready for
-    a fresh login (handled by the not-yet-ported login flow, not here).
-    """
-    session = MemorySession()
-    if auth.get("auth_key") and auth.get("dc_id"):
-        session.set_dc(auth["dc_id"], auth["server_address"], auth["port"])
-        session.auth_key = AuthKey(data=auth["auth_key"])
-    # Without these Telethon reports the host's own platform and its own
-    # version string, identically for every session in the process — see
-    # device_profiles.py.
-    return TelegramClient(
-        session,
-        auth["api_id"],
-        auth["api_hash"],
-        proxy=_parse_proxy(proxy),
-        flood_sleep_threshold=flood_sleep_threshold,
-        catch_up=True,
-        device_model=identity["device_model"],
-        system_version=identity["system_version"],
-        app_version=identity["app_version"],
-        lang_code=identity["lang_code"],
-        system_lang_code=identity["system_lang_code"],
-    )
-
-
-def _parse_proxy(proxy_url: Optional[str]) -> Optional[tuple]:
-    """The account's proxy URL (socks5://, socks5h:// or http://) ->
-    Telethon's proxy tuple; None means a direct connection (proxies.py)."""
-    return proxies.telethon_tuple(proxy_url)
 
 
 class Hub:
@@ -230,8 +168,8 @@ class Hub:
 
 
 class SessionRuntime:
-    """Runs one Telegram account: Telethon client, drafting, sends, safety
-    limits, outreach, bookings, media, presence. Construct one per leased
+    """Runs one account: drafting, sends, safety limits, outreach, bookings,
+    media, presence, over its transport. Construct one per leased
     session_id; call start(), then stop() on shutdown."""
 
     def __init__(
@@ -277,11 +215,10 @@ class SessionRuntime:
         self.deepseek_key: Optional[str] = None
 
         self.http_client: Optional[httpx.AsyncClient] = None
-        self.client: Optional[TelegramClient] = None
-        self.telegram_task: Optional[asyncio.Task] = None
+        # The network this account runs on (transport.py): every call that
+        # talks to it goes through here.
+        self.transport: Transport = make_transport(TELEGRAM, self)
         self.reminder_task: Optional[asyncio.Task] = None
-        self.me_info: dict[str, Any] = {}
-        self.telegram_state: dict[str, Any] = {"connected": False, "error": None}
 
         self.draft_tasks: dict[int, asyncio.Task] = {}
         self.outreach_task: Optional[asyncio.Task] = None
@@ -318,8 +255,33 @@ class SessionRuntime:
 
         self._lease_keeper: Optional[leasing.LeaseKeeper] = None
         self._lease_keeper_task: Optional[asyncio.Task] = None
+        # The epoch of the lease this runtime holds (leasing.Lease.epoch);
+        # 0 until start() has taken it.
+        self.lease_epoch = 0
         self._stopping = False
 
+    # The Telegram transport's state under the names it had before the
+    # transport split (tests and older call sites use them).
+
+    @property
+    def client(self) -> Any:
+        return getattr(self.transport, "client", None)
+
+    @client.setter
+    def client(self, value: Any) -> None:
+        self.transport.client = value
+
+    @property
+    def telegram_state(self) -> dict[str, Any]:
+        return self.transport.state
+
+    @property
+    def me_info(self) -> dict[str, Any]:
+        return self.transport.me
+
+    @me_info.setter
+    def me_info(self, value: dict[str, Any]) -> None:
+        self.transport.me_info = value
 
     # ------------------------------------------------------------------
     # Startup / shutdown
@@ -343,6 +305,7 @@ class SessionRuntime:
             self.pool, self.worker_id, on_lost=self._on_lease_lost
         )
         self._lease_keeper.track(lease)
+        self.lease_epoch = lease.epoch
         self._lease_keeper_task = asyncio.create_task(self._lease_keeper.run())
 
         # Everything past the lease must clean up after itself on failure.
@@ -358,14 +321,7 @@ class SessionRuntime:
             self.http_client = httpx.AsyncClient(timeout=ai_responder.REQUEST_TIMEOUT_SECONDS)
             await self.bind_tenant()
 
-            auth = await self.registry.load_auth(self.session_id)
-            if auth is None or not auth.get("auth_key"):
-                raise NeedsLogin(
-                    f"session {self.session_id!r} has no auth_key yet — run the login flow "
-                    "(SessionRegistry.create + save_login) before starting this runtime."
-                )
-            self.api_id = auth["api_id"]
-            self.api_hash = auth["api_hash"]
+            await self.transport.prepare()
             self.deepseek_key = await self.registry.load_deepseek_key(self.session_id)
             if not self.deepseek_key:
                 raise NeedsLogin(
@@ -373,8 +329,7 @@ class SessionRuntime:
                     "(SessionRegistry.set_deepseek_key)."
                 )
 
-            proxy_url = await self.registry.load_proxy(self.session_id)
-            await self._start_telegram(auth, proxy_url)
+            await self._start_transport()
         except BaseException:
             await self._release_partial_start()
             raise
@@ -427,7 +382,7 @@ class SessionRuntime:
                 failed.append(name)
                 log.exception("[%s] Stopping: %s failed", self.session_id, name)
 
-        await step("telegram", self._stop_telegram())
+        await step("telegram", self._stop_transport())
         if self._lease_keeper is not None:
             await step("lease keeper", self._lease_keeper.stop())
         if self._lease_keeper_task is not None:
@@ -610,7 +565,7 @@ class SessionRuntime:
             "Lease lost for session %s; disconnecting to avoid a double-run.", session_id
         )
         self.finished = True
-        await self._stop_telegram()
+        await self._stop_transport()
 
     # ------------------------------------------------------------------
     # Config save helper (was module-global reassignment; now returns the
@@ -768,15 +723,10 @@ class SessionRuntime:
         """Compare the account's Telegram logins with the last check. A new
         one is an anomaly (anomaly.new_login_suspend)."""
         self._logins_checked_at = time.monotonic()
-        if self.client is None or not self.telegram_state["connected"]:
+        current = await self.transport.list_logins()
+        if current is None:
             return []
-        try:
-            result = await self.client(GetAuthorizationsRequest())
-        except Exception as exc:
-            log.warning("[%s] Could not list the account's logins: %s", self.session_id, type(exc).__name__)
-            return []
-        current = [anomaly.login_record(a) for a in getattr(result, "authorizations", [])]
-        known = await health.known_logins(self.pool, self.tenant_id)
+        known =await health.known_logins(self.pool, self.tenant_id)
         fresh = anomaly.new_logins(known, current)
         await health.save_logins(self.pool, self.tenant_id, self.session_id, current)
         if fresh and self.config["anomaly"]["new_login_suspend"]:
@@ -798,11 +748,10 @@ class SessionRuntime:
         """Log this account's session out of Telegram and stop. The caller
         (controls.hard_off) deletes the key and deactivates the account."""
         logged_out = False
-        if self.client is not None:
-            try:
-                logged_out = bool(await self.client.log_out())
-            except Exception as exc:
-                log.error("[%s] Log out failed: %s", self.session_id, type(exc).__name__)
+        try:
+            logged_out = await self.transport.log_out()
+        except Exception as exc:
+            log.error("[%s] Log out failed: %s", self.session_id, type(exc).__name__)
         log.error("[%s] HARD-OFF (%s); logged out: %s", self.session_id, reason, logged_out)
         self.finished = True
         # Stop after this command has answered; stopping closes the bus.
@@ -852,7 +801,7 @@ class SessionRuntime:
         """Someone wrote in this chat by hand: the bot keeps quiet here for
         takeover_hours, then carries on by itself."""
         hours = float(self.config.get("takeover_hours") or 0)
-        if hours <= 0 or chat_id in (TELEGRAM_SERVICE_ID, self.me_info.get("id")):
+        if hours <= 0 or self.transport.is_service_chat(chat_id) or chat_id == self.me_info.get("id"):
             return
         conversation = await self.db.get_conversation(chat_id)
         if conversation is None:
@@ -919,7 +868,7 @@ class SessionRuntime:
         reason recorded wins. Never raises: the queue is a report, and a
         failure writing it must not cost the customer a reply."""
         try:
-            if chat_id == TELEGRAM_SERVICE_ID:
+            if self.transport.is_service_chat(chat_id):
                 return
             # The owner talking to their own bot is not a customer.
             if chat_id == await self.flow.provider_chat_id():
@@ -1069,59 +1018,62 @@ class SessionRuntime:
                                  message=f"Messages are being held back: {what}.")
 
     async def handle_send_failure(self, chat_id: Optional[int], exc: BaseException) -> bool:
-        """Translate a Telegram error into the right defensive action.
+        """Translate a network error (classified by the transport) into the
+        right defensive action.
 
         Returns True when the error was recognised and handled, so callers
         can avoid double-reporting it.
         """
+        failure = self.transport.classify(exc)
+        if failure is None:
+            return False
         safety = self.config["safety"]
+        net = self.transport.network
 
-        if isinstance(exc, errors.PeerFloodError):
+        if failure.kind == PEER_FLOOD:
             if safety.get("halt_on_peer_flood", True):
                 await self.halt_everything(
-                    "Telegram returned PeerFloodError — it considers this account "
+                    f"{net} returned {failure.label} — it considers this account "
                     "to be sending unsolicited messages. Everything is paused. Do "
                     "not resume until you know why; sending through this is what "
                     "gets a number banned."
                 )
             else:
-                await self.push_error(chat_id, "PeerFloodError from Telegram (halt disabled).")
+                await self.push_error(chat_id, f"{failure.label} from {net} (halt disabled).")
             return True
 
-        if isinstance(exc, (errors.UserDeactivatedBanError, errors.AuthKeyUnregisteredError,
-                            errors.SessionRevokedError)):
-            await self.registry.set_state(self.session_id, "needs_login", type(exc).__name__)
+        if failure.kind == SESSION_REJECTED:
+            await self.registry.set_state(self.session_id, "needs_login", failure.label)
             await self.halt_everything(
-                f"Telegram rejected the session ({type(exc).__name__}). The account "
+                f"{net} rejected the session ({failure.label}). The account "
                 "may be banned or the session revoked. Automation is stopped."
             )
             return True
 
-        if isinstance(exc, (errors.FloodWaitError, errors.SlowModeWaitError)):
-            wait = int(getattr(exc, "seconds", 0) or 0)
+        if failure.kind == RATE_LIMITED:
+            wait = failure.seconds
             cap = int(safety.get("max_flood_wait_seconds", 300))
-            log.warning("[%s] Telegram asked us to wait %ss before sending again.", self.session_id, wait)
+            log.warning("[%s] %s asked us to wait %ss before sending again.", self.session_id, net, wait)
             await health.rate_limited(self.pool, self.tenant_id, self.session_id, wait)
             await self.push_error(
-                chat_id, f"Telegram rate limit: it asked for a {wait}s pause. Backing off."
+                chat_id, f"{net} rate limit: it asked for a {wait}s pause. Backing off."
             )
             if wait > cap:
                 await self.halt_everything(
-                    f"Telegram demanded a {wait}s wait, beyond the {cap}s this is "
+                    f"{net} demanded a {wait}s wait, beyond the {cap}s this is "
                     "willing to sleep through. Paused so nothing retries into it."
                 )
             else:
                 await asyncio.sleep(wait)
             return True
 
-        if isinstance(exc, (errors.UserIsBlockedError, errors.UserPrivacyRestrictedError,
-                            errors.InputUserDeactivatedError, errors.ChatWriteForbiddenError)):
+        if failure.kind == UNREACHABLE:
             if chat_id is not None:
                 await self.db.set_paused(chat_id, True)
                 await self.hub.broadcast({"type": "conversation_paused", "chat_id": chat_id})
             await self.push_error(
                 chat_id,
-                f"Cannot message this person ({type(exc).__name__}); this "
+                f"Cannot message this person ({failure.label}); this "
                 "conversation is now paused. They may have blocked the account.",
             )
             return True
@@ -1152,17 +1104,7 @@ class SessionRuntime:
         return humanlike.seconds_until_quiet_ends(at or self.local_now(), self.config["quiet_hours"])
 
     async def resolve_peer(self, chat_id: int):
-        if self.client is None or not self.telegram_state["connected"]:
-            raise RuntimeError("Telegram is not connected.")
-        try:
-            return await self.client.get_input_entity(chat_id)
-        except (ValueError, TypeError):
-            access_hash = await self.db.get_access_hash(chat_id)
-            if access_hash is None:
-                raise RuntimeError(
-                    f"Cannot resolve chat {chat_id}. Receive a message from them first."
-                )
-            return InputPeerUser(chat_id, access_hash)
+        return await self.transport.resolve_peer(chat_id)
 
     async def push_message(self, row: dict[str, Any]) -> None:
         conversation = await self.db.get_conversation(row["chat_id"])
@@ -1230,7 +1172,7 @@ class SessionRuntime:
         if self.presence_online == online:
             return
         try:
-            await self.client(UpdateStatusRequest(offline=not online))
+            await self.transport.set_presence(online)
             self.presence_online = online
         except asyncio.CancelledError:
             raise
@@ -1284,37 +1226,20 @@ class SessionRuntime:
     # ------------------------------------------------------------------
 
     async def deliver(self, peer: Any, chat_id: int, text: str, typing: bool) -> Any:
-        if not (typing and self.config["human"].get("typing_indicator", True)):
-            return await self.client.send_message(peer, text)
-
-        seconds = self.typing_seconds(text, chat_id)
-        log.info("[%s]   typing for %.1fs…", self.session_id, seconds)
-
-        result = None
-        attempted = False
-        try:
-            async with self.client.action(chat_id, "typing"):
-                await asyncio.sleep(seconds)
-                attempted = True
-                result = await self.client.send_message(peer, text)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            if result is not None:
-                return result
-            if attempted:
-                raise
-            log.warning("[%s] Typing indicator unavailable (%s); sending anyway.", self.session_id, type(exc).__name__)
-        else:
-            return result
-
-        return await self.client.send_message(peer, text)
+        """Hand one message to the network. With `typing` (and the typing
+        indicator on) the chat shows "typing…" for as long as writing it
+        would plausibly take, and the message goes out while it still shows."""
+        seconds = None
+        if typing and self.config["human"].get("typing_indicator", True):
+            seconds = self.typing_seconds(text, chat_id)
+            log.info("[%s]   typing for %.1fs…", self.session_id, seconds)
+        return await self.transport.send_text(peer, chat_id, text, seconds)
 
     async def mark_read(self, chat_id: int, message_id: Optional[int] = None) -> None:
         if not self.config["human"].get("mark_read", True):
             return
         try:
-            await self.client.send_read_acknowledge(chat_id, max_id=message_id)
+            await self.transport.mark_read(chat_id, message_id)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1344,7 +1269,7 @@ class SessionRuntime:
         self.delivery_attempts += 1
         try:
             sent = await self.deliver(peer, chat_id, text, typing)
-            telegram_id = getattr(sent, "id", None)
+            telegram_id = self.transport.message_id(sent)
             if draft_id is not None:
                 row = await self.db.update_message(
                     draft_id, text=text, status=STATUS_SENT, telegram_id=telegram_id
@@ -1371,21 +1296,10 @@ class SessionRuntime:
         return row or {}
 
     async def deliver_file(self, peer: Any, chat_id: int, item: dict[str, Any], path: Path) -> Any:
-        is_video = item.get("kind") == media.VIDEO
-        if not self.config["human"].get("typing_indicator", True):
-            return await self.client.send_file(peer, str(path), supports_streaming=is_video)
-        try:
-            async with self.client.action(chat_id, "video" if is_video else "photo") as progress:
-                return await self.client.send_file(
-                    peer, str(path), supports_streaming=is_video, progress_callback=progress.progress,
-                )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            if isinstance(exc, (errors.RPCError, OSError)):
-                raise
-            log.warning("[%s] Upload indicator unavailable (%s); sending anyway.", self.session_id, type(exc).__name__)
-        return await self.client.send_file(peer, str(path), supports_streaming=is_video)
+        return await self.transport.send_file(
+            peer, chat_id, path, item.get("kind") == media.VIDEO,
+            self.config["human"].get("typing_indicator", True),
+        )
 
     async def send_media_as_me(
         self, chat_id: int, item_id: int, draft_id: Optional[int] = None, guard: bool = True,
@@ -1404,7 +1318,7 @@ class SessionRuntime:
         self.delivery_attempts += 1
         try:
             sent = await self.deliver_file(peer, chat_id, item, path)
-            telegram_id = getattr(sent, "id", None)
+            telegram_id = self.transport.message_id(sent)
             if draft_id is not None:
                 row = await self.db.update_message(
                     draft_id, text=text, status=STATUS_SENT, telegram_id=telegram_id, attachments=[item_id],
@@ -1706,10 +1620,10 @@ class SessionRuntime:
                                         "report a drafting failure")
                 await self.queue_unanswered(chat_id, unanswered.AI_ERROR, f"{type(exc).__name__}: {exc}")
             else:
-                # A Telegram error that was dealt with (a halt, a blocked
+                # A network error that was dealt with (a halt, a blocked
                 # chat, a rate limit): the reply did not go out.
                 await self.queue_unanswered(chat_id, unanswered.SOFT_OFF if self.paused() else unanswered.SKIPPED,
-                                            f"Telegram: {type(exc).__name__}")
+                                            f"{self.transport.network}: {type(exc).__name__}")
         finally:
             if chat_id in self.active_chats:
                 self.schedule_go_offline(chat_id)
@@ -1897,15 +1811,11 @@ class SessionRuntime:
         await self.hub.broadcast({"type": "outreach", "items": await self.db.list_outreach()})
 
     async def list_contacts(self) -> list[dict[str, Any]]:
-        result = await self.client(GetContactsRequest(hash=0))
         contacts = []
-        for user in getattr(result, "users", []):
-            if getattr(user, "deleted", False) or getattr(user, "is_self", False):
-                continue
-            name, username, is_bot, access_hash = describe_sender(user, user.id)
-            await self.db.upsert_conversation(user.id, name, username, is_bot, access_hash)
+        for chat_id, peer in await self.transport.list_contacts():
+            await self.db.upsert_conversation(chat_id, peer.name, peer.username, peer.is_bot, peer.access_hash)
             contacts.append({
-                "chat_id": user.id, "display_name": name, "username": username, "is_bot": is_bot,
+                "chat_id": chat_id, "display_name": peer.name, "username": peer.username, "is_bot": peer.is_bot,
             })
         contacts.sort(key=lambda c: c["display_name"].lower())
         return contacts
@@ -1932,7 +1842,7 @@ class SessionRuntime:
                 except Exception:
                     log.exception("[%s] Rebind failed", self.session_id)
                 try:
-                    if self.telegram_state["connected"]:
+                    if self.transport.connected:
                         await health.seen(self.pool, self.tenant_id, self.session_id)
                 except asyncio.CancelledError:
                     raise
@@ -1984,7 +1894,7 @@ class SessionRuntime:
     # Photos
     # ------------------------------------------------------------------
 
-    async def read_photo(self, chat_id: int, event: Any) -> Optional[str]:
+    async def read_photo(self, chat_id: int, message: Inbound) -> Optional[str]:
         """What a customer's photo shows, as text for the chat history:
         an arrival check when they may be arriving, else a short description
         (vision.* in the config). None when photos are not looked at."""
@@ -1993,7 +1903,7 @@ class SessionRuntime:
         if not (cfg["enabled"] and cfg["model"] and url and key) or await self.ai_limit_reason():
             return None
         try:
-            image = await self.client.download_media(event.message, file=bytes)
+            image = await self.transport.download_photo(message)
         except Exception as exc:
             log.warning("[%s] Could not download a photo in chat %s: %s", self.session_id, chat_id, type(exc).__name__)
             return None
@@ -2015,27 +1925,27 @@ class SessionRuntime:
             return None
         return f"[photo] {description}"
 
-    async def save_owner_photo(self, event: Any, caption: str) -> bool:
+    async def save_owner_photo(self, message: Inbound, caption: str) -> bool:
         """The owner sends a photo captioned "door" / "entrance" (or durvis,
         ieeja, дверь, вход): it becomes an entrance reference for the arrival
         photo check."""
         words = {w.strip(".,!:").lower() for w in caption.split()}
         if not words & {"door", "entrance", "durvis", "ieeja", "дверь", "вход"}:
             return False
-        name = self.media_library.unique_name(f"entrance-{event.message.id}.jpg")
+        name = self.media_library.unique_name(f"entrance-{message.external_id}.jpg")
         try:
-            await self.client.download_media(event.message, file=str(self.media_library.dir / name))
+            await self.transport.download_photo(message, self.media_library.dir / name)
             item = self.media_library.add_file(name, caption[:200], role=media.ARRIVAL_REFERENCE)
         except Exception as exc:
             log.warning("[%s] Could not save the owner's entrance photo: %s", self.session_id, exc)
             return False
         with suppress(Exception):
-            await self.send_as_me(event.chat_id, f"Saved as entrance reference photo #{item['id']}.",
+            await self.send_as_me(message.chat_id, f"Saved as entrance reference photo #{item['id']}.",
                                   reason="entrance photo saved for the owner")
         return True
 
     # ------------------------------------------------------------------
-    # Telethon handlers
+    # Inbound messages
     # ------------------------------------------------------------------
 
     async def _store_with_retry(self, what: str, make: Any) -> Any:
@@ -2054,54 +1964,37 @@ class SessionRuntime:
                             self.session_id, what, type(exc).__name__, exc, attempt + 1, STORE_ATTEMPTS)
                 await asyncio.sleep(STORE_RETRY_SECONDS * attempt)
 
-    async def on_incoming(self, event: events.NewMessage.Event) -> None:
-        """Telethon's handler for a new message. Whatever goes wrong with
-        one message is logged here, with the account and chat, and never
-        reaches Telethon, so the next message is handled as usual."""
-        try:
-            await self._on_incoming(event)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("[%s] Could not handle a message in chat %s", self.session_id,
-                          getattr(event, "chat_id", None))
+    async def on_incoming(self, event: Any) -> None:
+        """A new message event from the transport's own library (Telethon);
+        the transport normalises it and calls handle_inbound. Failures are
+        logged there and never reach the library."""
+        await self.transport.on_incoming(event)
 
-    async def on_outgoing(self, event: events.NewMessage.Event) -> None:
-        try:
-            await self._on_outgoing(event)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("[%s] Could not handle an outgoing message in chat %s", self.session_id,
-                          getattr(event, "chat_id", None))
+    async def on_outgoing(self, event: Any) -> None:
+        await self.transport.on_outgoing(event)
 
-    async def _on_incoming(self, event: events.NewMessage.Event) -> None:
-        if not event.is_private:
-            return
-
-        chat_id = event.chat_id
-        try:
-            sender = await event.get_sender()
-        except Exception:
-            sender = None
-        name, username, is_bot, access_hash = describe_sender(sender, chat_id)
+    async def handle_inbound(self, message: Inbound) -> None:
+        """A private message the account received, from any transport."""
+        chat_id = message.chat_id
+        peer = await message.load_peer()
+        name, username, is_bot = peer.name, peer.username, peer.is_bot
         conversation = await self._store_with_retry(
             "storing a conversation",
-            lambda: self.db.upsert_conversation(chat_id, name, username, is_bot, access_hash),
+            lambda: self.db.upsert_conversation(chat_id, name, username, is_bot, peer.access_hash),
         )
         await self.detect_links(conversation)
 
-        text = (event.raw_text or "").strip()
+        text = message.text
         has_text = bool(text)
-        has_photo = getattr(event.message, "photo", None) is not None
+        has_photo = message.has_photo
         stored_text = text if has_text else ("[photo]" if has_photo else "[non-text message]")
 
         # Always stored: the platform keeps a complete record of every
         # conversation (the pre-platform log_all_messages switch is gone).
         # Tried again while the database is briefly away; a repeat is
-        # harmless (the Telegram message id makes it a duplicate).
+        # harmless (the network's message id makes it a duplicate).
         row = await self._store_with_retry("storing a message", lambda: self.db.record_message(
-            chat_id, DIR_IN, STATUS_RECEIVED, stored_text, telegram_id=event.message.id, mark_unread=True,
+            chat_id, DIR_IN, STATUS_RECEIVED, stored_text, telegram_id=message.external_id, mark_unread=True,
         ))
 
         if row is not None:
@@ -2110,7 +2003,7 @@ class SessionRuntime:
         log.info("[%s] DM from %s%s (chat %s): %s", self.session_id, name, " [bot]" if is_bot else "", chat_id,
                  f"{len(text)} chars" if has_text else "non-text message")
 
-        if chat_id == TELEGRAM_SERVICE_ID:
+        if message.is_service:
             # Login codes and "new login" notices: never answered, and a
             # reason to look at the account's logins now.
             await self.check_logins()
@@ -2124,15 +2017,15 @@ class SessionRuntime:
         staged = await self.staged_out(chat_id, username)
         message_id = row["id"] if row is not None else None
         if is_provider:
-            if has_photo and await self.save_owner_photo(event, text):
+            if has_photo and await self.save_owner_photo(message, text):
                 return
-            if has_text and await self.flow.on_owner_message(chat_id, text, event.message.reply_to_msg_id):
+            if has_text and await self.flow.on_owner_message(chat_id, text, message.reply_to):
                 log.info("[%s]   booking command from the owner — handled.", self.session_id)
                 return
             log.info("[%s]   message from the booking owner; replying as usual.", self.session_id)
 
         if has_photo and not is_provider and not self.paused() and not quiet and not staged:
-            seen = await self.read_photo(chat_id, event)
+            seen = await self.read_photo(chat_id, message)
             if seen is not None and row is not None:
                 label = f"{text}\n{seen}" if has_text else seen
                 updated = await self.db.update_message(row["id"], text=label)
@@ -2180,91 +2073,55 @@ class SessionRuntime:
         # they end.
         self.schedule_draft(chat_id)
 
-    async def _on_outgoing(self, event: events.NewMessage.Event) -> None:
-        if not event.is_private:
-            return
-
-        text = (event.raw_text or "").strip()
-        chat_id = event.chat_id
+    async def handle_own_echo(self, message: Inbound) -> None:
+        """A message the account itself sent, as the network reports it back:
+        one of this runtime's own sends (ignored), or one written by hand
+        elsewhere (the phone, a desktop app), which is stored and takes the
+        chat over."""
+        text = message.text
+        chat_id = message.chat_id
         if text and text in (self.in_flight_sends.get(chat_id) or []):
             return
         if not text and self.in_flight_media.get(chat_id):
             return
 
-        try:
-            chat = await event.get_chat()
-        except Exception:
-            chat = None
-        name, username, is_bot, access_hash = describe_sender(chat, chat_id)
+        peer = await message.load_peer()
         await self._store_with_retry(
             "storing a conversation",
-            lambda: self.db.upsert_conversation(chat_id, name, username, is_bot, access_hash),
+            lambda: self.db.upsert_conversation(chat_id, peer.name, peer.username, peer.is_bot, peer.access_hash),
         )
 
         row = await self._store_with_retry("storing a sent message", lambda: self.db.record_message(
-            chat_id, DIR_OUT, STATUS_SENT, text or "[non-text message]", telegram_id=event.message.id,
+            chat_id, DIR_OUT, STATUS_SENT, text or "[non-text message]", telegram_id=message.external_id,
         ))
         if row is None:
             return  # already stored: one of this runtime's own sends
         await self.push_message(row)
-        # Written by hand on the account's own Telegram: a person has taken
-        # this chat over. Not the owner's booking chat or Saved Messages.
+        # Written by hand on the account's own phone or app: a person has
+        # taken this chat over. Not the owner's booking chat or Saved Messages.
         if chat_id != await self.flow.provider_chat_id():
-            await self.start_takeover(chat_id, how="Someone wrote here by hand in Telegram", actor=audit.OWNER)
+            await self.start_takeover(chat_id, how=f"Someone wrote here by hand in {self.transport.network}",
+                                      actor=audit.OWNER)
 
     # ------------------------------------------------------------------
     # Runners
     # ------------------------------------------------------------------
 
     async def reconnect(self) -> dict[str, Any]:
-        """Drop the Telegram connection and open it again with the login and
-        proxy stored now. Drafts in progress are cancelled like on a stop."""
-        auth = await self.registry.load_auth(self.session_id)
-        if auth is None or not auth.get("auth_key"):
-            raise ValueError("This account has no login to reconnect with.")
-        proxy_url = await self.registry.load_proxy(self.session_id)
-        log.warning("[%s] Reconnecting to Telegram (%s).", self.session_id,
-                    "through a proxy" if proxy_url else "directly")
-        await self._stop_telegram()
-        await self._start_telegram(auth, proxy_url)
-        return {"ok": True, "proxy": proxies.describe(proxy_url)}
+        """Drop the connection and open it again with the login and proxy
+        stored now. Drafts in progress are cancelled like on a stop."""
+        proxy = await self.transport.reload_login()
+        await self._stop_transport()
+        await self._start_transport()
+        return {"ok": True, "proxy": proxy}
 
-    async def _start_telegram(self, auth: dict[str, Any], proxy_url: Optional[str]) -> None:
-        flood_sleep_threshold = int(self.config["safety"].get("max_flood_wait_seconds", 300))
-        identity = await self._resolve_identity()
-        self.client = _client_from_auth(auth, proxy_url, flood_sleep_threshold, identity)
-        # Both handlers log and swallow their own failures (Telethon runs
-        # each update in a task of its own, so one bad message never holds
-        # up the next).
-        self.client.add_event_handler(self.on_incoming, events.NewMessage(incoming=True))
-        self.client.add_event_handler(self.on_outgoing, events.NewMessage(outgoing=True))
-        self.telegram_task = asyncio.create_task(self._run_telegram())
+    async def _start_transport(self) -> None:
+        await self.transport.start()
         self.reminder_task = asyncio.create_task(self.reminder_loop())
 
-    async def _resolve_identity(self) -> dict[str, Any]:
-        """This session's device identity, assigned once and then never
-        changed. A blank device_model means it has not been assigned yet, so
-        derive a deterministic one and persist it — from then on the stored
-        value wins, even if device_profiles.py's list later changes."""
-        identity = dict(self.account.get("identity") or {})
-        if identity.get("device_model"):
-            return identity
-        identity = device_profiles.derive(self.session_id)
-        await self.save_account({**self.account, "identity": identity})
-        log.info(
-            "[%s] Assigned device identity: %s / %s / %s",
-            self.session_id, identity["device_model"],
-            identity["system_version"], identity["app_version"],
-        )
-        return identity
-
-    async def _stop_telegram(self) -> None:
+    async def _stop_transport(self) -> None:
         self.presence_online = False
-        task, self.telegram_task = self.telegram_task, None
-        if task is not None and not task.done():
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+        await self.transport.halt_updates()
         ticker, self.reminder_task = self.reminder_task, None
         if ticker is not None and not ticker.done():
             ticker.cancel()
@@ -2276,81 +2133,47 @@ class SessionRuntime:
             self.flow.cancel_scan(chat_id)
         if self.offline_timer is not None and not self.offline_timer.done():
             self.offline_timer.cancel()
-        old, self.client = self.client, None
-        if old is not None and old.is_connected():
-            with suppress(Exception):
-                await old.disconnect()
-        self.telegram_state["connected"] = False
-        self.telegram_state["error"] = None
-        self.me_info.clear()
+        await self.transport.disconnect()
 
-    async def _run_telegram(self) -> None:
-        """Keep the userbot connected; reconnect on failure without killing the process."""
-        backoff = 5
-        while True:
-            try:
-                await self.client.connect()
-                if not await self.client.is_user_authorized():
-                    notice = (
-                        "The saved Telegram session is no longer valid — it was "
-                        "probably ended from Settings -> Devices. Sign in again."
-                    )
-                    log.error("[%s] %s", self.session_id, notice)
-                    await self.registry.clear_auth(self.session_id)
-                    await self.registry.set_state(self.session_id, "needs_login", notice)
-                    await health.error(self.pool, self.tenant_id, self.session_id, notice)
-                    await alerts.raise_alert(self.pool, tenant_id=self.tenant_id, kind="health:logged_out",
-                                             severity=alerts.CRITICAL, message=notice)
-                    # Nothing more to run; the worker drops this runtime and
-                    # its lease.
-                    self.finished = True
-                    return
+    # What the transport reports about its connection. The transport keeps
+    # itself connected (and reconnects); these are the account's reactions.
 
-                me = await self.client.get_me()
-                self.me_info = {
-                    "id": getattr(me, "id", None),
-                    "name": describe_sender(me, getattr(me, "id", 0))[0],
-                    "username": getattr(me, "username", None),
-                }
-                self.telegram_state["connected"] = True
-                self.telegram_state["error"] = None
-                backoff = 5
-                if self.config["presence"].get("enabled", True):
-                    await self.set_presence(False)
-                log.info(
-                    "[%s] Telegram connected as %s. Listening for private messages.",
-                    self.session_id, self.me_info["name"],
-                )
-                if self.paused():
-                    log.warning(
-                        "[%s] Soft-off (%s) — incoming messages will NOT be answered. Resume from the panel.",
-                        self.session_id, self.off_reason,
-                    )
-                await self.hub.broadcast({"type": "status", "status": self.status()})
-                await self.registry.set_state(self.session_id, "running", "")
-                await health.seen(self.pool, self.tenant_id, self.session_id)
+    async def on_connected(self) -> None:
+        if self.config["presence"].get("enabled", True):
+            await self.set_presence(False)
+        log.info(
+            "[%s] %s connected as %s. Listening for private messages.",
+            self.session_id, self.transport.network, self.me_info["name"],
+        )
+        if self.paused():
+            log.warning(
+                "[%s] Soft-off (%s) — incoming messages will NOT be answered. Resume from the panel.",
+                self.session_id, self.off_reason,
+            )
+        await self.hub.broadcast({"type": "status", "status": self.status()})
+        await self.registry.set_state(self.session_id, "running", "")
+        await health.seen(self.pool, self.tenant_id, self.session_id)
 
-                await self.client.run_until_disconnected()
-                self.telegram_state["connected"] = False
-                log.warning("[%s] Telegram disconnected; reconnecting…", self.session_id)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                self.telegram_state["connected"] = False
-                self.telegram_state["error"] = f"{type(exc).__name__}: {exc}"
-                log.error("[%s] Telegram client error: %s", self.session_id, self.telegram_state["error"])
-                await self.hub.broadcast({"type": "status", "status": self.status()})
-                with suppress(Exception):
-                    await health.error(self.pool, self.tenant_id, self.session_id, self.telegram_state["error"])
+    async def on_connection_error(self, error: str) -> None:
+        await self.hub.broadcast({"type": "status", "status": self.status()})
+        with suppress(Exception):
+            await health.error(self.pool, self.tenant_id, self.session_id, error)
 
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 120)
+    async def on_logged_out(self, notice: str) -> None:
+        """The stored login no longer works (the transport has already
+        forgotten it): needs a new sign-in, loudly."""
+        await self.registry.set_state(self.session_id, "needs_login", notice)
+        await health.error(self.pool, self.tenant_id, self.session_id, notice)
+        await alerts.raise_alert(self.pool, tenant_id=self.tenant_id, kind="health:logged_out",
+                                 severity=alerts.CRITICAL, message=notice)
+        # Nothing more to run; the worker drops this runtime and its lease.
+        self.finished = True
 
     def status(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
-            "telegram_connected": self.telegram_state["connected"],
-            "telegram_error": self.telegram_state["error"],
+            "telegram_connected": self.transport.connected,
+            "telegram_error": self.transport.error,
             "me": self.me_info,
             "global_pause": self.paused(),
             "off_reason": self.off_reason,
@@ -2372,24 +2195,11 @@ async def log_out_session(pool: asyncpg.Pool, session_id: str) -> bool:
     lease = await leasing.acquire(pool, session_id, worker_id)
     if lease is None:
         raise leasing.LeaseLost(f"session {session_id!r} is running somewhere; ask that worker instead")
-    client = None
     try:
-        registry = SessionRegistry(pool)
-        auth = await registry.load_auth(session_id)
-        if not auth or not auth.get("auth_key"):
-            return False
-        account = await config_store.load(pool, session_id)
-        identity = dict(account.get("identity") or {}) if account.get("identity", {}).get("device_model") \
-            else device_profiles.derive(session_id)
-        client = _client_from_auth(auth, await registry.load_proxy(session_id), 60, identity)
-        await client.connect()
-        if not await client.is_user_authorized():
-            return False
-        return bool(await client.log_out())
+        import telegram_transport
+
+        return await telegram_transport.log_out_stored(pool, session_id)
     finally:
-        if client is not None:
-            with suppress(Exception):
-                await client.disconnect()
         await leasing.release(pool, session_id, worker_id)
 
 

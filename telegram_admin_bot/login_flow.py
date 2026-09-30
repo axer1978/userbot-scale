@@ -178,7 +178,7 @@ class LoginFlow:
             phone = "+" + phone
 
         # Sign in as the same device the runtime will later present with this
-        # auth key (session_runtime._resolve_identity falls back to the same
+        # auth key (telegram_transport's _resolve_identity falls back to the same
         # deterministic derive()), not Telethon's default "PC 64bit".
         identity = device_profiles.derive(session_id)
         try:
