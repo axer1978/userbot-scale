@@ -1,6 +1,7 @@
 # Architecture
 
-State as of phase 4 of the multi-tenant platform (branch `platform/phase-1`).
+State as of phase 4 of the multi-tenant platform (branch `platform/phase-1`),
+plus WhatsApp accounts (migration 0006, see "WhatsApp").
 Code lives in `telegram_admin_bot/`; module names below are files there.
 
 ## Processes
@@ -13,8 +14,10 @@ Code lives in `telegram_admin_bot/`; module names below are files there.
  Postgres ◀──────────────▶ manager (manager.py)
  (all state)                  └─ worker processes, each running up to N
  Valkey                          SessionRuntime (session_runtime.py) =
- (command bus, events)           one live Telegram client per account
-      ▲                              + BookingFlow (booking_flow.py)
+ (command bus, events)           one account + its Transport (transport.py):
+      ▲                            Telegram: a live Telethon client
+      │                            WhatsApp: commands to wa-gateway ──▶ wa-gateway (Node, Baileys)
+      │                              + BookingFlow (booking_flow.py)      one socket per number
       │ scheduler_tick, once a minute, to every account with a live lease
  scheduler (scheduler.py, one at a time: Postgres advisory lock)
       + health watchdog (health.py), billing (billing.py), heartbeat
@@ -24,15 +27,16 @@ Code lives in `telegram_admin_bot/`; module names below are files there.
       /cal/<tenant token>.ics, /b/<booking token>   (optional profile)
 ```
 
-- **panel** is the control plane and holds no Telegram connection. Anything that needs a live client (send, approve a draft) goes over Valkey (Redis-compatible) to the worker holding that account's lease.
+- **panel** is the control plane and holds no Telegram or WhatsApp connection. Anything that needs a live client (send, approve a draft) goes over Valkey (Redis-compatible) to the worker holding that account's lease.
 - **manager** runs workers. A worker must hold an account's **lease** in Postgres (leasing.py) before connecting, so one account never runs twice.
 - **migrate** is a one-shot job: SQL migrations, then `tenants.backfill()` (the Python-side data steps).
-- **scheduler** holds no Telegram connection. It sends `scheduler_tick` to every running account; each account then does its own timed work idempotently (see "Timed work"). It also runs the platform's own rounds, which need no account: the health watchdog, billing, and a heartbeat the panel watches.
+- **scheduler** holds no Telegram or WhatsApp connection. It sends `scheduler_tick` to every running account; each account then does its own timed work idempotently (see "Timed work"). It also runs the platform's own rounds, which need no account: the health watchdog, billing, and a heartbeat the panel watches.
+- **wa-gateway** (`wa_gateway/`, Node) holds the WhatsApp sockets. It takes orders over Valkey, fenced by the lease epoch, and hands inbound messages over through Postgres. It decides nothing. One copy only (a Postgres advisory lock). See "WhatsApp".
 - **booking-pages** (optional) is a separate small FastAPI app with no admin routes. It reads Postgres by unguessable token and passes a customer's cancel / "I'm coming" to the running account over the bus. GET never changes anything, because messaging apps fetch link previews.
 
 ## Tenancy
 
-A **tenant** is one business client. It owns exactly one channel account (`tenants.session_id → telegram_sessions`) and belongs to one **industry**. A new account becomes a new tenant in the default industry (`SessionRegistry.create`).
+A **tenant** is one business client. It owns exactly one channel account, Telegram or WhatsApp (`tenants.session_id → telegram_sessions`; `tenants.channel` follows the account's `channel`) and belongs to one **industry**. A new account becomes a new tenant in the default industry (`SessionRegistry.create`).
 
 **Isolation** is enforced at three levels:
 
@@ -44,26 +48,27 @@ Per-tenant files (the media library) live under `DATA_DIR/tenants/<tenant id>/`,
 
 The public tokens (`tenants.calendar_token`, `bookings.customer_token`) are 244 random bits each. A calendar token returns only its tenant's bookings; a booking token only that booking, without the customer's name.
 
-`customer_ref` is an HMAC of `telegram:<chat id>` under a key derived per tenant from the master key, so the same person has unrelated refs under different tenants.
+`customer_ref` is an HMAC of `<channel>:<chat id>` (`telegram:…` or `whatsapp:…`) under a key derived per tenant from the master key, so the same person has unrelated refs under different tenants.
 
 ## Data model (Postgres)
 
-Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `0003_bookings.sql` (bookings), `0004_safety.sql` (safety and control).
+Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `0003_bookings.sql` (bookings), `0004_safety.sql` (safety and control), `0005_client_facing.sql` (client logins, unanswered queue, review, digest), `0006_whatsapp.sql` (WhatsApp).
 
 | Table | Key columns | Notes |
 |---|---|---|
 | `industries` | id, name, template_version, default_config, config_revision | `template_version` points at the live industry prompt version |
 | `tenants` | id, name, industry_id, status (active/grace/suspended), channel (telegram/whatsapp), session_id, config_json, config_revision, prompt_version, prompt_pin_version, billing_next_due, grace_until, billing_notice_sent_at | `config_json` = client-layer config overrides; `prompt_version` = client prompt version in use; `prompt_pin_version` pins an industry template version. Billing: see "Safety and control" |
-| `tenant_holds` | tenant_id, kind (manual/billing/spend_cap/anomaly/telegram), reason, created_by | Soft-off: the tenant sends nothing on its own while it has any hold. One row per cause, each lifted on its own |
+| `tenant_holds` | tenant_id, kind (manual/billing/spend_cap/anomaly/telegram/whatsapp), reason, created_by | Soft-off: the tenant sends nothing on its own while it has any hold. One row per cause, each lifted on its own |
 | `prompt_versions` | layer (base/industry/client), ref_id, tenant_id (client rows), version, content, note, created_by, created_at | Immutable; unique (layer, ref_id, version) |
 | `platform_settings` | key, value | `base_prompt_version`, `llm_prices`, `global_stop`, `billing` (grace hours, owner notice), `scheduler_heartbeat` |
 | `alerts` | tenant_id (NULL = platform), kind, severity, message, count, last_at, acknowledged_at/by | For the operator. At most one open alert per (tenant, kind); a repeat counts, it is not re-sent |
 | `sessions_health` | tenant_id, session_id, status, last_seen_at, last_error, rate_limited_until, known_session_ids_json | What the running account reports and the watchdog's verdict. `known_session_ids_json` = the account's Telegram logins (hash, device, app, country; no IP) |
 | `audit_log` | tenant_id (NULL = platform), actor, event, reason, payload, created_at | Append-only: UPDATE, DELETE and TRUNCATE are refused by triggers |
 | `llm_usage` | tenant_id (NULL = platform), purpose, model, cache-hit / cache-miss / completion tokens, cost_eur | One row per LLM call |
-| `telegram_sessions` | session_id, encrypted credentials, is_active, state, lease_* | One per Telegram account |
+| `telegram_sessions` | session_id, channel (telegram/whatsapp), encrypted credentials, is_active, state, lease_* (incl. lease_epoch) | One per account on either network (the name is historical). A WhatsApp row has no Telegram credentials; its login is in `wa_auth_state` |
 | `conversations` | tenant_id, session_id, chat_id, customer_ref, display_name, automation_paused, paused_reason, human_takeover_until, … | `paused_reason` = why (an escalation keyword, or "" = by hand); `human_takeover_until` = a person wrote here by hand, the bot is quiet until then |
-| `messages` | id, tenant_id, session_id, chat_id, direction, status, text, llm_model, prompt_version | `prompt_version` e.g. `b1/i1v3/c2` |
+| `messages` | id, tenant_id, session_id, chat_id, direction, status, text, telegram_id / wa_message_id, llm_model, prompt_version | `prompt_version` e.g. `b1/i1v3/c2`. `wa_message_id` is unique per chat: a redelivered WhatsApp message is stored once |
+| `wa_peers`, `wa_auth_state`, `wa_inbox` | tenant_id, session_id, … | WhatsApp only (0006); see "WhatsApp" |
 | `bookings` | id, tenant_id, session_id, number, chat_id, customer_ref, customer_name, service, starts_at, ends_at, blocked_until, tz, state, proposed_*, customer_notice, customer_token, arrival fields, legacy | `number` counts per tenant from 1 (`booking_counters`). An exclusion constraint refuses two live bookings of one tenant whose `[starts_at, blocked_until)` overlap; `blocked_until` = end + the gap after it |
 | `booking_events` | tenant_id, booking_id, from_state, to_state, action, actor, reason, payload | Every transition, besides its audit_log row |
 | `booking_reminders` | tenant_id, booking_id, minutes_before, starts_at, claimed_at, sent_at | Primary key = one reminder per booking, offset and start time: what makes reminders idempotent |
@@ -168,9 +173,54 @@ Telegram DM ─▶ SessionRuntime.on_incoming
               operator approves in the panel ─▶ send_burst, actor=admin
 ```
 
-Telegram errors (`PeerFloodError`, long `FloodWait`, revoked session) halt the account: a `telegram` hold, queued outreach cancelled, `account_halted` audited, an alert. Resuming is manual.
+Telegram errors (`PeerFloodError`, long `FloodWait`, revoked session) halt the account: a `telegram` hold, queued outreach cancelled, `account_halted` audited, an alert. Resuming is manual. WhatsApp errors do the same with a `whatsapp` hold (see "WhatsApp").
 
 A message the account sends that this runtime did not (typed on a phone, or sent by hand from the panel) starts a **human takeover** of that chat: `human_takeover_until = now + takeover_hours`. The bot's own sends are told apart by their Telegram message id (already stored) or by being in flight.
+
+## WhatsApp
+
+A WhatsApp account is a linked device of the number (WhatsApp Web's protocol, spoken by Baileys 7.0.0-rc14 in `wa-gateway`). Everything above applies to it unchanged; this is what is different.
+
+**The transport seam.** `SessionRuntime` holds all the business logic and talks to its network only through a `Transport` (`transport.py`): connect, send a text or a file, typing, read receipts, presence, and every received message handed back in one neutral shape (`Inbound`). Send errors are translated by `Transport.classify` into four kinds (`peer_flood`, `session_rejected`, `rate_limited`, `unreachable`) that `handle_send_failure` acts on the same way for both networks. `_choose_transport` picks `TelegramTransport` (`telegram_transport.py`, Telethon) or `WhatsAppTransport` (`whatsapp_transport.py`) from `telegram_sessions.channel`. Timing, caps, approval, holds and halts never live in a transport.
+
+**The gateway** (`wa_gateway/`, TypeScript on Node 24) is the WhatsApp counterpart of a Telethon client object, for every number at once: one socket per account, the Baileys auth state (creds and signal keys) encrypted in `wa_auth_state` with `crypto.py`'s key, format and AAD convention, nothing on disk. It takes commands on the command bus (`CommandBus.dispatch("@wa-gateway", …)`: `pair`, `pair_cancel`, `open`, `close`, `status`, `send_text`, `read`, `presence`, `logout`) and publishes events on `wa:ev:<session_id>` (`connection`, `session_lost`, `inbox`, `message_failed`) and `wa:pair:<pair_id>`. It never opens a socket on its own and never sends on its own. A singleton: `pg_try_advisory_lock` at boot; a second copy exits (status 3) and compose restarts it. Wire format: `wa_gateway/README.md`.
+
+**Lease and epoch fencing.** The worker takes the account's lease first (`leasing.py`, which bumps `lease_epoch`), and only then sends `open` with that epoch. The gateway checks the row (`channel = 'whatsapp'`, `is_active`, lease live, `lease_epoch = epoch`) and fences every later socket-bound command with it: a lower epoch gets `stale_epoch`, a higher one closes the older socket first. Its watchdog re-reads the row every 10 s and closes a socket whose epoch changed or whose lease has been expired for 30 s, and closes every socket when Postgres has been unreachable for 22 s. The runtime re-sends `open` every 15 s (idempotent for the same epoch), which is how sockets come back after a gateway restart without pairing. Two sockets on one number are what this prevents: WhatsApp answers them with `connectionReplaced` and a ban risk.
+
+**Pairing** (`wa_pairing.py`, `/api/wa/pair/start|{pair_id}|{pair_id}/cancel` in `panel.py`). The panel creates the `wa<digits>` row (`channel = 'whatsapp'`), seeds a brand-new client's config layer with `tenant_config.WHATSAPP_CLIENT_DEFAULTS` (audited), fixes the browser tuple (`wa_device_profiles.py`, stored in the account's identity), subscribes to `wa:pair:<pair_id>` and dispatches `pair`. The gateway wipes the old auth state, streams QR codes or asks for a pairing code, and emits `paired`; the panel then stores the DeepSeek key and marks the row active, and a worker adopts it like any other. Refused while the row has a live lease.
+
+**The `wa_inbox` handoff.** Received messages cross from Node to Python through Postgres, not the bus, so none is lost if the runtime is down. The gateway inserts one row per message (`ON CONFLICT (session_id, wa_message_id) DO NOTHING`, so WhatsApp's redelivery after downtime lands once), retrying with backoff while Postgres refuses (held in its memory meanwhile; warned at 5000 per session), then publishes `inbox`. The runtime drains `wa_inbox` in id order on that event, on connect and on every 15 s keepalive: it stores the message, then deletes the row (at-least-once delivery, deduped by `messages.wa_message_id`).
+
+**Chat identity: `wa_peers`.** The rest of the schema keys a chat by an integer `chat_id`, as on Telegram. `wa_peers` hands one out per contact (one sequence for all accounts) and maps it to the contact's JIDs: the phone JID (`34600123456@s.whatsapp.net`), the LID (`123456789@lid`, WhatsApp's privacy-preserving id), or both once a message reveals that they belong together. `jid` is where sends go: the phone JID when known, else the LID. If one person was first seen as two chats (once by phone JID, once by LID), both histories stay and replies go to the phone JID's chat.
+
+**Migration 0006** adds `telegram_sessions.channel` (and triggers keeping `tenants.channel` equal to it), `wa_peers`, `messages.wa_message_id` (unique per chat), `bookings.provider_wa_message_id` (the owner-facing request, so a quoted reply finds its booking), `wa_auth_state`, `wa_inbox`, and the hold kind `whatsapp`. The three new tables carry `tenant_id` through the `tenant_for_session` trigger like every other.
+
+**An inbound WhatsApp message:**
+
+```
+customer's phone ─▶ WhatsApp ─▶ wa-gateway socket (messages.upsert, notify or offline append)
+   drop groups, status, broadcasts, newsletters, reactions, protocol stubs, undecryptable
+   our own send echoed back (id from send_text)? ─▶ drop
+   normalise ─▶ INSERT wa_inbox ON CONFLICT DO NOTHING (retried while Postgres refuses)
+   publish {"type":"inbox"} on wa:ev:<session_id>
+        │
+        ▼ WhatsAppTransport.drain (on the event, on connect, every 15 s)
+   wa_store.chat_for(phone_jid, lid, push_name) ─▶ chat_id (wa_peers; created or completed)
+   messages.wa_message_id already there? ─▶ delete the row, done
+   from_me (typed on the phone) ─▶ handle_own_echo: stored, human takeover
+   otherwise ─▶ SessionRuntime.handle_inbound ─▶ the same path as "Message flow" above
+   DELETE the wa_inbox row
+        │
+        ▼ a reply (auto-send or approved)
+   ensure_may_send, caps ─▶ presence composing (typing on) ─▶ send_text {session_id, epoch, jid, text}
+        ─▶ gateway: fenced, onWhatsApp check for a phone JID, Baileys sendMessage ─▶ {message_id}
+   stored as sent with wa_message_id; a refusal raised now is stored red (keep_failed_send)
+   a refusal WhatsApp reports later ─▶ message_failed event ─▶ the row turns red, handle_send_failure
+```
+
+**What halts.** `session_lost` (`loggedOut`, `forbidden`, `badSession`, `connectionReplaced`, `multideviceMismatch`) is never reconnected: `SessionRuntime.on_session_lost` deletes the stored login, sets the state to `needs_login` (`revoked` for `forbidden`) and calls `halt_everything`, which adds the `whatsapp` hold, audits `account_halted`, raises an alert and logs `HALTING ALL AUTOMATION:`. The runtime keeps its lease, so the account stays visibly red until an operator deactivates it and pairs again. A `rate_limited` send error, or a later `message_failed` with code 463 (account restricted), classifies as `peer_flood` and halts the same way; `blocked` and `not_on_whatsapp` are `unreachable` and pause the one chat.
+
+**Not on WhatsApp** (the transport says so): sending files (`can_send_files = False`), outreach (`list_contacts` refuses; the panel hides and refuses it), downloading photos (so no vision), the Telegram login list behind the new-login anomaly, and proxies.
 
 ## Bookings
 
@@ -224,8 +274,8 @@ alerts.py     one open alert per (tenant, kind) ──▶ panel, e-mail, webhook
 - **Soft-off is enforced at the last step.** `SessionRuntime.ensure_may_send()` re-reads the switches and the send-volume check from Postgres before every send by the bot (actor bot or system), so a hold added by another process, or the global stop set from the shell, takes effect on the next send whether or not the running account was told. A person sending from the panel is not blocked. The cached `off_reason` only decides earlier exits (no drafting, no AI call); a cached "off" is re-read before a message is ignored, so a missed resume never costs a reply.
 - **Resuming replays nothing.** Entering soft-off cancels drafts in progress and deletes held quiet-hours replies; a reminder that falls due while off is claimed and noted as not sent; messages received while off are stored and never answered later.
 - **Global stop** is `platform_settings.global_stop`, reachable through the admin login only (and `python controls.py stop|resume` on the server). Phase 4's owner login must not get it.
-- **Hard-off** asks the running account to `log_out()` (Telegram invalidates the key), or, when nothing runs it, takes its lease and logs out directly; then the key is deleted, the account deactivated (`state = revoked`) and audited. Lease renewal requires `is_active`, so any deactivation fences the worker within `RENEW_SECONDS`, and the worker drops finished runtimes and their leases (`SessionRuntime.finished`).
-- **Anomalies.** New login: `account.getAuthorizations` every 5 minutes (and at once on a message from 777000), compared with `sessions_health.known_session_ids_json`; the first check only records. Volume: sent messages in the last hour against the tenant's own average hour over `volume_baseline_days`, tripping at `volume_multiplier` ×, never below `volume_min_messages`; checked before every bot send and on every tick (so hand-typed or hijacker sends count too). Trip-wire: `policy.Verdict.tripwire`. Every trigger writes `anomaly_detected` with the reason; the hold stays until a person resumes it.
+- **Hard-off** asks the running account to `log_out()` (Telegram invalidates the key; on WhatsApp the gateway unlinks the device), or, when nothing runs it, takes its lease and logs out directly (WhatsApp: `logout` with that lease's epoch, through a temporary socket); then the key (and `wa_auth_state`) is deleted, the account deactivated (`state = revoked`) and audited. Lease renewal requires `is_active`, so any deactivation fences the worker within `RENEW_SECONDS`, and the worker drops finished runtimes and their leases (`SessionRuntime.finished`).
+- **Anomalies.** New login (Telegram only): `account.getAuthorizations` every 5 minutes (and at once on a message from 777000), compared with `sessions_health.known_session_ids_json`; the first check only records. Volume: sent messages in the last hour against the tenant's own average hour over `volume_baseline_days`, tripping at `volume_multiplier` ×, never below `volume_min_messages`; checked before every bot send and on every tick (so hand-typed or hijacker sends count too). Trip-wire: `policy.Verdict.tripwire`. Every trigger writes `anomaly_detected` with the reason; the hold stays until a person resumes it.
 - **Billing.** The scheduler moves a tenant to grace the day after `billing_next_due` in its own timezone and asks its account to message the owner (`owner_notice`, to `booking.provider`), retrying each tick until sent. After `grace_hours` it is suspended. Recording a payment or setting the status by hand (with a reason) is always possible; every change is `billing_changed`.
 - **Health.** The account writes `last_seen_at` once a minute while connected (its own loop, not the scheduler's tick), errors, and Telegram's rate limits. The watchdog derives one status per tenant: `not_running` (no live lease for 3 minutes), `disconnected` (lease, but not connected for 3 minutes), `logged_out`, `rate_limited`, `ok`. A change to a bad status opens an alert `health:<status>`; back to `ok` closes it and sends "back to normal". FloodWaits Telethon sleeps through itself (under `max_flood_wait_seconds`) are not seen.
 - **Escalation and takeover** are per chat and in code: `policy.escalation_match` (word start, any case) pauses the chat with a `paused_reason` and pings the owner; a hand-written message sets `human_takeover_until`. Both keep the booking scan, replies and reminders out of that chat.

@@ -1,7 +1,8 @@
-# Telegram AI Support Assistant
+# Telegram and WhatsApp AI Support Assistant
 
-A Telethon **userbot** that runs on your own Telegram accounts, drafts replies
-to incoming private messages with the DeepSeek API, and gives you one
+A **userbot** that runs on your own Telegram accounts (through Telethon) and
+WhatsApp numbers (as a linked device, through Baileys), drafts replies to
+incoming private messages with the DeepSeek API, and gives you one
 password-protected web panel to supervise every account. You deploy it on a
 server with Docker Compose. You add and run as many accounts as you need from
 the panel.
@@ -13,22 +14,25 @@ account.
 
 ```
  browser ──SSH tunnel (or optional HTTPS)──▶ panel ──┐
-                                                     ├──▶ Postgres  (sessions, messages, config, leases)
-                                     manager ────────┤
+                                                     ├──▶ Postgres  (sessions, messages, config, leases,
+                                     manager ────────┤              WhatsApp login state, wa_inbox)
                                (worker processes     └──▶ Valkey    (command bus + live events)
-                                holding Telegram
-                                clients)
+                                holding Telegram           ▲
+                                clients; for WhatsApp,     │ commands / events
+                                a handle on the socket)    │
+                                                     wa-gateway ◀──▶ WhatsApp
+                                                     (one socket per WhatsApp number)
 ```
 
 | Service | What it does |
 |---|---|
-| `panel` | The admin UI and API (`panel.py`). Control plane only: it **holds no Telegram connections**. It reads and writes Postgres directly. Anything that needs a live client, like sending a message or approving a draft, goes over Valkey to whichever worker runs that account. |
-| `manager` | Starts `WORKER_COUNT` worker processes (`manager.py`). Each one runs up to `SESSIONS_PER_WORKER` accounts, one `SessionRuntime` per account with its own live Telethon client. It restarts a worker that dies. Every ~15 s each worker picks up newly activated accounts that nothing is running yet. |
-| `postgres` | The source of truth: accounts (with credentials encrypted), conversations, messages, per-account settings, outreach queue, and the leases. |
+| `panel` | The admin UI and API (`panel.py`). Control plane only: it **holds no Telegram or WhatsApp connections**. It reads and writes Postgres directly. Anything that needs a live client, like sending a message or approving a draft, goes over Valkey to whichever worker runs that account. |
+| `manager` | Starts `WORKER_COUNT` worker processes (`manager.py`). Each one runs up to `SESSIONS_PER_WORKER` accounts, one `SessionRuntime` per account: a live Telethon client for a Telegram account, or, for a WhatsApp account, the same runtime driving that number's socket in `wa-gateway`. It restarts a worker that dies. Every ~15 s each worker picks up newly activated accounts that nothing is running yet. |
+| `postgres` | The source of truth: accounts (with credentials and WhatsApp login state encrypted), conversations, messages, per-account settings, outreach queue, and the leases. |
 | `valkey` | Valkey (Redis-compatible): the command bus (panel → worker) and live-event fan-out (worker → open panel tabs). It stores nothing that outlives a request. |
 | `migrate` | A one-shot job that applies database migrations and exits. `panel` and `manager` wait for it. |
 | `scheduler` | Once a minute, tells every running account to do its timed work: booking reminders, requests nobody answered in time, waitlist offers, and replies that quiet hours held back (`scheduler.py`). Only one runs at a time. |
-| `wa-gateway` | The WhatsApp transport (`wa_gateway/`, Node + Baileys). Holds the WhatsApp sockets the way a worker holds Telethon clients, takes its orders from Python over Valkey and keeps the WhatsApp login state encrypted in Postgres. Transport only; see `wa_gateway/README.md`. |
+| `wa-gateway` | The WhatsApp transport (`wa_gateway/`, Node + Baileys). Holds the WhatsApp sockets the way a worker holds Telethon clients, takes its orders from Python over Valkey and keeps the WhatsApp login state encrypted in Postgres. Transport only: it never decides to send anything. Exactly one runs (a Postgres lock); a second copy exits. See [WhatsApp accounts](#whatsapp-accounts) and `wa_gateway/README.md`. |
 | `caddy` | Optional. Serves the panel over public HTTPS. Off unless you enable it. See below. |
 | `booking-pages`, `caddy-booking` | Optional (`--profile booking-pages`). The public calendar feed per client and the read-only page per booking, on their own domain. See "Bookings". |
 
@@ -37,16 +41,22 @@ has to take a lease on the account's row in Postgres before it connects, and
 it renews the lease every 10 s. If a worker dies, its leases expire after 30 s
 and another worker can take the account over. Two clients on one account
 would answer every chat twice and can get the session revoked. The lease is
-what prevents that.
+what prevents that. For WhatsApp the lease also carries an **epoch** that goes
+up every time a worker takes it; `wa-gateway` checks it on every command, so a
+worker that lost the lease can't drive a socket another worker now owns (two
+sockets on one WhatsApp number get it logged out, and look like a bot).
 
-Secrets at rest (Telegram auth key, API hash, DeepSeek key) are encrypted with
-AES-GCM under `USERBOT_MASTER_KEY` (`crypto.py`). **If you lose that key, every
-stored login becomes unreadable** and each account has to be signed in again.
+Secrets at rest (Telegram auth key, API hash, DeepSeek key, the WhatsApp
+linked-device keys) are encrypted with AES-GCM under `USERBOT_MASTER_KEY`
+(`crypto.py`; `wa-gateway` uses the same key and format). **If you lose that
+key, every stored login becomes unreadable** and each account has to be signed
+in (or paired) again.
 
 ## Requirements
 
 - A Linux server with Docker and the Docker Compose plugin (`docker compose`, not `docker-compose`)
 - For each Telegram account: an **API ID** and **API hash** from https://my.telegram.org → *API development tools*, and access to that account to receive the login code
+- For each WhatsApp number: the phone that has WhatsApp on it, to link the server as a device (start with a secondary number; see [WhatsApp accounts](#whatsapp-accounts))
 - A **DeepSeek API key** from https://platform.deepseek.com
 
 ## Deploy on a server
@@ -79,8 +89,9 @@ docker compose up -d --build
 docker compose ps -a
 ```
 
-`userbot-postgres`, `userbot-valkey`, `userbot-panel` and `userbot-manager`
-should be `Up` (Postgres and Valkey report `healthy`). `userbot-migrate` should
+`userbot-postgres`, `userbot-valkey`, `userbot-panel`, `userbot-manager`,
+`userbot-scheduler` and `userbot-wa-gateway` should be `Up` (Postgres and
+Valkey report `healthy`). `userbot-migrate` should
 show `Exited (0)`, because it is a one-shot job. It only appears with `-a`.
 Anything else means a failed migration: check `docker compose logs migrate`.
 
@@ -188,8 +199,8 @@ panel; then set up a new secret.
 
 ## Add a Telegram account
 
-Open the account picker at the top left and choose **+ Add account**. With no
-accounts yet, the dialog opens by itself. Fill in:
+Open the account picker at the top left and choose **+ Add account**, then
+**Telegram**. With no accounts yet, the dialog opens by itself. Fill in:
 
 1. **Name** (optional). This is how the account appears in the picker. It defaults to the phone number.
 2. **API ID** and **API hash** from https://my.telegram.org.
@@ -226,9 +237,203 @@ Without this, every account on the server would report Telethon's
 `PC 64bit`. Locale and timezone offset default to Latvian (`lv`,
 Europe/Riga).
 
+## WhatsApp accounts
+
+A WhatsApp account runs as an **inbound receptionist on a linked device**:
+the server is linked to the number the way WhatsApp Web is (Settings → Linked
+devices on the phone), speaking WhatsApp Web's protocol through the Baileys
+library in the `wa-gateway` service. Customers write to the number; the
+assistant drafts replies exactly as it does on Telegram, with the same
+approval, caps, quiet hours, holds and audit log. The phone keeps working
+normally, and what you type on it shows up in the panel.
+
+**This is not an official WhatsApp API, and WhatsApp bans numbers that behave
+like bots**, much sooner than Telegram limits them. So:
+
+- **Soft-launch on a secondary number** you can afford to lose, not the
+  business's main line, and watch it for a couple of weeks before moving a
+  real number over.
+- **Keep approval on** (`auto_send` off, the default for WhatsApp). Turn on
+  auto-send only once the drafts are consistently right, and keep the caps low.
+- Keep the phone itself online now and then: WhatsApp unlinks the devices of
+  a phone that stays offline for about two weeks.
+
+### Linking a number
+
+1. Account picker → **+ Add account** → **WhatsApp**.
+2. Fill in **Name** (optional; defaults to the phone number), **Phone
+   number** in international format (`+34600123456`), and the **DeepSeek API
+   key**. Choose how to link: **Scan a QR code** or **Type a pairing code**
+   (for when the phone can't scan the screen, e.g. you are on the phone
+   itself). Press **Link WhatsApp**.
+3. On the phone: WhatsApp → **Settings** (on Android: the **⋮** menu) →
+   **Linked devices** → **Link a device**, then
+   - QR: point the camera at the code in the panel. **It changes about every
+     20 s**; the panel redraws it, just scan the current one.
+   - Pairing code: tap **Link with phone number instead** and type the
+     8-character code the panel shows.
+4. The panel says the number is linked. It stores the DeepSeek key, marks the
+   account active, and a manager worker picks it up within about 15 s
+   (`[wa34600123456] Started (picked up while running).` in
+   `docker compose logs -f manager`, then `WhatsApp connected as …`).
+
+On the phone the server appears under Linked devices as a desktop browser,
+e.g. *Chrome (Mac OS)*. Each account gets its own stable browser identity
+(`wa_device_profiles.py`), picked once from the account id and reused on every
+re-pair. A pairing nobody finishes gives up after a few minutes (start
+again); at most 5 numbers can be pairing at once.
+
+How WhatsApp accounts are identified:
+
+- **One account per number.** The id is `wa` plus the digits, e.g.
+  `wa34600123456`. The same number can also have a Telegram account
+  (`tg34600123456`); the two are separate clients.
+- **Pairing the same number again keeps its history and settings.** Leave the
+  DeepSeek key (and the name) blank to keep the stored ones. A re-pair is a
+  new linked device: the old device's keys are wiped first.
+- **A number that is running is refused** ("already running … Stop it before
+  pairing it again"). Take it out of rotation first (see
+  [Operations](#operations)); this is also the case after a session loss,
+  see below.
+
+### Safety defaults for a new WhatsApp account
+
+A brand-new WhatsApp client starts with lower limits than a Telegram one.
+They are written into the client's own config layer when the number is first
+paired (audited as *WhatsApp safety defaults*), so they show as highlighted
+rows in **Settings → Config**: ordinary client settings you can change like
+any other, every change audited. A re-paired number keeps whatever its config
+says by then.
+
+| Setting | WhatsApp default | Platform default (Telegram) |
+|---|---|---|
+| `auto_send` | off | off |
+| `daily_message_cap` | 60 | 150 |
+| `hourly_message_cap` | 15 | 0 (none) |
+| `safety.daily_peer_cap` | 15 | 30 |
+| `reply_delay` | 45–180 s, `lognormal` | 20–90 s, uniform |
+| `burst` | up to 3 messages, 1.2–3.5 s apart | up to 4, 0.6–2.2 s apart |
+| `quiet_hours` | **on**, 21:00–09:00 | off, 21:00–09:00 |
+| `outreach.enabled` | off (and outreach is not available on WhatsApp anyway) | off |
+
+Raise them slowly, if at all. Volume, breadth (many different people a day)
+and instant round-the-clock answers are what gets a WhatsApp number banned.
+
+### The status dot
+
+The same rules as for Telegram:
+
+- **grey**: no worker holds the account (not active, no stored login, or no
+  free slot);
+- **green**: a worker runs it and it is connected;
+- **red**: a worker holds it but it is not connected, or it was halted after
+  a session loss. After a session loss the runtime deliberately keeps the
+  lease, so the dot stays red until you deal with it (see below).
+
+The Safety view and the manager log say which.
+
+### What works and what doesn't
+
+Works as on Telegram: drafting and approval, auto-send, the policy checks,
+caps and quiet hours, holds and the global stop, escalation keywords, human
+takeover (a message typed on the phone counts), per-chat reply limits,
+"typing…", read receipts (blue ticks, if the number's own privacy setting
+sends them), presence, the unanswered queue, the health watchdog and alerts,
+hard-off, and **bookings** (below). Private chats only: groups, status
+updates, broadcast lists and channels are ignored.
+
+Not supported on WhatsApp:
+
+- **Outreach.** The panel hides it and the API refuses it.
+- **Sending media**, so the media library isn't used in replies.
+- **Reading photos** (vision). A photo is stored as its caption, or as
+  `[photo]` without one; it is not described, so `vision.*` and the arrival
+  photo check do nothing.
+- **The new-login anomaly check** (it reads Telegram's list of logins). Volume
+  spikes and the trip-wire still apply.
+- **A proxy.** Every WhatsApp socket connects from the server's own address.
+
+### Bookings
+
+They work as on Telegram, with one difference: **`booking.provider` is the
+owner's phone number** in international format (`+34600555666`), not a
+username. Booking requests go to the owner from the account's own number; the
+owner answers `YES 7` / `NO 7` (and the other commands), or **replies to the
+request message** (WhatsApp's reply/quote) with a bare `yes` or `no`.
+
+### When a send fails
+
+- A message WhatsApp refuses **stays in the thread, red, with its text**. That
+  includes a refusal that arrives after the message seemed to go out (WhatsApp
+  answers some sends only later).
+- A **rate limit**, or code **463** (WhatsApp has restricted the account: no
+  new chats), **halts the account**: a `whatsapp` hold, an alert, `HALTING ALL
+  AUTOMATION` in the manager log. Don't resume straight away: lower the caps,
+  wait hours, then resume the hold in Safety.
+- **Blocked**, or **not on WhatsApp**: that chat is paused, with a note in it.
+  Nothing else stops.
+
+### Session lost
+
+WhatsApp ends a linked device for good in five ways. The gateway reports each
+once and never reconnects it. In every case the account **halts** with a
+`whatsapp` hold (Safety shows *stopped after a WhatsApp error*), an alert is
+raised, the stored login is **deleted**, and the account's state becomes
+`needs_login` (`revoked` for `forbidden`).
+
+| Reason (code) | What it means | What to do |
+|---|---|---|
+| `loggedOut` (401) | The device was removed: from the phone's Linked devices, by a logout, or by WhatsApp | Ask whoever has the phone. If it was deliberate, leave it. Otherwise pair again |
+| `forbidden` (403) | WhatsApp refused the account: **likely banned** | **Stop. Don't re-pair straight away.** Open WhatsApp on the phone: a ban notice says so. Work out what triggered it (volume, reports) before this number goes back on |
+| `badSession` (500) | The stored session is corrupt | Pair again |
+| `connectionReplaced` (440) | Another WhatsApp Web session took over this login: usually a second copy of this stack (an old server, a restored backup) or the test CLI running for the same number | Find and stop the other copy first, or they will keep knocking each other off. Then pair again |
+| `multideviceMismatch` (411) | WhatsApp's multi-device state no longer matches this login | Pair again |
+
+Recovery, every time: **find out why** (the checklist *WhatsApp session
+dropped* in [`RUNBOOK.md`](../RUNBOOK.md#whatsapp-session-dropped)), **take
+the account out of rotation** (the SQL under [Operations](#operations); the
+runtime still holds the lease, so pairing is refused until then), **pair
+again** from **+ Add account → WhatsApp** with the same number, then **resume
+the `whatsapp` hold** in Safety. Pairing again brings the account back, but it
+sends nothing on its own until the hold is lifted.
+
+### Restarts and recovery
+
+- `docker compose restart manager` or `docker compose restart wa-gateway`
+  needs **no re-pair**: the login is in Postgres. The runtime asks the gateway
+  to `open` the socket every 15 s, so accounts come back within about 15 s of
+  the gateway being up again.
+- A worker that dies lets its leases expire (30 s); another worker takes the
+  account with a higher epoch, and the gateway closes the old socket before
+  opening the new one. The gateway also closes a socket whose lease has been
+  gone for 30 s, and every socket when it can't reach Postgres for 22 s.
+- Messages that arrive while the gateway (or the whole server) is down are
+  delivered by WhatsApp when it reconnects, and **stored once** (by WhatsApp's
+  message id).
+- The gateway is a **singleton**: a second copy finds the lock taken, exits
+  and is restarted by compose. Don't `--scale` it.
+- Inbound messages go from the gateway to the runtime through Postgres
+  (`wa_inbox`). **During a Postgres outage, messages not yet written wait in
+  the gateway's memory only**, retried until Postgres answers; restarting the
+  gateway then loses them (it logs how many). Fix Postgres first, and don't
+  restart `wa-gateway` while it is down.
+
+### Known limits
+
+- **No stop-account button** in the panel. Use the SQL under
+  [Operations](#operations), the same as for Telegram (the id is
+  `wa<digits>`).
+- **The Baileys version is a release candidate (7.0.0-rc14), pinned
+  exactly** in `wa_gateway/package.json`. WhatsApp changes its protocol from
+  time to time; upgrading Baileys is a deliberate change with its own testing,
+  never a routine `npm update`.
+- `wa_gateway/README.md` also documents a manual-test CLI (`node dist/cli.js`).
+  It opens a socket **without** a lease: never run it for a number the stack
+  is running.
+
 ## Clients, industries and settings
 
-Every Telegram account belongs to a **client** (a tenant: one business), and
+Every account, Telegram or WhatsApp, belongs to a **client** (a tenant: one business), and
 every client belongs to an **industry**. A new account becomes a new client in
 the *General* industry. Open **Clients** in the top bar to see them all, or
 **Settings** to open the client of the account you are looking at. Changes are
@@ -325,6 +530,8 @@ Open **Safety** in the top bar. The number next to it counts open alerts.
     than `max_flood_wait_seconds`, or a banned or revoked session. Find out why
     before resuming; sending straight through a flood warning is how numbers
     get banned.
+  - **stopped after a WhatsApp error**: a rate limit, code 463 (account
+    restricted) or a lost session. See [WhatsApp accounts](#whatsapp-accounts).
 
   The red chip in the top bar says why the selected client is off.
 - **Global stop** (Safety → All clients) switches every client off at once. It
@@ -332,14 +539,17 @@ Open **Safety** in the top bar. The number next to it counts open alerts.
   server: `docker compose exec panel python controls.py stop "reason"`, and
   `... resume` to lift it.
 - **Hard-off** (Safety → a client) is for a hijacked or leaked session. It
-  logs this server's Telegram session out, deletes its key and deactivates
-  the account. You confirm by typing the account id. It does not touch the
-  owner's phone or their other logins. Signing the number in again is a new
-  login.
+  logs this server's Telegram session out (for WhatsApp: unlinks this
+  server's linked device), deletes its key and deactivates the account. You
+  confirm by typing the account id. It does not touch the owner's phone or
+  their other logins or devices. Signing the number in (or pairing it) again
+  is a new login. If the network could not be told, the message says so:
+  end the session on the phone (Telegram: Settings → Devices; WhatsApp:
+  Linked devices).
 - **Anomalies** switch a client off by themselves (`anomaly.*`):
   - a Telegram login appears on the account that wasn't there before
     (checked every 5 minutes, and at once when Telegram's own "new login"
-    message arrives);
+    message arrives; Telegram accounts only);
   - the account sends far more in an hour than it usually does (every
     outgoing message counts, including ones typed on a phone);
   - a reply the bot wrote links to a domain nobody allowed, or contains a
@@ -352,7 +562,7 @@ Open **Safety** in the top bar. The number next to it counts open alerts.
   also set the status by hand at any time, with a reason.
 - **Health**: the scheduler checks every account once a minute. You get an
   alert within about 4 minutes when an account is not running, not connected
-  to Telegram, logged out or rate-limited, and a "back to normal" when it
+  to Telegram or WhatsApp, logged out or rate-limited, and a "back to normal" when it
   recovers. A red banner shows if the scheduler itself stops.
 - **Alerts** are listed under Safety → Alerts. With `ALERT_EMAIL` (plus the
   `SMTP_*` settings) or `ALERT_WEBHOOK_URL` in `.env`, each new one is also sent
@@ -372,16 +582,16 @@ Open **Safety** in the top bar. The number next to it counts open alerts.
 
 ## What it does with a message
 
-- It handles **private messages only**. Group and channel traffic is ignored. Messages from **bot accounts are included**, so conversations that run through a bot's interface are handled like any other DM.
+- It handles **private messages only**. Group and channel traffic (on WhatsApp also status updates and broadcast lists) is ignored. On Telegram, messages from **bot accounts are included**, so conversations that run through a bot's interface are handled like any other DM.
 - Every message is stored in Postgres and pushed live to any open panel tab.
 - For each incoming text message it checks, in order: an escalation keyword (pauses the chat and pings the owner), whether the client is soft-off, and whether the chat is paused or taken over by a person. If any says stop, no draft is made. Messages from Telegram's own service account (login codes) are never answered.
 - Otherwise it waits the reply delay (and, if the reply would land in quiet hours, until they end), builds the last ~30 messages of the chat into the prompt under the client's rendered prompt, and asks DeepSeek for a reply. The reply is checked by the policy layer. With auto-send off, or if a check fails, it is saved as a draft for the panel. With auto-send on and all checks passed, it is sent.
 - Every message the account sends is recorded in the audit log with who caused it (the bot, or you from the panel) and why. AI-written messages also record the model and the prompt versions used (e.g. `b1/i1v3/c2`). Every DeepSeek call is metered per client.
 - **If a newer message arrives while a draft is still being prepared, that draft is cancelled and restarted**, so the reply always answers the latest state of the conversation. Sending a message yourself from the panel also cancels any draft in progress for that chat.
-- Messages you send from your phone or Telegram Desktop also appear in the panel, so the thread stays complete. They also start a human takeover of that chat (see *Safety*).
+- Messages you send from your phone (or Telegram Desktop, or another WhatsApp linked device) also appear in the panel, so the thread stays complete. They also start a human takeover of that chat (see *Safety*).
 - Before writing a reply it checks the client's AI limits (`limits.*`, `api_spend_cap_eur`) and the per-chat reply limits (`replies.*`). A reply not written for either reason is noted in the chat and the audit log. Booking news (a confirmation, a reminder) is never held back by the reply limits.
 - A reply held back by quiet hours is stored in Postgres and sent by the scheduler when they end, so a restart during the night does not lose it.
-- DeepSeek failures (network, timeout, 429, malformed response) are retried with backoff that honours `Retry-After`, then shown as a red error in the conversation. A bad key (401/403) fails at once. Telegram disconnects are reconnected automatically with backoff.
+- DeepSeek failures (network, timeout, 429, malformed response) are retried with backoff that honours `Retry-After`, then shown as a red error in the conversation. A bad key (401/403) fails at once. Telegram and WhatsApp disconnects are reconnected automatically with backoff (a lost WhatsApp session is not: see [WhatsApp accounts](#whatsapp-accounts)).
 
 ## Other features
 
@@ -489,8 +699,10 @@ client's *Examples of how we write* prompt section.
 ```bash
 docker compose logs -f manager          # what the accounts are doing
 docker compose logs -f panel            # panel / API errors
+docker compose logs -f wa-gateway       # the WhatsApp sockets (JSON lines; never message text at info)
 docker compose restart manager          # restart all accounts; leases are released, or expire within 30 s
-git pull && docker compose up -d --build  # update; migrate runs before panel/manager start
+docker compose restart wa-gateway       # reconnect every WhatsApp number; no re-pair, back within ~15 s
+git pull && docker compose up -d --build  # update; migrate runs before panel/manager/wa-gateway start
 ```
 
 **Capacity.** One manager runs `WORKER_COUNT × SESSIONS_PER_WORKER` accounts
@@ -498,7 +710,10 @@ git pull && docker compose up -d --build  # update; migrate runs before panel/ma
 up. Change both in `.env` and run `docker compose up -d`.
 
 **Backups.** Everything that matters is in three places: the Postgres volume,
-`./data` (per client under `./data/tenants/<client id>`: media), and `.env`. Bookings are in Postgres.
+`./data` (per client under `./data/tenants/<client id>`: media), and `.env`. Bookings are in Postgres,
+and so are the WhatsApp logins (encrypted): a restored backup running next to
+the original stack puts two sockets on each WhatsApp number (`connectionReplaced`).
+Never run both.
 To dump the database:
 
 ```bash
@@ -515,9 +730,15 @@ docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 #   \q
 ```
 
+The table is called `telegram_sessions` for historical reasons; it holds the
+WhatsApp accounts too (`WHERE session_id = 'wa34600123456'`). For WhatsApp,
+the worker then tells `wa-gateway` to close the socket (the gateway's own
+watchdog closes it anyway once the lease is gone). The linked device stays
+linked, so setting the account active again needs no re-pair.
+
 To bring the account back, set `is_active = true` again. A worker picks it up
-within ~15 s. Signing the number in again from the panel also re-activates
-it.
+within ~15 s. Signing the number in (or pairing it) again from the panel also
+re-activates it.
 
 ## Running the tests
 
@@ -550,6 +771,35 @@ drops it afterwards, so the target database is left as it was. Without
 passed) and the rest still run. Valkey is replaced by `fakeredis`, so no Valkey
 is needed.
 
+`tests/test_wa_crypto_compat.py` checks that `crypto.py` and the gateway's
+`crypto.ts` read each other's blobs. Its golden-vector part always runs; its
+live Python↔Node round trip needs `node` on the PATH (or `NODE_BIN`) and a
+built `wa_gateway/dist/` (`npm run build` there), and is skipped otherwise,
+e.g. in the manager container, which has no Node.
+
+**The gateway's Node tests** (`wa_gateway/test/`) run on **Node 24**: it runs
+the TypeScript tests directly. The `wa-gateway` image can't run them: it is
+built with production dependencies only and without `test/`. Locally:
+
+```bash
+cd telegram_admin_bot/wa_gateway
+npm ci
+npm test
+npm run typecheck   # optional: tsc over src and tests
+```
+
+On a server without Node, the same in a throwaway `node:24` container, on a
+copy so nothing is written into the checkout:
+
+```bash
+docker run --rm -v "$PWD/wa_gateway:/src:ro" node:24-slim \
+  sh -c 'cp -r /src /tmp/gw && cd /tmp/gw && rm -rf node_modules dist && npm ci && npm test'
+```
+
+`test/authstate.test.ts` also needs a Postgres (`PG_TEST_DSN`, same idea as
+above: it makes and drops its own schema) and skips when there is none.
+Nothing in the tests ever connects to WhatsApp.
+
 ## Troubleshooting
 
 **`Bind for 127.0.0.1:8787 failed: port is already allocated`**: an older
@@ -576,14 +826,18 @@ out for a while ("Too many wrong passwords"). Wait and try again.
 **Account dot stays grey**: no worker is running the account. Check
 `docker compose logs manager` for that account id:
 
-- `Skipping — needs login`: the account has no usable Telegram login or no DeepSeek key. Sign it in again.
+- `Skipping — needs login`: the account has no usable Telegram login (for WhatsApp: no stored linked device) or no DeepSeek key. Sign it in (or pair it) again.
 - `Failed to start` followed by a traceback: the error is in the traceback. The worker retries that account after 5 minutes. `docker compose restart manager` retries it now.
 - Nothing about it at all: all worker slots may be full (see *Capacity*).
 
 **Account dot is red**: a worker holds the account but it isn't connected,
 or it needs a new login. Safety shows the reason, and so do the manager logs.
 If the session was ended from Telegram (Settings → Devices), the worker lets
-go of it by itself; sign the number in again with **+ Add account**.
+go of it by itself; sign the number in again with **+ Add account**. A
+WhatsApp account whose session was lost keeps its lease on purpose and stays
+red: see [Session lost](#session-lost). A WhatsApp account that is red with
+*"The WhatsApp gateway is not answering"* in the manager log needs
+`docker compose ps wa-gateway` and `docker compose logs --tail 50 wa-gateway`.
 
 **Drafts appear but nothing is sent**: auto-send is off, which is the
 default. Approve drafts by hand, or turn on `auto_send` in the client's
@@ -602,11 +856,18 @@ account. DeepSeek errors also show up red in the conversation.
 session was rejected. Read the reason in Safety or the manager logs, wait and
 work out what caused it, then resume that hold in Safety.
 
+**"Stopped after a WhatsApp error"**: a rate limit, a 463 restriction, or a
+lost session. See [When a send fails](#when-a-send-fails) and
+[Session lost](#session-lost), and the checklist in
+[`RUNBOOK.md`](../RUNBOOK.md#whatsapp-session-dropped).
+
 ## Files
 
 ```
-docker-compose.yml     the stack: postgres, valkey, migrate, panel, manager, scheduler, optional caddy and booking pages
+docker-compose.yml     the stack: postgres, valkey, migrate, panel, manager, scheduler, wa-gateway, optional caddy and booking pages
 Dockerfile             one image for panel, manager, scheduler, migrate and the booking pages
+wa_gateway/            the wa-gateway service (Node 24, TypeScript, Baileys): WhatsApp sockets, pairing,
+                       auth state in Postgres, wa_inbox writer; its own Dockerfile, tests and README.md
 Caddyfile              optional public HTTPS front door for the panel (profile "public")
 Caddyfile.booking      optional public HTTPS for the booking pages (profile "booking-pages")
 Caddyfile.both         the panel and the booking pages on one Caddy
@@ -622,10 +883,16 @@ anomaly.py             new Telegram logins and send-volume spikes
 billing.py             active -> grace -> suspended, the owner's notice, payments
 safety_api.py          admin API behind the Safety view
 public_app.py          the public booking pages: calendar feed and read-only page per booking
-panel.py               admin panel + API; control plane, no Telegram connections
+panel.py               admin panel + API; control plane, no Telegram or WhatsApp connections
 manager.py             spawns worker processes, restarts dead ones, adopts new accounts
-session_runtime.py     one Telegram account: client, drafting, sending, safety, outreach, bookings
-login_flow.py          phone -> code -> 2FA sign-in behind "Add account"
+session_runtime.py     one account, either network: drafting, sending, safety, outreach, bookings
+transport.py           the seam between an account's runtime and its network (Telegram or WhatsApp)
+telegram_transport.py  the Telegram transport: the Telethon client
+whatsapp_transport.py  the WhatsApp transport: drives the socket in wa-gateway over the bus, drains wa_inbox
+wa_store.py            WhatsApp in Postgres: chat identity (wa_peers), the wa_inbox handoff, the stored login
+wa_pairing.py          linking a WhatsApp number from the panel (QR or pairing code) via wa-gateway
+wa_device_profiles.py  stable per-account linked-device browser identity
+login_flow.py          phone -> code -> 2FA sign-in behind "Add account" (Telegram)
 leasing.py             one-worker-per-account leases in Postgres
 commands.py            Valkey command bus (panel -> worker) and live events (worker -> panel)
 database.py            Postgres access: SessionRegistry (accounts) and the tenant-scoped Database
@@ -665,9 +932,10 @@ data/                  created at runtime: tenants/<client id>/media/
 
 ## A note on userbots
 
-Automating a personal account is against Telegram's Terms of Service and can
-get the account limited or banned. Keep the delays human, keep the safety
-limits low, and prefer approval mode over auto-send.
+Automating a personal account is against Telegram's and WhatsApp's Terms of
+Service and can get the account limited or banned; WhatsApp bans sooner. Keep
+the delays human, keep the safety limits low, and prefer approval mode over
+auto-send.
 
 See [`ARCHITECTURE.md`](../ARCHITECTURE.md) for the data model and how a
 message flows through the system.

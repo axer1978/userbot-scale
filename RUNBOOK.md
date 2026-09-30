@@ -7,6 +7,7 @@ Every command runs on the server, in `~/userbot-scale/telegram_admin_bot`, unles
 ```bash
 docker compose ps -a                          # what is up, what exited
 docker compose logs --tail 100 panel manager scheduler caddy
+docker compose logs --tail 100 wa-gateway     # only if you run WhatsApp accounts
 sudo ss -tlnp | grep -E ':(80|443|8787) '     # who listens
 df -h / && free -m                            # disk and memory
 ```
@@ -42,6 +43,72 @@ In the panel, **☰ Menu → Safety** shows every client's account health, the h
 | Account switched off by "a new Telegram login" | Someone (maybe the owner) signed in on a new device | Confirm with the owner. If it was them: Safety → Resume the anomaly hold. If not: **Hard-off** (Safety → Revoke the session) and have the owner end the other device under Telegram → Settings → Devices, then sign in again |
 | Both the old AWS server and the new one answer customers | Both run the same number | On AWS: `docker compose stop manager scheduler`. Telegram may also have logged one of them out; sign in again on the new server |
 | Owner's YES/NO to bookings is ignored | `booking.provider` not set or not resolvable, or the owner's chat is paused | Config → `booking.provider` = the owner's @username or numeric id; the account must have chatted with them once |
+
+## A WhatsApp account
+
+Background, and what each reason means: `telegram_admin_bot/README.md`, section *WhatsApp accounts*. When a number drops, work through [WhatsApp session dropped](#whatsapp-session-dropped) below.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Pairing says *"The WhatsApp gateway is not running"*; manager log says `The WhatsApp gateway is not answering; retrying every 15s.`; every WhatsApp account is red | `wa-gateway` is down, restarting, or can't reach Valkey | `docker compose ps -a wa-gateway`; `docker compose logs --tail 50 wa-gateway`; `docker compose up -d wa-gateway`. Accounts reconnect within ~15 s, no re-pair. Exit code 2 / "refusing to boot without a master key": `USERBOT_MASTER_KEY` is missing. Exit code 3 / "another wa-gateway holds the singleton advisory lock": a second gateway uses the same Postgres. Find it (`docker ps -a \| grep wa-gateway`, e.g. a leftover `docker compose run wa-gateway …`) and remove it |
+| Pairing refused: *"already running … Stop it before pairing it again"* | The number has a live lease: it runs, or it was halted after a session loss (the runtime keeps the lease on purpose) | Take it out of rotation (the `UPDATE telegram_sessions SET is_active = false …` in the README, *Operations*), wait 10 s for the grey dot, pair again |
+| Pairing ends *failed* or *expired* | The QR was not scanned in time, the phone was offline, or the pairing code was asked for another number | Start again. For a pairing code, the number must be the phone's own, with country code. `docker compose logs --tail 30 wa-gateway \| grep -i pair` shows the reason |
+| **Session lost**: `loggedOut`, `badSession`, `multideviceMismatch` | The linked device is gone: removed on the phone, corrupt, or out of step | [WhatsApp session dropped](#whatsapp-session-dropped), then pair again and resume the `whatsapp` hold |
+| **Session lost: `forbidden`** (state `revoked`) | WhatsApp refused the account: **likely banned** | **Stop. Do not re-pair.** Check WhatsApp on the phone for a ban notice. Keep the account out of rotation until you know what triggered it |
+| **Session lost: `connectionReplaced`** | Another WhatsApp Web session took this login: a second copy of the stack (old server, restored backup) or the manual-test CLI | Find and stop the other copy **first**, or the two keep knocking each other off (which also looks like a bot). Then pair again |
+| Halted: *"WhatsApp returned a rate limit (rate-overlimit)"*; manager log `did not deliver message … (rate_limited, code 463)` | 463: WhatsApp has **restricted the account** (no new chats; existing chats still work). Without code 463 it is a plain rate limit | **Do not resume at once.** Check WhatsApp on the phone for a restriction notice. Lower `daily_message_cap`, `hourly_message_cap`, `safety.daily_peer_cap`; wait until the restriction is gone; then Safety → Resume the `whatsapp` hold |
+| A chat paused with *"Cannot message this person (blocked / not on WhatsApp)"* | The person blocked the number, or the number isn't on WhatsApp | Nothing to fix on the account. Unpause the chat only if you know it was a mistake |
+| A message red in the thread, *"WhatsApp did not deliver a message (other, code …)"* | WhatsApp refused it after it went out; the code is in the manager log | Send it again by hand if it matters. If many chats show it, *Soft-off* the client and check the phone before anything else goes out |
+| wa-gateway log: `inbox backlog: postgres has been refusing inserts; messages are held in memory, none dropped` | Postgres is down or full; 5000 or more received messages for one account wait in the gateway's memory | Fix Postgres (see *Postgres and Valkey*: usually the disk). **Do not restart `wa-gateway` meanwhile**: those messages exist only in its memory. Once Postgres answers they are written and the accounts pick them up |
+| wa-gateway log: `watchdog: postgres unreachable`, then every WhatsApp account not connected | Without Postgres no lease can be proven, so after 22 s the gateway closes every socket | Fix Postgres. The accounts reopen within ~15 s after; messages sent to them meanwhile are delivered on reconnect |
+| The old server and the new one both have the WhatsApp number | Both hold the same linked-device keys (`connectionReplaced` on both) | On the old one: `docker compose stop manager wa-gateway`. If the session was lost already, pair again on the new one |
+
+## WhatsApp session dropped
+
+A WhatsApp account went red, Safety says *stopped after a WhatsApp error*, or an alert says *WhatsApp session lost*. Don't pair again until you have been through this.
+
+**1. Read the logs.**
+
+```bash
+docker compose logs --since 24h manager | grep -E "HALTING ALL AUTOMATION|WhatsApp" | tail -20
+docker compose logs --since 24h wa-gateway | grep -E "SESSION LOST|HARD-OFF|connection closed" | tail -20
+```
+
+- `SESSION LOST wa34600123456: forbidden (403)` (wa-gateway): WhatsApp ended the linked device for good. The word after the colon is the reason. The gateway never reconnects it.
+- `[wa34600123456] HALTING ALL AUTOMATION: WhatsApp session lost (forbidden): …` (manager): the account reacted. It has a `whatsapp` hold, an alert is open, the stored login is **deleted**, and the state is `needs_login` (`revoked` for `forbidden`). Nothing reconnects it by itself.
+- `HALTING ALL AUTOMATION: WhatsApp returned a rate limit …` is not a session loss: it is a rate limit or a 463 restriction (see the table above). The session still works; don't re-pair.
+- `connection closed; reconnecting` on its own is a normal short drop; the gateway reconnects with backoff. Only a `SESSION LOST` line means the device is gone.
+
+**2. Look at the phone.** WhatsApp → Settings (Android: ⋮) → **Linked devices**.
+
+- Is the server's device (a desktop browser, e.g. *Chrome (Mac OS)*) still listed? After a loss it normally isn't.
+- Is anything there nobody recognises? Log it out.
+- Does WhatsApp show a ban or restriction notice?
+- Did the owner remove the device, or log out of all linked devices?
+
+**3. Decide by reason.**
+
+| Reason | Pair again? |
+|---|---|
+| `forbidden` | **No, not now.** The number is likely banned. Leave the account out of rotation, look at what it sent (volume, new chats, complaints), and only consider pairing again once WhatsApp works normally on the phone and you know what caused it |
+| `connectionReplaced` | **Not until the other copy is stopped.** Look for an old server or a restored backup still running this stack, and for a leftover gateway container: `docker ps -a \| grep wa-gateway`. Pairing again with the other copy alive just repeats the loss |
+| `loggedOut` | Only if nobody removed the device on purpose. If the owner did, ask why first |
+| `badSession`, `multideviceMismatch` | Yes |
+| The number is lost again within hours of a re-pair | **No.** Stop and find the cause; linking again and again is itself a ban signal |
+
+**4. Take the account out of rotation.** The runtime still holds the lease (that is why the dot is red), so pairing is refused until it lets go:
+
+```bash
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+#   UPDATE telegram_sessions SET is_active = false WHERE session_id = 'wa34600123456';
+#   \q
+```
+
+Wait about 10 s; the dot turns grey.
+
+**5. Pair again.** Panel: **+ Add account → WhatsApp**, the same number, DeepSeek key blank (the stored one is kept). History and settings stay. The account becomes active and a worker picks it up within about 15 s: `docker compose logs -f manager` shows `Started (picked up while running)` and `WhatsApp connected as …`, and the dot turns green.
+
+**6. Resume.** It still sends nothing on its own: **Safety → the client → Resume** the `whatsapp` hold, once you are happy with the cause.
 
 ## The scheduler (reminders, digests, billing, health alerts)
 
@@ -89,7 +156,7 @@ Migrations are not rolled back; the code before an update tolerates newer tables
 
 - Panel: **☰ → Safety → Stop everything…**
 - Server, if the panel is unreachable: `docker compose exec panel python controls.py stop "reason"`, later `... resume`
-- Nuclear: `docker compose stop manager` (accounts go offline; messages still arrive on the phones)
+- Nuclear: `docker compose stop manager` (accounts go offline; messages still arrive on the phones). `docker compose stop wa-gateway` also closes every WhatsApp socket at once; `docker compose start wa-gateway` brings them back without a re-pair
 
 ## Emergency: a Telegram account is hijacked
 
@@ -97,11 +164,13 @@ Migrations are not rolled back; the code before an update tolerates newer tables
 2. Have the owner open Telegram → Settings → Devices → *Terminate all other sessions* and change their 2-step password.
 3. Sign the account in again from the panel when it's clean.
 
+For a WhatsApp number: Hard-off unlinks this server's device. Have the owner open WhatsApp → Settings → **Linked devices** and log out every device they don't recognise, then pair again from the panel.
+
 ## Emergency: the server itself is compromised
 
 1. Snapshot it at the provider (evidence), then destroy it.
 2. New server: DEPLOY_TODAY.md with a **new** `.env` (new master key and passwords).
-3. Sign every Telegram account in again; revoke the old sessions from the phones (Settings → Devices).
+3. Sign every Telegram account in again; revoke the old sessions from the phones (Settings → Devices). For every WhatsApp number: remove the old server's device under Linked devices on the phone, then pair again.
 4. Rotate the DeepSeek keys (platform.deepseek.com) and any SMTP/vision keys; re-enter them.
 5. Old backups still open with your age key; restore only the database and `data/`, never the old `.env`.
 
