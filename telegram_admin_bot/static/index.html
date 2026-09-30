@@ -73,6 +73,21 @@
     </div>
     <div id="l-notice" class="notice" hidden></div>
 
+    <!-- step 0: which network -->
+    <div id="l-channel" class="step">
+      <h2>Add an account</h2>
+      <p class="hint">Which network is the account on?</p>
+      <div class="channel-choice">
+        <button type="button" id="l-pick-telegram" class="btn channel-option">
+          <b>Telegram</b><span>Sign in with the API ID and hash from my.telegram.org and a login code.</span></button>
+        <button type="button" id="l-pick-whatsapp" class="btn channel-option">
+          <b>WhatsApp</b><span>Link the number as a device of the phone: scan a QR code or type a pairing code.</span></button>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" id="l-channel-close" class="btn">Cancel</button>
+      </div>
+    </div>
+
     <!-- step 1: credentials -->
     <form id="l-credentials" class="step on" autocomplete="off">
       <h2>Add a Telegram account</h2>
@@ -132,6 +147,45 @@
         <button type="button" id="l-restart-2">Start over</button>
       </div>
     </form>
+
+    <!-- WhatsApp: the number -->
+    <form id="wa-form" class="step" autocomplete="off">
+      <h2>Add a WhatsApp account</h2>
+      <p class="hint">The number is linked as a device of the phone, like WhatsApp Web, and the assistant
+        runs on the server. Keep the phone itself online now and then: WhatsApp unlinks devices of a phone
+        that stays offline for about two weeks.</p>
+      <div class="field"><label for="wa-label">Name <span style="color:var(--muted)">(optional)</span></label>
+        <input id="wa-label" type="text" placeholder="Shown in the account picker — defaults to the phone number"></div>
+      <div class="field"><label for="wa-phone">Phone number</label>
+        <input id="wa-phone" type="tel" placeholder="+37120000001 — international format" required></div>
+      <div class="field"><label for="wa-deepseek">DeepSeek API key</label>
+        <input id="wa-deepseek" type="password" placeholder="sk-…" autocomplete="off"></div>
+      <p class="hint" style="margin-top:-6px">From <a href="https://platform.deepseek.com" target="_blank" rel="noopener">platform.deepseek.com</a>.
+        Leave empty when linking a number again that already has one.</p>
+      <div class="field"><label>How to link</label>
+        <div class="check"><input id="wa-method-qr" type="radio" name="wa-method" value="qr" checked>
+          <label for="wa-method-qr">Scan a QR code with the phone</label></div>
+        <div class="check"><input id="wa-method-code" type="radio" name="wa-method" value="code">
+          <label for="wa-method-code">Type a pairing code on the phone (when the phone can't scan this screen)</label></div>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" id="wa-back" class="btn">Back</button>
+        <button type="submit" class="btn primary">Link WhatsApp</button>
+      </div>
+    </form>
+
+    <!-- WhatsApp: linking -->
+    <div id="wa-pairing" class="step">
+      <h2>Link WhatsApp</h2>
+      <div id="wa-pair-help" class="where" hidden></div>
+      <div id="wa-qr-box" class="wa-qr" hidden><canvas id="wa-qr" width="264" height="264"></canvas></div>
+      <div id="wa-code" class="wa-code" hidden></div>
+      <p id="wa-pair-status" class="hint"></p>
+      <div class="sheet-actions">
+        <button type="button" id="wa-pair-cancel" class="btn">Cancel</button>
+        <button type="button" id="wa-pair-retry" class="btn primary" hidden>Try again</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -391,6 +445,8 @@
 <script src="/js/media.js"></script>
 <script src="/js/socket.js"></script>
 <script src="/js/accounts.js"></script>
+<script src="/js/vendor/qrcode.js"></script>
+<script src="/js/whatsapp.js"></script>
 <script src="/js/platform.js"></script>
 <script src="/js/bookings.js"></script>
 <script src="/js/safety.js"></script>

@@ -422,6 +422,26 @@ class TenantConfig(_Strict):
         return out
 
 
+# The client layer a brand-new WhatsApp account starts with (the panel
+# saves it, audited, when the number is first paired; a re-paired number
+# keeps whatever its config says by then). WhatsApp bans numbers for volume
+# and breadth much sooner than Telegram limits them, and a linked device
+# that answers in seconds, around the clock, in long bursts, reads as a bot.
+# So: fewer messages per day and per hour, fewer distinct people per day,
+# slower replies with a human-shaped spread, shorter bursts with longer
+# gaps, a quiet night, replies held for approval and no outreach.
+WHATSAPP_CLIENT_DEFAULTS: dict[str, Any] = {
+    "auto_send": False,
+    "daily_message_cap": 60,
+    "hourly_message_cap": 15,
+    "safety": {"daily_peer_cap": 15},
+    "reply_delay": {"min_s": 45, "max_s": 180, "distribution": "lognormal"},
+    "burst": {"max_messages": 3, "gap_ms": {"min": 1200, "max": 3500}},
+    "quiet_hours": {"enabled": True, "start": "21:00", "end": "09:00"},
+    "outreach": {"enabled": False},
+}
+
+
 class ConfigError(ValueError):
     """An override or the config it resolves to is invalid. `errors` is a
     list of {"path", "message"} for the panel to show next to fields."""

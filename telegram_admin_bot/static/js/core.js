@@ -32,6 +32,18 @@ function el(tag, className, text) {
   return node;
 }
 
+// The network the open account is on ("telegram" or "whatsapp"): from its
+// live status once the socket said hello, else from the session list.
+function currentChannel() {
+  if (state.status && state.status.channel) return state.status.channel;
+  const s = state.sessions.find((x) => x.session_id === state.sessionId);
+  return (s && s.channel) || "telegram";
+}
+
+function channelName(channel) {
+  return channel === "whatsapp" ? "WhatsApp" : "Telegram";
+}
+
 function fmtTime(iso) {
   if (!iso) return "";
   const d = new Date(iso);

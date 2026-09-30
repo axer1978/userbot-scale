@@ -163,6 +163,12 @@ DEFAULTS: dict[str, Any] = {
         "system_lang_code": "en-US",
         "lang_pack": "",
         "tz_offset": 0,  # seconds east of UTC
+        # WhatsApp accounts only: the linked-device browser the account
+        # presents, [os, browser, version] (wa_device_profiles.py). Empty
+        # until the panel first pairs the number; then kept for good, so a
+        # re-pair shows WhatsApp the same "computer" again. Telegram
+        # accounts leave it empty.
+        "wa_browser": [],
     },
     # Per-contact overrides, keyed by chat_id (as a string). Anything left
     # unset (empty string / null) falls back to the global settings above.
@@ -308,7 +314,17 @@ def _normalize_identity(raw: Any) -> dict[str, Any]:
     for field in ("device_model", "system_version", "app_version", "lang_code", "system_lang_code", "lang_pack"):
         out[field] = _as_text(raw.get(field)) or idd[field]
     out["tz_offset"] = _as_int(raw.get("tz_offset"), idd["tz_offset"], -43_200, 50_400)
+    out["wa_browser"] = _as_wa_browser(raw.get("wa_browser"))
     return out
+
+
+def _as_wa_browser(value: Any) -> list[str]:
+    """Three non-empty strings ([os, browser, version]) or [] — never a
+    half-filled triple, which Baileys would send as is."""
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return []
+    parts = [_as_text(part)[:64] for part in value]
+    return parts if all(parts) else []
 
 
 def normalize(raw: Any) -> dict[str, Any]:
