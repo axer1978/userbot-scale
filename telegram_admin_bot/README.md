@@ -28,6 +28,7 @@ account.
 | `valkey` | Valkey (Redis-compatible): the command bus (panel → worker) and live-event fan-out (worker → open panel tabs). It stores nothing that outlives a request. |
 | `migrate` | A one-shot job that applies database migrations and exits. `panel` and `manager` wait for it. |
 | `scheduler` | Once a minute, tells every running account to do its timed work: booking reminders, requests nobody answered in time, waitlist offers, and replies that quiet hours held back (`scheduler.py`). Only one runs at a time. |
+| `wa-gateway` | The WhatsApp transport (`wa_gateway/`, Node + Baileys). Holds the WhatsApp sockets the way a worker holds Telethon clients, takes its orders from Python over Valkey and keeps the WhatsApp login state encrypted in Postgres. Transport only; see `wa_gateway/README.md`. |
 | `caddy` | Optional. Serves the panel over public HTTPS. Off unless you enable it. See below. |
 | `booking-pages`, `caddy-booking` | Optional (`--profile booking-pages`). The public calendar feed per client and the read-only page per booking, on their own domain. See "Bookings". |
 
