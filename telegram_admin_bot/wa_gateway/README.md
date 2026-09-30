@@ -127,8 +127,29 @@ tuple (`src/browser.ts`) with a warning. `close` is a normal end, never a logout
 ```
 {"v":1,"type":"connection","session_id","epoch","state":"connecting"|"open"|"closed","me":{"jid","lid","name"}|null}
 {"v":1,"type":"session_lost","session_id","epoch","reason":"loggedOut"|"forbidden"|"badSession"|"connectionReplaced"|"multideviceMismatch","code"}
-{"v":1,"type":"inbox","session_id","epoch"}      (nudge; not emitted until step 5)
+{"v":1,"type":"inbox","session_id","epoch"}      (a wa_inbox row was inserted)
+{"v":1,"type":"message_failed","session_id","epoch","wa_message_id","jid","code":<number|null>,"error_kind":"rate_limited"|"blocked"|"not_on_whatsapp"|"other"}
 ```
+
+`message_failed` is emitted at most once per message id (a 2000-entry LRU)
+for a message this socket sent that the server refused. Normal status
+moves (server ack, delivered, read) are not forwarded.
+
+Where these failures surface in Baileys 7.0.0-rc14 (from its source):
+`relayMessage` never waits for the server ack, so a rejected message comes
+back later as a stanza `<ack class="message" error="<code>">`.
+`messages-recv.js` `handleBadAck` turns it into a `messages.update` entry
+`{key: {remoteJid, fromMe: true, id}, update: {status: ERROR,
+messageStubParameters: ["<code>", ...]}}`; that is the only server-side
+path that sets status ERROR in rc14 (receipts only move a message forward),
+so the gateway reads exactly that shape. Confidence: high that failures
+arrive this way and are reported once; medium on what each code means.
+The code is mapped like send errors: 429 -> `rate_limited`, 403 ->
+`blocked`, 404 -> `not_on_whatsapp`; everything else -> `other` with the
+code attached, including the codes rc14 itself names: 463 (account
+restricted / "reachout timelocked": WhatsApp blocks starting new chats,
+existing chats keep working; rc14 also tries to fetch a privacy token) and
+479 (stanza rejected, likely a stale device session).
 
 ### Inbox payload v1 (built now, persisted from step 5)
 

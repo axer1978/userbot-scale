@@ -14,6 +14,7 @@ import type { BrowserTuple } from './browser.ts';
 import { GatewayError } from './bus.ts';
 import type { Pool } from './db.ts';
 import { backoffMs, classifyDisconnect, type SessionLostReason } from './disconnect.ts';
+import { FailureReporter, type MessageFailedEvent, type MessageUpdateLike } from './failures.ts';
 import type { SocketState } from './fencing.ts';
 import { isPnJid } from './jid.ts';
 import { baileysLogger } from './log.ts';
@@ -27,7 +28,8 @@ export type Me = { jid: string | null; lid: string | null; name: string | null }
 export type SessionEvent =
   | { v: 1; type: 'connection'; session_id: string; epoch: number; state: SocketState; me: Me | null }
   | { v: 1; type: 'session_lost'; session_id: string; epoch: number; reason: SessionLostReason; code: number }
-  | { v: 1; type: 'inbox'; session_id: string; epoch: number };
+  | { v: 1; type: 'inbox'; session_id: string; epoch: number }
+  | MessageFailedEvent;
 
 export type SessionSocketOptions = {
   pool: Pool;
@@ -106,12 +108,14 @@ export class SessionSocket {
   private readonly sentIds = new LruCache<string, true>(SENT_ID_CACHE_SIZE);
   private readonly knownJids = new LruCache<string, true>(KNOWN_JID_CACHE_SIZE);
   private readonly openWaiters: Array<(outcome: 'open' | 'lost' | 'closed') => void> = [];
+  private readonly failures: FailureReporter;
 
   constructor(opts: SessionSocketOptions) {
     this.opts = opts;
     this.sessionId = opts.sessionId;
     this.epoch = opts.epoch;
     this.log = opts.log.child({ session_id: opts.sessionId, epoch: opts.epoch });
+    this.failures = new FailureReporter(opts.sessionId, opts.epoch);
   }
 
   /** Loads the auth state (throws when there are no creds) and connects. */
@@ -180,6 +184,20 @@ export class SessionSocket {
         this.settleWaiters('open');
       } else if (update.connection === 'close') {
         this.onClose(update.lastDisconnect?.error);
+      }
+    });
+
+    // Delivery failures of our own sends: rc14 reports a server
+    // <ack error="..."> as a messages.update entry with status ERROR
+    // (see failures.ts). Normal status moves are not forwarded.
+    sock.ev.on('messages.update', (entries) => {
+      try {
+        for (const event of this.failures.events(entries as unknown as MessageUpdateLike[])) {
+          this.log.warn({ wa_message_id: event.wa_message_id, jid: event.jid, code: event.code, error_kind: event.error_kind }, 'message delivery failed');
+          this.emit(event);
+        }
+      } catch (exc) {
+        this.log.warn({ err: exc }, 'could not process a message update');
       }
     });
 
