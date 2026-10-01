@@ -13,7 +13,7 @@ import { usePostgresAuthState, type PostgresAuthState } from './authstate.ts';
 import type { BrowserTuple } from './browser.ts';
 import { GatewayError } from './bus.ts';
 import type { Pool } from './db.ts';
-import { backoffMs, classifyDisconnect, type SessionLostReason } from './disconnect.ts';
+import { backoffMs, classifyDisconnect, jitterMs, type SessionLostReason } from './disconnect.ts';
 import { FailureReporter, type MessageFailedEvent, type MessageUpdateLike } from './failures.ts';
 import type { SocketState } from './fencing.ts';
 import { isPnJid } from './jid.ts';
@@ -21,7 +21,7 @@ import { baileysLogger } from './log.ts';
 import { LruCache } from './lru.ts';
 import { describeForLog, normalizeMessage, timestampSeconds, type InboxPayload, type MessageLike } from './normalize.ts';
 import { classifySendError } from './senderr.ts';
-import { GET_MESSAGE_CACHE_SIZE, makeGatewaySocket } from './socket.ts';
+import { GET_MESSAGE_CACHE_SIZE, makeGatewaySocket, type SocketDeps } from './socket.ts';
 
 export type Me = { jid: string | null; lid: string | null; name: string | null };
 
@@ -44,6 +44,8 @@ export type SessionSocketOptions = {
   onLost?: (reason: SessionLostReason) => void;
   /** Temporary sockets (logout without a live socket): publish nothing. */
   quiet?: boolean;
+  /** Tests: a fake in place of makeGatewaySocket (never connects). */
+  makeSocket?: (deps: SocketDeps) => WASocket;
 };
 
 /** How many of our own sent message ids we remember for echo suppression. */
@@ -160,7 +162,7 @@ export class SessionSocket {
     if (this.closedByUs || !this.auth) return;
     this.state = 'connecting';
     this.emitConnection();
-    const sock = makeGatewaySocket({
+    const sock = (this.opts.makeSocket ?? makeGatewaySocket)({
       state: this.auth.state,
       browser: this.opts.browser,
       logger: baileysLogger(this.sessionId),
@@ -169,7 +171,11 @@ export class SessionSocket {
     this.sock = sock;
     const auth = this.auth;
 
+    // Every listener is bound to the socket it was registered on: after a
+    // reconnect the old socket's late events must not reach the inbox a
+    // second time, nor overwrite the state of the socket that replaced it.
     sock.ev.on('creds.update', () => {
+      if (sock !== this.sock) return;
       auth.saveCreds().catch((exc) => this.log.error({ err: exc }, 'could not persist creds'));
     });
 
@@ -191,6 +197,7 @@ export class SessionSocket {
     // <ack error="..."> as a messages.update entry with status ERROR
     // (see failures.ts). Normal status moves are not forwarded.
     sock.ev.on('messages.update', (entries) => {
+      if (sock !== this.sock) return;
       try {
         for (const event of this.failures.events(entries as unknown as MessageUpdateLike[])) {
           this.log.warn({ wa_message_id: event.wa_message_id, jid: event.jid, code: event.code, error_kind: event.error_kind }, 'message delivery failed');
@@ -202,9 +209,13 @@ export class SessionSocket {
     });
 
     sock.ev.on('messages.upsert', ({ messages, type }) => {
-      // 'notify' = live; 'append' = delivered while we were offline (v7
-      // sets it from the stanza's offline attribute). History sync is off
-      // (shouldSyncHistoryMessage -> false), so nothing else lands here.
+      if (sock !== this.sock) return;
+      // 'notify' = live; 'append' = delivered while we were offline (rc14
+      // messages-recv sets it from the stanza's offline attribute; its
+      // other 'append' sources are newsletter plaintext and notification
+      // stubs, which normalizeMessage drops). History sync is off
+      // (shouldSyncHistoryMessage -> false) and lands on
+      // messaging-history.set, never here, so nothing old is replayed.
       if (type !== 'notify' && type !== 'append') return;
       for (const raw of messages) {
         try {
@@ -237,7 +248,10 @@ export class SessionSocket {
       this.opts.onLost?.(verdict.reason);
       return;
     }
-    const delay = verdict.kind === 'restart' ? 1_000 : backoffMs(this.attempt++);
+    // 515 right after pairing: once, at once. A 515 that keeps coming back
+    // without an open in between is a loop and backs off like any drop.
+    const delay = verdict.kind === 'restart' && this.attempt === 0 ? 1_000 : jitterMs(backoffMs(this.attempt));
+    this.attempt += 1;
     this.log.warn({ code: verdict.code, kind: verdict.kind, delay_ms: delay, reason: verdict.kind === 'transient' ? verdict.reason : 'restartRequired' }, 'connection closed; reconnecting');
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;

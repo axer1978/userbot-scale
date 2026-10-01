@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Boom } from '@hapi/boom';
 import { DisconnectReason } from 'baileys';
-import { backoffMs, classifyDisconnect, statusCodeOf } from '../src/disconnect.ts';
+import { backoffMs, classifyDisconnect, jitterMs, statusCodeOf } from '../src/disconnect.ts';
 
 const boom = (code: number) => new Boom('x', { statusCode: code });
 
@@ -36,4 +36,14 @@ test('backoff doubles from 2s and caps at 60s', () => {
   assert.equal(backoffMs(4), 32_000);
   assert.equal(backoffMs(5), 60_000);
   assert.equal(backoffMs(50), 60_000);
+});
+
+test('jitter spreads a delay by ±20 % and never below or above that', () => {
+  assert.equal(jitterMs(10_000, () => 0), 8_000);
+  assert.equal(jitterMs(10_000, () => 1), 12_000);
+  assert.equal(jitterMs(10_000, () => 0.5), 10_000);
+  for (let i = 0; i < 200; i++) {
+    const d = jitterMs(60_000);
+    assert.ok(d >= 48_000 && d <= 72_000, String(d));
+  }
 });

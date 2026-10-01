@@ -50,3 +50,8 @@ export function backoffMs(attempt: number, baseMs = 2_000, maxMs = 60_000): numb
   const exp = Math.min(attempt, 30);
   return Math.min(maxMs, baseMs * 2 ** exp);
 }
+
+/** ±20 % so every socket of a fleet does not reconnect in the same second. */
+export function jitterMs(ms: number, rng: () => number = Math.random): number {
+  return Math.round(ms * (0.8 + 0.4 * rng()));
+}

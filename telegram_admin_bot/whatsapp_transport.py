@@ -66,6 +66,9 @@ READ_BATCH = 10
 ACCOUNT_RESTRICTED = 463
 DRAIN_BATCH = 50
 EVENT_RETRY_SECONDS = 2.0
+# Chats whose newest read-marked message id is remembered (the oldest
+# forgotten beyond this; forgetting only costs one repeated read receipt).
+READ_UPTO_MAX = 5_000
 
 # What the gateway's session_lost reasons mean for the operator.
 SESSION_LOST = {
@@ -208,8 +211,18 @@ class WhatsAppTransport(Transport):
     async def _keep_open(self) -> None:
         rt = self.rt
         while True:
+            # This loop is what brings the socket back after a gateway
+            # restart and what drains the inbox when no event arrives: no
+            # failure in one round (a database blip inside on_connected,
+            # say) may end it.
             if not self.lost:
-                await self._open_once()
+                try:
+                    await self._open_once()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("[%s] The WhatsApp keepalive round failed; retrying in %.0fs.",
+                                  rt.session_id, KEEPALIVE_SECONDS)
                 try:
                     await self.drain()
                 except asyncio.CancelledError:
@@ -233,6 +246,15 @@ class WhatsAppTransport(Transport):
             return
         except commands.CommandError as exc:
             detail = str(exc)
+            if getattr(exc, "kind", None) == "session_lost":
+                # The gateway already lost this login (logged out, replaced,
+                # banned) and its session_lost event did not reach us (the
+                # bus dropped it, or we were restarting). Halt as if it had:
+                # otherwise this loop would ask again every KEEPALIVE_SECONDS
+                # and the panel would never show why.
+                reason = gateway_error(exc).detail.split(";", 1)[0].strip() or "unknown"
+                await self.session_lost(reason)
+                return
             await self._set_disconnected(f"WhatsApp gateway: {detail}")
             log.error("[%s] The WhatsApp gateway refused to open the socket: %s", rt.session_id, detail)
             return
@@ -504,7 +526,10 @@ class WhatsAppTransport(Transport):
         if row is None:
             return
         await self._call("read", {"jid": row["jid"], "message_ids": list(reversed(ids))}, ACTION_TIMEOUT)
+        self._read_upto.pop(chat_id, None)
         self._read_upto[chat_id] = ids[0]
+        while len(self._read_upto) > READ_UPTO_MAX:
+            self._read_upto.pop(next(iter(self._read_upto)))
 
     async def set_presence(self, online: bool) -> None:
         await self._call("presence", {"state": "available" if online else "unavailable"}, ACTION_TIMEOUT)

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import pino from 'pino';
-import { InboxWriter, retryDelayMs } from '../src/inbox.ts';
+import { InboxWriter, isTransientPgError, retryDelayMs } from '../src/inbox.ts';
 import type { InboxPayload } from '../src/normalize.ts';
 import type { Pool } from '../src/db.ts';
 import { pgReachable, withSchema } from './pg_helper.ts';
@@ -113,4 +113,37 @@ test('ON CONFLICT: offline redelivery and reconnects insert each message exactly
     const again = await pool.query('SELECT wa_message_id FROM wa_inbox ORDER BY id');
     assert.deepEqual(again.rows.map((r) => r.wa_message_id), ['B', 'A']);
   });
+});
+
+test('only statement errors count as refusals; network and server-side outages are transient', () => {
+  for (const exc of [new Error('connection refused'), { code: 'ECONNRESET' }, { code: '08006' }, { code: '57P01' }, { code: '53300' }, { code: '40P01' }, { code: 'XX000' }, null, undefined]) {
+    assert.equal(isTransientPgError(exc), true, JSON.stringify(exc));
+  }
+  for (const code of ['P0001', '23502', '22P02', '42P01', '54000']) {
+    assert.equal(isTransientPgError({ code }), false, code);
+  }
+});
+
+test('a row postgres keeps refusing is dropped after POISON_ATTEMPTS, loudly, and the queue moves on', async () => {
+  const errors: unknown[] = [];
+  const log = pino({ level: 'error' }, { write: (line: string) => void errors.push(JSON.parse(line)) });
+  const inserted: string[] = [];
+  const pool = {
+    query: async (_sql: string, params: unknown[]) => {
+      if (params[1] === 'bad') throw Object.assign(new Error('null value in column "tenant_id"'), { code: '23502' });
+      inserted.push(params[1] as string);
+      return { rows: [], rowCount: 1 };
+    },
+  } as unknown as Pool;
+  const writer = new InboxWriter(pool, 'wa1', async () => true, log, { baseMs: 1, maxMs: 1, sleep: async () => undefined });
+  writer.enqueue(payload('bad'));
+  writer.enqueue(payload('good'));
+  await writer.flush();
+  assert.deepEqual(inserted, ['good']);
+  assert.equal(writer.dropped, 1);
+  assert.equal(writer.pending, 0);
+  const lost = errors.find((e) => String((e as { msg: string }).msg).startsWith('MESSAGE LOST wa1'));
+  assert.ok(lost, 'logged at error level');
+  assert.equal((lost as { wa_message_id: string }).wa_message_id, 'bad');
+  assert.equal((lost as { text?: string }).text, undefined, 'never the text');
 });

@@ -10,7 +10,7 @@ import { hasCreds, ping, readSessionRow, wipeAuthState, type Pool } from './db.t
 import { decideClose, decideOpen, postgresSilentTooLong, watchdogVerdict, WATCHDOG_INTERVAL_MS, type SocketState } from './fencing.ts';
 import { InboxWriter } from './inbox.ts';
 import { PairingRun, type PairEvent, type PairMethod } from './pairing.ts';
-import { PRESENCE_STATES, SessionSocket, type SessionEvent } from './session.ts';
+import { PRESENCE_STATES, SessionSocket, type SessionEvent, type SessionSocketOptions } from './session.ts';
 
 export type Publish = (channel: string, payload: unknown) => Promise<boolean>;
 
@@ -56,12 +56,14 @@ export class Gateway {
   private readonly publish: Publish;
   private readonly log: pino.Logger;
   private readonly now: () => number;
+  private readonly makeSocket: SessionSocketOptions['makeSocket'];
 
-  constructor(pool: Pool, publish: Publish, log: pino.Logger, now: () => number = Date.now) {
+  constructor(pool: Pool, publish: Publish, log: pino.Logger, now: () => number = Date.now, opts: { makeSocket?: SessionSocketOptions['makeSocket'] } = {}) {
     this.pool = pool;
     this.publish = publish;
     this.log = log;
     this.now = now;
+    this.makeSocket = opts.makeSocket;
   }
 
   async handle(command: Command): Promise<unknown> {
@@ -157,6 +159,7 @@ export class Gateway {
       browser,
       log: this.log,
       quiet,
+      makeSocket: this.makeSocket,
       emit: (event: SessionEvent) => void this.publish(`wa:ev:${sessionId}`, event),
       onMessage: (payload) => this.inboxFor(sessionId).enqueue(payload),
     });
