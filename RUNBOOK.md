@@ -101,6 +101,22 @@ docker compose logs --since 24h wa-gateway | grep -E "SESSION LOST|HARD-OFF|conn
 
 **5. Resume.** It still sends nothing on its own: **Safety → the client → Resume** the `whatsapp` hold, once you are happy with the cause.
 
+## WhatsApp: messages and replies
+
+Replace `wa34600123456` with the account id from the picker. The gateway logs one JSON line per event; `grep` works on the message text.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| A customer writes, and nothing shows in the panel | Either the gateway doesn't receive the message, or the account doesn't take it out of the inbox | Look for the message in the gateway log: `docker compose logs --since 1h wa-gateway \| grep -E "inbound message\|connection (open\|closed)\|wa_inbox insert failed" \| tail -20`. <br>**No `inbound message` line:** the socket isn't connected (see the dot and Safety), or the phone has been offline too long (WhatsApp unlinks devices after about 14 days without the phone online; that shows as `loggedOut`). <br>**An `inbound message` line but nothing in the panel:** check the inbox (next row) |
+| Messages pile up in the inbox | The account's runtime isn't running, or can't store them | `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT session_id, count(*), min(created_at) FROM wa_inbox GROUP BY 1"'`. A count that stays above 0 for more than a minute means the account isn't draining: `docker compose logs --tail 50 manager \| grep wa34600123456`. The runtime re-reads the inbox every 15 s, so a lost Valkey nudge delays a message by at most that |
+| **Duplicate replies** to one message | Two copies are running the same number. The lease makes that impossible inside one stack, so it is almost always a second server, a restored copy, or a leftover `docker compose run` | Stop sending first: **Safety → Stop everything…**. Then look for the other copy: `docker ps -a \| grep -E "manager\|wa-gateway"` here, and on the old server. Both copies usually also log `SESSION LOST … connectionReplaced`. Keep one, then pair again on that one ([WhatsApp session dropped](#whatsapp-session-dropped)). Each inbound message is stored once (its WhatsApp id is unique), so duplicates mean a second stack, not a retry here |
+| Replies are written but never sent | Approval mode (the default for a new WhatsApp number), a hold, or the gateway not answering | Drafts waiting in the thread: approve them, or turn on `auto_send` in Config. A red chip: read the hold in Safety. A red *"The WhatsApp gateway is not answering"* line in the thread: see the first row of *A WhatsApp account* |
+| A sent message turns red | The gateway or WhatsApp refused it. Nothing is retried by itself, so nothing is sent twice | Read the red line: *not on WhatsApp / blocked* pauses that chat; a code (`463`, `rate-overlimit`) is a restriction (next row). Send it again by hand only if it matters |
+| **The number may be restricted or banned** | WhatsApp is pushing back on the number | Signs, in order of severity: <br>- many chats paused as *blocked / not on WhatsApp* in one day; <br>- `463` or `rate-overlimit` in the manager log (the account halts itself); <br>- *Session lost: `forbidden`*. <br>Do this: **Soft-off** the client, check the phone for a WhatsApp notice, lower `daily_message_cap`, `hourly_message_cap` and `safety.daily_peer_cap`, and keep `auto_send` off. Don't pair again or resume until WhatsApp works normally on the phone |
+| `wa-gateway` keeps restarting (`docker compose ps` shows *Restarting*) | It exits on a fatal start error | `docker compose logs --tail 40 wa-gateway`. <br>- *"refusing to boot without a master key"*: `USERBOT_MASTER_KEY` missing from `.env`. <br>- *"another wa-gateway holds the singleton advisory lock"*: a second gateway uses this Postgres; remove it. <br>- *"wa-gateway failed to start"* with a connection error: Postgres or Valkey is down (fix those first). <br>- Anything else: send me the last 40 lines. <br>WhatsApp numbers stay linked meanwhile; they reconnect without a re-pair once it starts |
+| `manager` is down, `wa-gateway` is up | Nothing renews the leases | After about 30 s the gateway closes those numbers' sockets by itself (its watchdog), so they never run unsupervised. `docker compose up -d manager`; they reopen within ~15 s, and messages sent meanwhile arrive on reconnect |
+| Valkey is down | No commands or events: nothing can be sent, pairing fails, the panel shows no live updates. Received messages still reach Postgres | `docker compose restart valkey`, then `docker compose restart panel manager scheduler wa-gateway` |
+
 ## The scheduler (reminders, digests, billing, health alerts)
 
 | Symptom | Fix |
@@ -133,6 +149,12 @@ docker compose up -d
 
 For a brand-new server: do DEPLOY_TODAY.md steps 2–3, restore `.env` from the backup **before** the first `docker compose up`, then the rest above.
 
+**WhatsApp numbers after a restore.** Their linked-device keys are in the database, so a restore puts back the keys as they were at backup time. Those keys may be out of date by now.
+
+- **Never run the restored stack while the old one is still up.** Both would use one linked device, both get `connectionReplaced`, and customers may get two replies. Stop the old one first: `docker compose stop manager wa-gateway`.
+- A number that comes back as `badSession` or `loggedOut`, or whose gateway log shows decryption errors for most messages: pair it again (*WhatsApp session dropped*, step 4). History and settings are kept.
+- Telegram accounts are unaffected.
+
 ## Roll back a bad update
 
 ```bash
@@ -142,6 +164,11 @@ docker compose up -d --build
 ```
 
 Migrations are not rolled back; the code before an update tolerates newer tables, but if `pg.assert_version` complains, come back to the newer commit and send me the log.
+
+**Rolling back to a version without WhatsApp.**
+1. Run `docker compose stop wa-gateway` first. The older compose file doesn't know the service, so it would keep running on its own.
+2. WhatsApp accounts stay in the database. The older manager skips them as *needs login*, so they are offline while you are rolled back.
+3. Rolling forward again brings them back without a re-pair, as long as the gateway wasn't stopped for more than about 14 days.
 
 ## Emergency: stop everything from sending
 
