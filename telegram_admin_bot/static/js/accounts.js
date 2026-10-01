@@ -2,14 +2,43 @@
 
 /* -------------------------------------------------------------- sign-in */
 
-// The "Add account" dialog. The server holds one sign-in in progress at a
-// time; opening the dialog picks it up at whatever step it is on.
+// The "Add account" dialog. It starts by asking which network the account
+// is on. The server holds one Telegram sign-in in progress at a time, and
+// this tab follows one WhatsApp pairing (whatsapp.js); opening the dialog
+// picks either up at whatever step it is on.
 async function openAddAccount() {
   $("session-menu").classList.remove("open");
-  try { applyAuth(await api("GET", "/api/auth")); }
+  let auth;
+  try { auth = await api("GET", "/api/auth"); }
   catch (err) { toast(err.message); return; }
+  if (auth.step === "code" || auth.step === "password") applyAuth(auth);
+  else if (waPairingInProgress()) showLoginStep("wa-pairing");
+  else {
+    state.auth = auth;
+    showLoginNotice("");
+    showLoginStep("l-channel");
+  }
   $("login").classList.add("open");
 }
+
+// Shows one step of the dialog (Telegram's or WhatsApp's) and hides the rest.
+function showLoginStep(id) {
+  for (const node of document.querySelectorAll("#login .step")) node.classList.remove("on");
+  $(id).classList.add("on");
+}
+
+function showLoginNotice(text, kind) {
+  const notice = $("l-notice");
+  notice.hidden = !text;
+  notice.className = "notice" + (kind === "info" ? " info" : "");
+  notice.textContent = text || "";
+}
+
+$("l-pick-telegram").addEventListener("click", async () => {
+  try { applyAuth(await api("GET", "/api/auth")); }
+  catch (err) { showLoginNotice(err.message); }
+});
+$("l-channel-close").addEventListener("click", () => $("login").classList.remove("open"));
 
 async function closeAddAccount() {
   clearInterval(resendTimer);
@@ -37,9 +66,7 @@ function applyAuth(auth) {
   notice.textContent = auth.notice || "";
   notice.className = "notice";
 
-  for (const id of ["l-credentials", "l-code-form", "l-password-form"]) {
-    $(id).classList.remove("on");
-  }
+  for (const node of document.querySelectorAll("#login .step")) node.classList.remove("on");
   const stepForm = { credentials: "l-credentials", code: "l-code-form", password: "l-password-form" }[auth.step]
     || "l-credentials";
   $(stepForm).classList.add("on");
@@ -187,8 +214,17 @@ function sessionLabel(s) {
   return s.label && s.label.trim() ? s.label : s.session_id;
 }
 
-// grey = not running in this panel process, red = running but Telegram is
-// not connected, green = running and connected — per the plan's item 12/13.
+// What only one network has: outreach (writing first to contacts) is
+// Telegram-only; on WhatsApp that is what gets numbers banned.
+function applyChannel() {
+  const whatsapp = currentChannel() === "whatsapp";
+  $("open-outreach").hidden = whatsapp;
+  if (whatsapp) $("outreach").classList.remove("open");
+}
+
+// grey = not running anywhere, red = running but its network (Telegram or
+// WhatsApp; status.telegram_connected covers both) is not connected,
+// green = running and connected — per the plan's item 12/13.
 function sessionDotClass(s) {
   if (!s.running_here) return "dot grey";
   if (s.status && s.status.telegram_connected) return "dot on";
@@ -211,6 +247,9 @@ function renderSessionSwitcher() {
     const row = el("div", "s-row" + (s.session_id === state.sessionId ? " active" : ""));
     row.appendChild(el("span", sessionDotClass(s)));
     row.appendChild(el("span", "s-name", sessionLabel(s)));
+    const whatsapp = s.channel === "whatsapp";
+    row.appendChild(el("span", "badge channel" + (whatsapp ? " wa" : " tg"), whatsapp ? "WA" : "TG"));
+    row.title = `${channelName(s.channel)} · ${s.session_id}`;
     row.addEventListener("click", () => {
       menu.classList.remove("open");
       selectSession(s.session_id);
@@ -221,6 +260,7 @@ function renderSessionSwitcher() {
   add.appendChild(el("span", "s-name", "+ Add account"));
   add.addEventListener("click", openAddAccount);
   menu.appendChild(add);
+  applyChannel();
 }
 
 $("session-btn").addEventListener("click", (ev) => {

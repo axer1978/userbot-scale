@@ -343,20 +343,15 @@ class BookingFlow:
     async def provider_chat_id(self) -> Optional[int]:
         value = (self.settings.get("provider") or "").strip()
         rt = self.rt
-        if not value or rt.client is None or not rt.telegram_state["connected"]:
+        if not value or not rt.transport.ready:
             return None
         cached_value, cached_id, resolved_at = self._provider
         now = asyncio.get_running_loop().time()
         if cached_value == value and (cached_id is not None or now - resolved_at < self.PROVIDER_RETRY_SECONDS):
             return cached_id
         try:
-            from session_runtime import describe_sender
-
-            target: Any = int(value) if value.lstrip("-").isdigit() else value
-            entity = await rt.client.get_entity(target)
-            chat_id = int(entity.id)
-            name, username, is_bot, access_hash = describe_sender(entity, chat_id)
-            await rt.db.upsert_conversation(chat_id, name, username, is_bot, access_hash)
+            chat_id, peer = await rt.transport.resolve_owner(value)
+            await rt.db.upsert_conversation(chat_id, peer.name, peer.username, peer.is_bot, peer.access_hash)
         except Exception as exc:
             log.warning("[%s] Cannot resolve the booking owner %r: %s", rt.session_id, value, type(exc).__name__)
             self._provider = (value, None, now)
@@ -383,8 +378,16 @@ class BookingFlow:
             await self.rt.push_error(booking["chat_id"], f"Booking #{booking['number']}: could not reach the owner "
                                      "(check booking.provider). They can still answer from the panel.")
             return
-        if remember and row.get("telegram_id"):
-            await self.store.set_fields(booking["id"], provider_message_id=row["telegram_id"])
+        ref = self.owner_message_ref(row)
+        if remember and any(ref.values()):
+            await self.store.set_fields(booking["id"], **ref)
+
+    def owner_message_ref(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Where the id of a message sent to the owner is kept: Telegram's
+        integer id, or WhatsApp's string id in its own column."""
+        if self.rt.transport.id_field == "wa_message_id":
+            return {"provider_wa_message_id": row.get("wa_message_id")}
+        return {"provider_message_id": row.get("telegram_id")}
 
     async def submit(self, booking: dict[str, Any], *, changed: bool = False) -> bool:
         """Put a requested booking to the owner. Left `requested` (and
@@ -413,6 +416,8 @@ class BookingFlow:
             ), actor=bs.SYSTEM)
         except (bs.IllegalTransition, booking_store.StaleBooking):
             return False
+        if row.get("wa_message_id"):
+            await self.store.set_fields(booking["id"], provider_wa_message_id=row["wa_message_id"])
         self._submit_attempts.pop(booking["id"], None)
         await self.announce(booking, f"📅 Booking #{booking['number']} requested for {bookings.describe_when(booking)} "
                                      "— waiting for the owner.")
@@ -482,7 +487,7 @@ class BookingFlow:
         awaiting = await self.store.awaiting_owner()
         if reply_to is not None:
             for booking in awaiting:
-                if booking.get("provider_message_id") == reply_to:
+                if reply_to in (booking.get("provider_message_id"), booking.get("provider_wa_message_id")):
                     return booking
         if cmd.kind in ("yes", "no") and len(awaiting) == 1:
             return awaiting[0]

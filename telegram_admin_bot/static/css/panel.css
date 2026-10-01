@@ -358,6 +358,19 @@ legend { padding: 0 6px; color: var(--accent); font-size: 12px; text-transform: 
 #login .btn.primary { min-width: 130px; }
 #login .btn:disabled { opacity: .6; cursor: default; }
 #session-menu .s-add { color: var(--accent); border-top: 1px solid var(--border); }
+#login .channel-choice { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+#login .channel-option { text-align: left; padding: 12px 14px; }
+#login .channel-option b { display: block; font-size: 15px; margin-bottom: 2px; }
+#login .channel-option span { color: var(--muted); font-size: 13px; }
+#login .check { margin-bottom: 6px; }
+#login .check label { font-size: 13.5px; }
+#login .wa-qr { text-align: center; margin: 4px 0 14px; }
+#login .wa-qr canvas { width: 264px; max-width: 100%; height: auto; image-rendering: pixelated;
+  border-radius: 8px; background: #fff; }
+#login .wa-code { font-size: 30px; letter-spacing: 6px; text-align: center; font-weight: 600;
+  font-variant-numeric: tabular-nums; margin: 4px 0 14px; user-select: all; }
+.badge.channel.wa { border-color: #2a8f5c; color: #6fd39c; }
+.badge.channel.tg { border-color: var(--accent); color: var(--accent); }
 
 /* clear of the composer so toasts never cover the Send button */
 #toasts { position: fixed; right: 16px; bottom: 84px; display: flex; flex-direction: column; gap: 8px; z-index: 50; align-items: flex-end; }

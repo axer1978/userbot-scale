@@ -47,6 +47,7 @@ failed logins are rate-limited per client IP and tokens expire after
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import re
@@ -61,6 +62,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSock
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from redis.exceptions import RedisError
 from starlette.datastructures import Headers as StarletteHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -78,10 +80,16 @@ import owner_admin_api
 import owner_api
 import review_api
 import safety_api
+import tenant_config
 import tenants
 import unanswered_api
 import totp
+import wa_device_profiles
+import wa_pairing
+import wa_store
 from database import (
+    CHANNEL_TELEGRAM,
+    CHANNEL_WHATSAPP,
     OUT_CANCELLED,
     OUT_SENT,
     STATUS_PENDING,
@@ -534,6 +542,7 @@ async def api_sessions() -> list[dict[str, Any]]:
         live = _lease_is_live(row)
         out.append({
             **row,
+            "channel": row.get("channel") or CHANNEL_TELEGRAM,
             # Field names kept from the earlier version for the frontend's
             # sake: "running_here" now means "running somewhere in the
             # fleet" (this process holds no runtimes to be "here" about),
@@ -697,6 +706,212 @@ async def api_auth_cancel() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Adding a WhatsApp account — linked as a device of the phone, by QR code or
+# pairing code. The pairing itself runs in the wa-gateway service; this file
+# only creates the account row, asks the gateway over the bus and follows
+# the pairing's events (wa_pairing.py). Like a Telegram sign-in, a finished
+# pairing stores the DeepSeek key and marks the account active, and the
+# manager's workers pick it up on their own.
+# ---------------------------------------------------------------------------
+
+# The gateway answers `pair` as soon as it has opened the socket.
+WA_GATEWAY_TIMEOUT = 15.0
+WA_GATEWAY_DOWN = ("The WhatsApp gateway is not running, so the number can't be linked right now. "
+                   "Start the wa-gateway service and try again.")
+_WA_PHONE_CHARS = re.compile(r"^\+?[0-9 ()./-]+$")
+
+wa_pairings = wa_pairing.Pairings()
+
+
+class WaPairStartBody(BaseModel):
+    label: str = ""
+    phone: str = ""
+    deepseek_api_key: str = ""
+    method: str = "qr"  # "qr" (scan a QR code) or "code" (type an 8-character code on the phone)
+
+
+def wa_phone_digits(phone: str) -> str:
+    """The number in international form, digits only (country code first,
+    no leading 0 or 00), as WhatsApp's pairing-code request needs it."""
+    phone = phone.strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="Phone number is required.")
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    if not _WA_PHONE_CHARS.match(phone) or digits.startswith("0") or not 8 <= len(digits) <= 15:
+        raise HTTPException(
+            status_code=400,
+            detail="Enter the phone number in international format, country code first (e.g. +37120000001).",
+        )
+    return digits
+
+
+def wa_session_id_for_phone(phone: str) -> str:
+    """One row per WhatsApp number, like session_id_for_phone: pairing the
+    same number again reuses its account (history, settings, tenant)."""
+    return f"wa{wa_phone_digits(phone)}"
+
+
+async def _seed_whatsapp_defaults(session_id: str) -> None:
+    """A brand-new WhatsApp client (nothing in its client config layer yet)
+    starts on the WhatsApp safety defaults, saved the normal audited way.
+    A re-paired number keeps whatever its config says by now."""
+    store = tenants.TenantStore(pool)
+    tenant = await store.by_session(session_id)
+    if tenant is None or tenant["config_json"]:
+        return
+    try:
+        await store.save_config(
+            tenant["id"], copy.deepcopy(tenant_config.WHATSAPP_CLIENT_DEFAULTS), actor=audit.ADMIN,
+            reason="WhatsApp safety defaults", expected_revision=tenant["config_revision"],
+        )
+    except tenants.Conflict:
+        return  # a second, simultaneous start seeded it
+    except tenant_config.ConfigError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not set the WhatsApp defaults: {exc}") from exc
+    log.info("[%s] WhatsApp safety defaults saved to the client config.", session_id)
+
+
+async def _wa_browser_for(session_id: str) -> list[str]:
+    """The linked-device browser this account presents: stored once in its
+    identity (config_store), then the same on every re-pair."""
+    cfg = await config_store.load(pool, session_id)
+    browser = cfg["identity"]["wa_browser"]
+    if not browser:
+        browser = wa_device_profiles.derive(session_id)
+        await config_store.save(pool, session_id, {**cfg, "identity": {**cfg["identity"], "wa_browser": browser}})
+    return browser
+
+
+# A halted account keeps its lease after its WhatsApp session was lost (so
+# its dot stays red). To pair it again it is deactivated first; its runtime
+# then fails its next lease renewal and stops. This is how long to wait.
+WA_RELEASE_WAIT_SECONDS = 25.0
+WA_RELEASE_POLL_SECONDS = 0.5
+
+
+async def _release_lost_whatsapp(session_id: str, row: dict[str, Any]) -> bool:
+    """Let go of an account whose WhatsApp session was lost, so it can be
+    paired again: only one halted by a session loss (state needs_login or
+    revoked, no stored login left), never a healthy running one. True once
+    no worker holds it any more."""
+    if row.get("state") not in ("needs_login", "revoked"):
+        return False
+    if await wa_store.has_login(pool, session_id):
+        return False
+    log.warning("[%s] Re-pairing a WhatsApp account whose session was lost: deactivating it so its "
+                "halted runtime lets go (%s).", session_id, row.get("state_reason") or row.get("state"))
+    await registry.set_active(session_id, False)
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + WA_RELEASE_WAIT_SECONDS
+    while loop.time() < deadline:
+        current = await registry.get(session_id)
+        if current is None or not _lease_is_live(current):
+            return True
+        await asyncio.sleep(WA_RELEASE_POLL_SECONDS)
+    return False
+
+
+async def _wa_paired(pairing: wa_pairing.Pairing, event: dict[str, Any]) -> None:
+    session_id = pairing.session_id
+    if pairing.deepseek_key:
+        await registry.set_deepseek_key(session_id, pairing.deepseek_key)
+    await registry.set_active(session_id, True)
+    log.info("[%s] WhatsApp linked (%s); marked active for the manager to pick up.",
+             session_id, event.get("jid") or "?")
+
+
+@app.post("/api/wa/pair/start", dependencies=[Depends(require_auth)])
+async def api_wa_pair_start(body: WaPairStartBody) -> dict[str, Any]:
+    method = body.method.strip().lower()
+    if method not in wa_pairing.METHODS:
+        raise HTTPException(status_code=400, detail="Choose how to link: scan a QR code or type a pairing code.")
+    phone = body.phone.strip()
+    digits = wa_phone_digits(phone)
+    session_id = wa_session_id_for_phone(phone)
+    deepseek_key = body.deepseek_api_key.strip()
+
+    existing = await registry.get(session_id)
+    if existing is not None and existing.get("channel") != CHANNEL_WHATSAPP:
+        raise HTTPException(status_code=409, detail=f"{session_id} is a {existing.get('channel')} account.")
+    if existing is not None and _lease_is_live(existing) and not await _release_lost_whatsapp(session_id, existing):
+        if existing.get("state") in ("needs_login", "revoked"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{phone} lost its WhatsApp session and is being stopped; try again in half a minute.",
+            )
+        raise HTTPException(
+            status_code=409,
+            detail=f"{phone} is already running ({session_id}). Stop it before pairing it again.",
+        )
+    if not deepseek_key and not (existing and await registry.load_deepseek_key(session_id)):
+        raise HTTPException(
+            status_code=400,
+            detail="DeepSeek API key is required (from platform.deepseek.com).",
+        )
+
+    # Before pairing: the gateway keeps the linked device's keys in a table
+    # that references this row. Re-pairing keeps the row as it is; a blank
+    # name leaves the stored one alone.
+    try:
+        await registry.create(session_id, label=body.label.strip() or ("" if existing else phone),
+                              channel=CHANNEL_WHATSAPP)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await _seed_whatsapp_defaults(session_id)
+    browser = await _wa_browser_for(session_id)
+
+    try:
+        pairing = await wa_pairings.open(bus, session_id=session_id, method=method,
+                                         deepseek_key=deepseek_key, on_paired=_wa_paired)
+    except wa_pairing.TooManyPairings as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except (RedisError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="The command bus (Valkey) is unreachable.") from exc
+
+    args: dict[str, Any] = {"session_id": session_id, "pair_id": pairing.pair_id, "method": method,
+                            "browser": browser}
+    if method == "code":
+        args["phone"] = digits
+    try:
+        await bus.dispatch(wa_pairing.GATEWAY, "pair", args, timeout=WA_GATEWAY_TIMEOUT)
+    except commands.CommandTimeout as exc:
+        await wa_pairings.abandon(pairing.pair_id)
+        raise HTTPException(status_code=503, detail=WA_GATEWAY_DOWN) from exc
+    except commands.BusUnavailable as exc:
+        await wa_pairings.abandon(pairing.pair_id)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except commands.CommandError as exc:
+        await wa_pairings.abandon(pairing.pair_id)
+        if exc.kind == "busy":
+            raise HTTPException(
+                status_code=409,
+                detail=f"{phone} already has a WhatsApp connection open on the server ({exc}). "
+                       "Stop it before pairing it again.",
+            ) from exc
+        raise HTTPException(status_code=502, detail=f"The WhatsApp gateway refused: {exc}") from exc
+    log.info("[%s] WhatsApp pairing %s started (%s).", session_id, pairing.pair_id, method)
+    return pairing.public()
+
+
+@app.get("/api/wa/pair/{pair_id}", dependencies=[Depends(require_auth)])
+async def api_wa_pair_state(pair_id: str) -> dict[str, Any]:
+    pairing = wa_pairings.get(pair_id)
+    if pairing is None:
+        raise HTTPException(status_code=404, detail="Unknown pairing (it may have expired). Start again.")
+    return pairing.public()
+
+
+@app.post("/api/wa/pair/{pair_id}/cancel", dependencies=[Depends(require_auth)])
+async def api_wa_pair_cancel(pair_id: str) -> dict[str, Any]:
+    pairing = await wa_pairings.cancel(bus, pair_id)
+    if pairing is None:
+        raise HTTPException(status_code=404, detail="Unknown pairing (it may have expired).")
+    return pairing.public()
+
+
+# ---------------------------------------------------------------------------
 # Per-session routes
 # ---------------------------------------------------------------------------
 
@@ -742,6 +957,9 @@ async def api_status(session_id: str) -> dict[str, Any]:
     live = _lease_is_live(row)
     return {
         "session_id": session_id,
+        "channel": row.get("channel") or CHANNEL_TELEGRAM,
+        # Field names kept for the frontend: they mean "the account's own
+        # network" (Telegram or WhatsApp), whichever this one is on.
         "telegram_connected": live and row.get("state") == "running",
         "telegram_error": row.get("state_reason") if row.get("state") == "error" else None,
         "state": row.get("state"),
@@ -996,8 +1214,17 @@ async def api_reject(session_id: str, draft_id: int) -> dict[str, Any]:
     return row or {}
 
 
+async def _refuse_outreach_on_whatsapp(session_id: str) -> None:
+    """Outreach writes first to people in the account's contacts. On
+    WhatsApp that is exactly what gets numbers banned, so it isn't offered."""
+    row = await registry.get(session_id)
+    if row is not None and row.get("channel") == CHANNEL_WHATSAPP:
+        raise HTTPException(status_code=400, detail="Outreach is not available for WhatsApp accounts.")
+
+
 @app.get("/api/sessions/{session_id}/contacts", dependencies=[Depends(require_auth)])
 async def api_contacts(session_id: str) -> list[dict[str, Any]]:
+    await _refuse_outreach_on_whatsapp(session_id)
     return await _dispatch_live(session_id, "list_contacts", {}, timeout=LIVE_ACTION_TIMEOUT)
 
 
@@ -1013,6 +1240,7 @@ async def api_outreach_queue(session_id: str, body: OutreachBody) -> dict[str, A
         raise HTTPException(status_code=400, detail="Say what the message should achieve")
     if not body.chat_ids:
         raise HTTPException(status_code=400, detail="Pick at least one contact")
+    await _refuse_outreach_on_whatsapp(session_id)
     bundle = await tenants.TenantStore(pool).bundle_for_session(session_id)
     if not bundle.config["outreach"]["enabled"]:
         raise HTTPException(
@@ -1315,6 +1543,7 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     if login_flow is not None:
         await login_flow.reset()  # drop a half-finished sign-in's connection
+    await wa_pairings.close()
     if bus is not None:
         await bus.close()
     if pool is not None:

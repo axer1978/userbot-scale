@@ -50,7 +50,7 @@ class BookingNotFound(LookupError):
 _WRITABLE = {
     "starts_at", "ends_at", "blocked_until", "service", "notes",
     "proposed_starts_at", "proposed_ends_at", "proposed_by",
-    "provider_chat_id", "provider_message_id", "calendar_event_id",
+    "provider_chat_id", "provider_message_id", "provider_wa_message_id", "calendar_event_id",
     "customer_notice", "cancelled_by", "cancel_reason", "decided_by", "decided_at",
     "attendance_confirmed_at", "arrived_at", "arrival_photo_match", "instructions_sent_at",
     "customer_name", "customer_username",
@@ -74,6 +74,8 @@ class BookingStore:
         self.pool = pool
         self.tenant_id = tenant_id
         self.session_id = session_id
+        # The account's network (customer_ref namespace); set by the runtime.
+        self.channel = "telegram"
 
     # ------------------------------------------------------------ reading
 
@@ -180,7 +182,7 @@ class BookingStore:
     ) -> dict[str, Any]:
         """A new request, state `requested`, with the tenant's next number."""
         blocked_until = ends_at + timedelta(minutes=buffer_minutes)
-        ref = crypto.customer_ref(self.tenant_id, "telegram", chat_id)
+        ref = crypto.customer_ref(self.tenant_id, self.channel, chat_id)
         try:
             async with self.pool.acquire() as con, con.transaction():
                 number = await self._next_number(con)
@@ -374,7 +376,7 @@ class BookingStore:
         self, *, chat_id: int, customer_name: str, wanted_from: datetime, wanted_to: datetime, service: str = "",
     ) -> dict[str, Any]:
         """One waiting entry per person: a new wish replaces their old one."""
-        ref = crypto.customer_ref(self.tenant_id, "telegram", chat_id)
+        ref = crypto.customer_ref(self.tenant_id, self.channel, chat_id)
         async with self.pool.acquire() as con, con.transaction():
             await con.execute(
                 "UPDATE waitlist SET state = 'removed' WHERE tenant_id = $1 AND customer_ref = $2 "
@@ -495,7 +497,7 @@ class BookingStore:
                     "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12, $13, $14, $15, $16, $17, "
                     "$18, $19, $20, $21, $22, $23, TRUE, COALESCE($24, now())) RETURNING id",
                     self.tenant_id, self.session_id, number, chat_id,
-                    crypto.customer_ref(self.tenant_id, "telegram", chat_id),
+                    crypto.customer_ref(self.tenant_id, self.channel, chat_id),
                     str(item.get("client_name") or "")[:200], item.get("client_username"),
                     str(item.get("title") or "")[:120], str(item.get("notes") or "")[:500],
                     starts, ends, str(item.get("timezone") or "UTC"), state,

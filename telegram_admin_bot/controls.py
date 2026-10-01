@@ -50,7 +50,8 @@ BILLING = "billing"
 SPEND_CAP = "spend_cap"
 ANOMALY = "anomaly"
 TELEGRAM = "telegram"
-KINDS = (MANUAL, BILLING, SPEND_CAP, ANOMALY, TELEGRAM)
+WHATSAPP = "whatsapp"
+KINDS = (MANUAL, BILLING, SPEND_CAP, ANOMALY, TELEGRAM, WHATSAPP)
 
 LABELS = {
     MANUAL: "paused",
@@ -58,6 +59,7 @@ LABELS = {
     SPEND_CAP: "AI limit reached",
     ANOMALY: "anomaly",
     TELEGRAM: "stopped after a Telegram error",
+    WHATSAPP: "stopped after a WhatsApp error",
 }
 
 RELOAD_TIMEOUT = 5.0
@@ -225,6 +227,8 @@ async def hard_off(pool: asyncpg.Pool, bus: Optional[commands.CommandBus], tenan
     session_id = await pool.fetchval("SELECT session_id FROM tenants WHERE id = $1", tenant_id)
     if not session_id:
         raise LookupError("This client has no Telegram account.")
+    channel = await pool.fetchval("SELECT channel FROM telegram_sessions WHERE session_id = $1", session_id)
+    whatsapp = channel == WHATSAPP
     logged_out, how = False, "not running"
     if bus is not None:
         try:
@@ -243,7 +247,10 @@ async def hard_off(pool: asyncpg.Pool, bus: Optional[commands.CommandBus], tenan
         import session_runtime
 
         try:
-            logged_out = await session_runtime.log_out_session(pool, session_id)
+            if whatsapp:
+                logged_out = await session_runtime.log_out_whatsapp(pool, bus, session_id)
+            else:
+                logged_out = await session_runtime.log_out_session(pool, session_id)
             how = "directly"
         except Exception as exc:
             how = f"could not connect to log out: {type(exc).__name__}"
@@ -257,13 +264,18 @@ async def hard_off(pool: asyncpg.Pool, bus: Optional[commands.CommandBus], tenan
             """,
             session_id, reason,
         )
+        # A WhatsApp account's login lives here (wa-gateway's auth state).
+        await con.execute("DELETE FROM wa_auth_state WHERE session_id = $1", session_id)
         await audit.record(con, tenant_id=tenant_id, actor=actor, event=audit.HARD_OFF, reason=reason,
                            payload={"session_id": session_id, "logged_out": logged_out, "how": how})
     await alerts.raise_alert(
         pool, tenant_id=tenant_id, kind="hard_off", severity=alerts.CRITICAL,
         message=f"Session revoked ({reason}). "
-                + ("Telegram logged it out." if logged_out else
-                   "Telegram could NOT be told: end the session under Settings → Devices on the phone."),
+                + (("WhatsApp unlinked the device." if logged_out else
+                    "WhatsApp could NOT be told: remove the device under Linked devices on the phone.")
+                   if whatsapp else
+                   ("Telegram logged it out." if logged_out else
+                    "Telegram could NOT be told: end the session under Settings → Devices on the phone.")),
         payload={"session_id": session_id, "how": how},
     )
     return {"session_id": session_id, "logged_out": logged_out, "how": how}
