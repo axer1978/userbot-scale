@@ -62,8 +62,18 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
 }
 
+// A stray rejection is almost always one socket's network promise (Baileys
+// fires many); the process serves every number at once, so it is logged
+// and the process goes on. An uncaught synchronous exception means state
+// nobody can vouch for: log it as JSON (not a bare stack on stderr) and
+// exit so compose restarts a clean gateway; the Python side re-opens every
+// socket on its next 15 s keepalive.
 process.on('unhandledRejection', (reason) => {
   log.error({ err: reason }, 'unhandled rejection');
+});
+process.on('uncaughtException', (exc) => {
+  log.fatal({ err: exc }, 'uncaught exception; exiting for a clean restart');
+  process.exit(1);
 });
 
 main().catch((exc) => {
