@@ -202,3 +202,27 @@ test('postgres outage: commands surface as other, watchdog tick survives', async
   await gw.shutdown('test');
   assert.equal(await kindOf(gw.handle(cmd('status'))), 'busy');
 });
+
+test('pair_cancel answers only once the pairing has let go, so "start again" is not refused busy', async () => {
+  const rows: Record<string, Row> = {
+    wa1: { channel: 'whatsapp', is_active: true, lease_epoch: 4, live: false, lease_expires_at_ms: null },
+  };
+  const gw = new Gateway(fakePool(rows, new Set()), async () => true, quiet);
+  // A pairing run whose socket takes a moment to end after cancel (endSocket + wipe).
+  let release!: () => void;
+  const ended = new Promise<void>((resolve) => (release = resolve));
+  const run = { cancel: () => void setTimeout(release, 50) };
+  const internals = gw as unknown as {
+    pairings: Map<string, unknown>;
+    pairingBySession: Map<string, string>;
+    pairingDone: Map<string, Promise<unknown>>;
+  };
+  internals.pairings.set('p1', run);
+  internals.pairingBySession.set('wa1', 'p1');
+  internals.pairingDone.set('p1', ended.then(() => {
+    internals.pairings.delete('p1');
+    internals.pairingBySession.delete('wa1');
+  }));
+  assert.deepEqual(await gw.handle(cmd('pair_cancel', { pair_id: 'p1' })), { cancelled: true });
+  assert.equal(internals.pairingBySession.has('wa1'), false);
+});

@@ -19,6 +19,8 @@ export type StatusEntry = { session_id: string; epoch: number; state: SocketStat
 export const LOGOUT_TIMEOUT_MS = 25_000;
 export const MAX_TEXT_LENGTH = 65_536;
 export const MAX_READ_IDS = 500;
+// How long pair_cancel waits for the run to let go (the panel waits 5 s).
+export const CANCEL_WAIT_MS = 4_000;
 
 function str(args: Record<string, unknown>, name: string, max = 128): string {
   const v = args[name];
@@ -48,6 +50,8 @@ export class Gateway {
   private readonly sessions = new Map<string, SessionSocket>();
   private readonly pairings = new Map<string, PairingRun>();
   private readonly pairingBySession = new Map<string, string>();
+  // Settles once a pairing run has ended its socket and wiped (or kept) creds.
+  private readonly pairingDone = new Map<string, Promise<unknown>>();
   private readonly inboxes = new Map<string, InboxWriter>();
   private watchdog: NodeJS.Timeout | null = null;
   private lastPgOkMs = Date.now();
@@ -125,18 +129,29 @@ export class Gateway {
     });
     this.pairings.set(pairId, run);
     this.pairingBySession.set(sessionId, pairId);
-    void run.run().finally(() => {
+    const done = run.run().finally(() => {
       this.pairings.delete(pairId);
+      this.pairingDone.delete(pairId);
       if (this.pairingBySession.get(sessionId) === pairId) this.pairingBySession.delete(sessionId);
     });
+    this.pairingDone.set(pairId, done);
     return { started: true };
   }
 
-  private pairCancel(args: Record<string, unknown>): { cancelled: true } {
+  private async pairCancel(args: Record<string, unknown>): Promise<{ cancelled: true }> {
     const pairId = str(args, 'pair_id');
     const run = this.pairings.get(pairId);
     if (!run) throw new GatewayError('not_found', 'no such pairing (already finished?)');
     run.cancel('cancelled by operator');
+    // Answer once the run has ended its socket and wiped, so the operator's
+    // "start again" right after is not refused busy. Bounded below the
+    // panel's 5 s cancel timeout.
+    const done = this.pairingDone.get(pairId);
+    if (done) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([done, new Promise((resolve) => (timer = setTimeout(resolve, CANCEL_WAIT_MS)))]);
+      clearTimeout(timer);
+    }
     return { cancelled: true };
   }
 

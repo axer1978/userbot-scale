@@ -149,6 +149,15 @@ def test_app_services_get_env_file_except_the_public_booking_pages():
     assert SERVICES["booking-pages"]["env_file"] == []
 
 
+def test_wa_gateway_gets_only_the_variables_it_reads():
+    # The gateway parses hostile network input (Baileys); it must not hold the
+    # admin password, TOTP secret, SMTP/vision/DeepSeek keys it never reads.
+    # USERBOT_MASTER_KEY still arrives: compose interpolates it from .env.
+    gw = SERVICES["wa-gateway"]
+    assert "env_file" not in gw
+    assert set(gw["environment"]) == {"DATABASE_URL", "REDIS_URL", "USERBOT_MASTER_KEY", "WA_GATEWAY_LOG_LEVEL"}
+
+
 def test_each_app_service_gets_what_it_reads_at_boot():
     needs = {
         "migrate": {"DATABASE_URL", "USERBOT_MASTER_KEY"},

@@ -329,9 +329,9 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    env_file:
-      - path: .env
-        required: false
+    # No env_file: the gateway is the one service that parses hostile network
+    # input, so it gets only what it reads (compose fills these from .env),
+    # never the admin password, TOTP secret or the SMTP/vision/DeepSeek keys.
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
       REDIS_URL: redis://valkey:6379/0
