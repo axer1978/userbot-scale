@@ -45,7 +45,7 @@ sudo apt-get update && sudo apt-get install -y git
 **If the GitHub repository is public:**
 
 ```bash
-git clone -b platform/phase-1 https://github.com/axer1978/userbot-scale.git
+git clone -b platform/whatsapp https://github.com/axer1978/userbot-scale.git
 ```
 
 **If it is private** (GitHub no longer accepts passwords for `git clone`), use a read-only deploy key:
@@ -59,7 +59,7 @@ In GitHub: the repository → **Settings → Deploy keys → Add deploy key**, p
 
 ```bash
 git clone -c core.sshCommand="ssh -i ~/.ssh/github_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
-  -b platform/phase-1 git@github.com:axer1978/userbot-scale.git
+  -b platform/whatsapp git@github.com:axer1978/userbot-scale.git
 ```
 
 The `-c` part is saved in the clone, so later `git pull`s use the same key.
@@ -103,7 +103,7 @@ The last line shows your panel's address, admin password and authenticator key:
 - `PANEL_DOMAIN` must be `SERVER_IP` with dashes plus `.sslip.io`. If it isn't, fix it with `nano .env`. With your own domain, put `panel.yourdomain.com` there instead.
 - In your authenticator app (Google Authenticator, Microsoft Authenticator, Authy, 1Password…), choose **Enter a setup key**. Name: `Userbot panel`. Key: the `ADMIN_TOTP_SECRET` value. Type: time-based.
 - Store the admin password in your password manager.
-- **Back up `.env` off the server now**, for example in your password manager as a secure note (`cat .env` shows it all). It holds the master key. Without it, the stored Telegram logins can't be read.
+- **Back up `.env` off the server now**, for example in your password manager as a secure note (`cat .env` shows it all). It holds the master key. Without it, the stored Telegram and WhatsApp logins can't be read.
 
 The panel refuses to start on a public address without the authenticator key and a password of at least 14 characters. The block above satisfies both (the password is 32 characters).
 
@@ -133,9 +133,9 @@ docker compose ps -a
 docker compose logs caddy 2>&1 | grep -iE "certificate obtained|error" | tail -5
 ```
 
-The first build takes a few minutes. What you should see:
+The first build takes a few minutes (two images: the Python one and the Node one for `wa-gateway`, which pulls `node:24-slim` and runs `npm ci`). What you should see:
 
-- `postgres`, `valkey`, `panel`, `manager`, `scheduler` and `caddy` all show `Up`; `panel` shows `(healthy)` after about half a minute.
+- `postgres`, `valkey`, `panel`, `manager`, `scheduler`, `wa-gateway` and `caddy` all show `Up`; `panel` and `wa-gateway` show `(healthy)` after about half a minute.
 - `migrate` shows `Exited (0)`.
 - Caddy logs `certificate obtained successfully` for your `PANEL_DOMAIN`. If it reports an error instead, ports 80/443 aren't reachable yet (step 1) or, with your own domain, DNS isn't pointing here yet. Fix that, then `docker compose restart caddy`.
 
@@ -216,7 +216,7 @@ See [RUNBOOK.md](RUNBOOK.md) for what to do when something breaks. The first two
 
 ```bash
 docker compose ps -a
-docker compose logs --tail 50 panel caddy migrate
+docker compose logs --tail 50 panel caddy migrate wa-gateway
 ```
 
 ## Updating later
