@@ -80,6 +80,8 @@ import manager_admin_api
 import manager_api
 import owner_admin_api
 import owner_api
+import owner_review_api
+import review_admin_api
 import review_api
 import safety_api
 import tenant_config
@@ -184,7 +186,11 @@ _HOST_RE = re.compile(r"^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$")
 # it is buffered, so an anonymous POST to /api/login can't eat the memory.
 MAX_BODY_BYTES = 2 * 1024 * 1024
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
-_UPLOAD_PATH_RE = re.compile(r"^/api/sessions/[^/]+/media/upload$")
+# The routes that take a file as the body; each enforces its own, lower
+# limit while reading (review.py: photos 15 MB, verification videos 80 MB).
+_UPLOAD_PATH_RE = re.compile(
+    r"^/api/sessions/[^/]+/media/upload$|^/api/owner/tenants/\d+/photos$|^/api/owner/verification/video$"
+)
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # The body types a page on another site can send without a CORS preflight
 # (an HTML form or a "simple" fetch). No API route takes any of them.
@@ -1496,10 +1502,15 @@ app.include_router(safety_api.router, dependencies=[Depends(require_auth)])
 for _module in (owner_admin_api, unanswered_api, review_api, manager_admin_api, terms_admin_api):
     _module.bind(get_pool=lambda: pool, get_bus=lambda: bus)
     app.include_router(_module.router, dependencies=[Depends(require_auth)])
+# Verification videos and photo review: admin only (review.py).
+review_admin_api.bind(get_pool=lambda: pool, get_bus=lambda: bus, get_data_dir=lambda: DATA_DIR)
+app.include_router(review_admin_api.router, dependencies=[Depends(require_auth)])
 # The client dashboard's API has its own login (owner_auth.py), never the
 # admin's; every route there checks it.
 owner_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(owner_api.router)
+owner_review_api.bind(get_pool=lambda: pool, get_bus=lambda: bus, get_data_dir=lambda: DATA_DIR)
+app.include_router(owner_review_api.router)
 # The moderator panel's API: its own login too (manager_auth.py), and a
 # fixed list of what a manager may do (manager_api.py).
 manager_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)

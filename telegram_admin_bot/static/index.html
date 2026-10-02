@@ -40,6 +40,7 @@
   <button id="open-onboarding" class="btn" title="Set up a new client step by step, or continue one">New client</button>
   <button id="open-review" class="btn" title="Review the bot's replies and export them for training">Review</button>
   <button id="open-owners" class="btn" title="Logins for business owners to their own dashboard (/owner/)">Client logins</button>
+  <button id="open-verify" class="btn" title="Identity videos and client photos that wait for your decision">Verification <span id="verify-count" class="count-badge"></span></button>
   <button id="open-terms" class="btn" title="Terms of service clients accept, and whether clients can sign up themselves">Terms</button>
   <button id="open-managers" class="btn" title="Moderator logins (/manager/) who can step in when you can't">Managers</button>
   <button id="logout" class="btn">Log out</button>
@@ -300,6 +301,21 @@
   </div>
 </div>
 
+<div id="verify">
+  <div class="pf-shell">
+    <div class="pf-top">
+      <h2>Verification</h2>
+      <span class="muted">identity videos and client photos, checked by you</span>
+      <span class="spacer"></span>
+      <button type="button" id="vf-close" class="btn">Close</button>
+    </div>
+    <div class="bk-scroll">
+      <div id="vf-tabs" class="pf-tabs"></div>
+      <div id="vf-body"></div>
+    </div>
+  </div>
+</div>
+
 <div id="terms">
   <div class="pf-shell">
     <div class="pf-top">
@@ -488,6 +504,7 @@
 <script src="/js/owners.js"></script>
 <script src="/js/terms.js"></script>
 <script src="/js/managers.js"></script>
+<script src="/js/verify.js"></script>
 <script src="/js/boot.js"></script>
 </body>
 </html>

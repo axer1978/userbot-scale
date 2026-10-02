@@ -33,6 +33,10 @@ In the panel, **☰ Menu → Safety** shows every client's account health, the h
 | Nobody can sign up / no "Create an account" link | Sign-up is closed (the default), or no terms are published | ☰ → Terms: publish the terms (every `[[FILL IN` must be written first), then *Open sign-up* |
 | Sign-up says "try again later" | 50 sign-ups already wait for approval (spam guard) | Approve or reject the waiting ones |
 | Manager can't log in to `/manager/` | Disabled, wrong password, 5 failures, or lost the authenticator | ☰ → Managers: enable, *Reset password…* or *Remove 2FA* (they set up a new app at the next sign-in) |
+| Client says the dashboard asks for a video | Their business is in an industry marked for review, or you asked them to verify again | Expected. ☰ → Verification → Videos: compare the code and gesture in the video with the ones shown, then approve or reject with a reason |
+| An escort business is "waiting for identity verification" | No approved video from its client yet (the bot answers nobody) | Approve their video in ☰ → Verification. The hold lifts by itself within a minute; it can't be resumed by hand |
+| A client's new photo isn't being sent by the bot | It waits for your review | ☰ → Verification → Photos: approve (you can edit the description the bot sees) or reject with a reason |
+| You suspect a client (wrong person, under age, someone else managing) | | ☰ → Verification → Businesses: *Ask to verify again* (their bot pauses until a new video is approved) and/or *Re-check all photos* (the bot stops using them until you approve each) |
 | A manager did something wrong | | Every manager action is in the audit log as `manager:<username>` (☰ → Clients → a client → Audit). ☰ → Managers → *Disable* ends their sessions at once |
 
 ## The Telegram account

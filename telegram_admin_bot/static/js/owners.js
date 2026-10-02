@@ -217,6 +217,10 @@ function owCard(o) {
     actions.appendChild(totp);
   }
 
+  const verify = el("button", "btn small", "Ask to verify again…");
+  verify.title = "They must send a new identity video; every business of this login pauses until you approve it";
+  actions.appendChild(verify);
+
   const del = el("button", "btn small warn", "Delete");
   del.addEventListener("click", () => {
     if (!confirm(`Delete the login ${o.username}? The businesses and their data stay; only the login goes.`)) return;
@@ -224,7 +228,45 @@ function owCard(o) {
   });
   actions.appendChild(del);
   card.appendChild(actions);
+
+  const verifyForm = owVerifyForm(o);
+  verify.addEventListener("click", () => {
+    verifyForm.hidden = !verifyForm.hidden;
+    if (!verifyForm.hidden) verifyForm.querySelector("input").focus();
+  });
+  card.appendChild(verifyForm);
   return card;
+}
+
+// Reason (required, the client sees it) for a new identity video.
+function owVerifyForm(o) {
+  const form = el("div", "pf-actions ow-verify");
+  form.hidden = true;
+  const reason = el("input");
+  reason.type = "text";
+  reason.maxLength = 500;
+  reason.placeholder = "Why they must verify again (the client sees it)";
+  const send = el("button", "btn small warn", "Ask to verify");
+  const cancel = el("button", "btn small", "Cancel");
+  const submit = async () => {
+    const text = reason.value.trim();
+    if (!text) {
+      toast("Write a reason first: the client sees it.");
+      reason.focus();
+      return;
+    }
+    if (!confirm(`Ask ${o.username} to send a new verification video? Every business of this login pauses ` +
+      "until you approve it (Verification → Videos).")) return;
+    send.disabled = true;
+    const done = await owCall("POST", `/api/owners/${o.id}/request-verification`, { reason: text },
+      `${o.username} has to verify again; their businesses are paused.`);
+    if (!done) send.disabled = false;
+  };
+  send.addEventListener("click", submit);
+  reason.addEventListener("keydown", (ev) => { if (ev.key === "Enter") submit(); });
+  cancel.addEventListener("click", () => { form.hidden = true; });
+  form.append(reason, send, cancel);
+  return form;
 }
 
 // "Terms accepted: vN" and a button listing every acceptance with its address.

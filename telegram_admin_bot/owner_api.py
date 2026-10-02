@@ -305,7 +305,7 @@ async def api_account(owner: dict = Depends(owner_auth.any_owner)) -> dict[str, 
         "username": owner["username"], "display_name": owner["display_name"], "status": owner["status"],
         "review_reason": owner["review_reason"] if owner["status"] == owner_auth.REJECTED_STATUS else "",
         "must_change_password": owner["must_change_password"], "terms": owner["terms"],
-        "gate": owner_auth.gate(owner),
+        "verification": owner["verification"], "gate": owner_auth.gate(owner),
     }
 
 
@@ -410,7 +410,7 @@ async def _tenants(owner: dict[str, Any]) -> list[dict[str, Any]]:
     pool = _get_pool()
     rows = await pool.fetch(
         """
-        SELECT t.id, t.name, t.session_id, t.config_json, i.default_config,
+        SELECT t.id, t.name, t.session_id, t.config_json, i.default_config, i.requires_review,
                h.status AS health, h.last_seen_at
           FROM tenants t
           JOIN industries i ON i.id = t.industry_id
@@ -433,6 +433,8 @@ async def _tenants(owner: dict[str, Any]) -> list[dict[str, Any]]:
         off = await controls.off_reason(pool, row["id"])
         out.append({
             "id": row["id"], "name": row["name"], "session_id": row["session_id"], "timezone": zone,
+            # Photos for this business are added through review (owner_review_api.py).
+            "requires_review": row["requires_review"],
             "bot": {"sending": not off, "off_reason": off},
             "health": {"status": row["health"] or health.UNKNOWN,
                        "last_seen_at": row["last_seen_at"].isoformat(timespec="seconds")

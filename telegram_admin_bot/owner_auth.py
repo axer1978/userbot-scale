@@ -68,6 +68,9 @@ CODE_REQUIRED = "code_required"
 PENDING_APPROVAL = "pending_approval"
 REJECTED = "rejected"
 ACCEPT_TERMS = "accept_terms"
+# Linked to a business whose industry requires review, or asked by the
+# admin to verify again, and no approved verification video (review.py).
+VERIFY_IDENTITY = "verify_identity"
 
 PENDING, ACTIVE, REJECTED_STATUS = "pending", "active", "rejected"
 
@@ -294,7 +297,12 @@ async def session_owner(pool: asyncpg.Pool, token: Optional[str]) -> Optional[di
                o.totp_secret_enc IS NOT NULL AS totp,
                array(SELECT tenant_id FROM owner_tenants WHERE owner_id = o.id ORDER BY tenant_id) AS tenant_ids,
                (SELECT max(version) FROM terms_versions WHERE requires_acceptance) AS terms_required,
-               (SELECT max(version) FROM terms_acceptances WHERE owner_id = o.id) AS terms_accepted
+               (SELECT max(version) FROM terms_acceptances WHERE owner_id = o.id) AS terms_accepted,
+               (SELECT status FROM verifications v WHERE v.owner_id = o.id ORDER BY v.id DESC LIMIT 1)
+                 AS verification_status,
+               EXISTS (SELECT 1 FROM owner_tenants ot JOIN tenants t ON t.id = ot.tenant_id
+                         JOIN industries i ON i.id = t.industry_id
+                        WHERE ot.owner_id = o.id AND i.requires_review) AS review_required
           FROM owner_sessions s JOIN owners o ON o.id = s.owner_id
          WHERE s.token_hash = $1 AND s.expires_at > now() AND NOT o.disabled
         """,
@@ -309,7 +317,14 @@ async def session_owner(pool: asyncpg.Pool, token: Optional[str]) -> Optional[di
         "tenant_ids": list(row["tenant_ids"]),
         "terms": {"required": row["terms_required"], "accepted": row["terms_accepted"],
                   "ok": terms.is_current(row["terms_required"], row["terms_accepted"])},
+        "verification": _verification(row["review_required"], row["verification_status"]),
     }
+
+
+def _verification(review_required: bool, status: Optional[str]) -> dict[str, Any]:
+    """Same rule as review.owner_state(), from the session query's columns."""
+    required = bool(review_required) or (status is not None and status != "approved")
+    return {"required": required, "status": status, "ok": not required or status == "approved"}
 
 
 def cookie_secure() -> bool:
@@ -368,6 +383,8 @@ def gate(owner: dict[str, Any]) -> Optional[str]:
         return REJECTED
     if not owner["terms"]["ok"]:
         return ACCEPT_TERMS
+    if not owner["verification"]["ok"]:
+        return VERIFY_IDENTITY
     return None
 
 

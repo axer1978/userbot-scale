@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#0e1116">
 <title>My business</title>
@@ -62,7 +62,7 @@
         <input id="signup-repeat" type="password" autocomplete="new-password" minlength="10" required></label>
       <div class="check">
         <input id="signup-accept" type="checkbox">
-        <label for="signup-accept">I have read and accept the
+        <label for="signup-accept">I am at least 18 years old, and I have read and accept the
           <a id="signup-terms-link" href="/terms/" target="_blank" rel="noopener">terms of service</a></label>
       </div>
       <button type="button" id="signup-read-terms" class="btn small">Read the terms</button>
@@ -106,11 +106,51 @@
     <div id="terms-notice" class="notice" role="alert" hidden></div>
     <div class="check">
       <input id="terms-accept-check" type="checkbox">
-      <label for="terms-accept-check">I have read and accept these terms</label>
+      <label for="terms-accept-check">I am at least 18 years old, and I have read and accept these terms</label>
     </div>
     <button type="button" id="terms-accept" class="btn primary block" disabled>Accept</button>
     <button type="button" id="terms-logout" class="btn ghost block">Sign out</button>
     <p class="hint">If you do not accept, you can't use the dashboard. Contact us to close your account.</p>
+  </div>
+</section>
+
+<!-- identity check (verification video) -->
+<section id="screen-verify" class="screen" hidden>
+  <div class="card narrow">
+    <h1>Confirm it's you</h1>
+    <p id="verify-intro" class="hint"></p>
+    <p id="verify-reason" class="reason" hidden></p>
+    <p id="verify-rejected" class="notice" hidden></p>
+    <div id="verify-notice" class="notice" role="alert" hidden></div>
+
+    <div id="verify-waiting" hidden>
+      <p class="notice info">Your video is waiting for review. We'll unlock your dashboard when it is approved.</p>
+      <p id="verify-sent" class="muted small"></p>
+      <button type="button" id="verify-refresh" class="btn primary block">Refresh status</button>
+    </div>
+
+    <div id="verify-steps" hidden>
+      <ol id="verify-instructions" class="steps"></ol>
+      <div id="verify-challenge" class="challenge" hidden>
+        <p class="label">Your code</p>
+        <div id="verify-code" class="code"></div>
+        <p class="label">Your gesture</p>
+        <p id="verify-gesture" class="gesture"></p>
+        <p id="verify-countdown" class="countdown"></p>
+      </div>
+      <p id="verify-expired" class="notice" hidden>This code expired. Get a new code, then record the video again.</p>
+      <button type="button" id="verify-get-code" class="btn primary block">Get my code</button>
+      <div id="verify-upload" class="upload" hidden>
+        <label class="field">Record or choose the video
+          <input id="verify-file" type="file" accept="video/*" capture="user"></label>
+        <p id="verify-file-info" class="muted small" hidden></p>
+        <video id="verify-preview" class="preview" controls playsinline muted preload="metadata" hidden></video>
+        <button type="button" id="verify-send" class="btn primary block" disabled>Upload the video</button>
+        <p class="hint">Up to <span id="verify-max"></span> MB. A clip of 5 to 20 seconds is enough.</p>
+      </div>
+    </div>
+
+    <button type="button" id="verify-logout" class="btn ghost block">Sign out</button>
   </div>
 </section>
 

@@ -52,7 +52,7 @@ The public tokens (`tenants.calendar_token`, `bookings.customer_token`) are 244 
 
 ## Data model (Postgres)
 
-Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `0003_bookings.sql` (bookings), `0004_safety.sql` (safety and control), `0005_client_facing.sql` (client logins, unanswered queue, review, digest), `0006_whatsapp.sql` (WhatsApp), `0007_accounts.sql` (client sign-up, terms of service, manager logins).
+Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `0003_bookings.sql` (bookings), `0004_safety.sql` (safety and control), `0005_client_facing.sql` (client logins, unanswered queue, review, digest), `0006_whatsapp.sql` (WhatsApp), `0007_accounts.sql` (client sign-up, terms of service, manager logins), `0008_review.sql` (verification videos, photo review).
 
 | Table | Key columns | Notes |
 |---|---|---|
@@ -113,6 +113,16 @@ Public without any login: `/api/terms` (page `/terms/`), `/api/owner/signup-opti
 - **The gate** (`owner_auth.gate`), checked by every owner route in this order: temporary password → `change_password`; pending → `pending_approval`; rejected → `rejected`; not accepted the newest version with `requires_acceptance` → `accept_terms`. `/api/owner/account` and `/api/owner/terms(/accept)` answer whatever the gate says, so the page can show the right screen.
 - **Terms** (`terms.py`): a version can't be edited or deleted; publishing is the only change. A version published without `requires_acceptance` (a correction) asks nobody to accept again. A body still containing `[[FILL IN` is refused, which is how the starter text (`terms.STARTER_BODY`) marks the parts only the platform owner can write. Format: `## ` heading, `- ` bullet, blank line = paragraph; rendered with textContent only.
 - **Managers** are created by the admin (`/api/managers`) with a temporary password; at first sign-in they choose their own and must set up an authenticator before any manager route opens. What they may do is a fixed list in `manager_api.py` (see its docstring): see every client, pause a bot, lift a manual or anomaly hold, read conversations, pause one chat, acknowledge alerts, approve/reject sign-ups, disable/enable client logins. Every action needs a reason and is audited as `manager:<username>`. They cannot change configs or prompts, touch billing or other holds, send messages, use the global stop or hard-off, link businesses, reset passwords, or manage managers or terms.
+
+## Verification and photo review (review.py)
+
+For the escort market: the admin marks an industry `requires_review` (☰ → Verification → Businesses).
+
+- **Verification video.** A client login linked to such a business, or one the admin asked to verify again, gets the gate `verify_identity` (after `accept_terms`). It asks for a challenge (a 6-character code to write on paper and a random gesture, valid 30 minutes) and uploads a video showing both. The video is stored only AES-GCM encrypted (`DATA_DIR/review/verifications/`), served only to the admin, and deleted 30 days after the decision. The newest `verifications` row is the login's state.
+- **The `verification` hold.** `review.sync_holds()` (after every decision and on every scheduler tick) holds a tenant when its industry requires review and no linked login is verified, or when a linked login was asked to verify again. It can't be resumed by hand; approving the video lifts it.
+- **Photos.** A client of such a business submits photos (new or replacing one) on the dashboard. They wait in `media_submissions` under `DATA_DIR/review/photos/`, outside the media folder the bot reads, and are copied into the media library only when the admin approves. Uploads must really be JPEG/PNG/WebP (magic bytes). The admin can pull a whole library back into review ("recheck"); removing a photo needs no review.
+- Anything waiting raises the platform alert `review_pending` (e-mail/webhook). Admin only: managers don't see videos or decide on photos.
+- `MediaLibrary.refresh()` re-reads its index when another process changed it, so a file the panel adds keeps its description in the running account.
 
 ## Configuration: three layers
 

@@ -51,7 +51,10 @@ SPEND_CAP = "spend_cap"
 ANOMALY = "anomaly"
 TELEGRAM = "telegram"
 WHATSAPP = "whatsapp"
-KINDS = (MANUAL, BILLING, SPEND_CAP, ANOMALY, TELEGRAM, WHATSAPP)
+# Kept on and off by review.sync_holds(): an industry that requires review
+# without a verified client login, or a client asked to verify again.
+VERIFICATION = "verification"
+KINDS = (MANUAL, BILLING, SPEND_CAP, ANOMALY, TELEGRAM, WHATSAPP, VERIFICATION)
 
 LABELS = {
     MANUAL: "paused",
@@ -60,6 +63,7 @@ LABELS = {
     ANOMALY: "anomaly",
     TELEGRAM: "stopped after a Telegram error",
     WHATSAPP: "stopped after a WhatsApp error",
+    VERIFICATION: "waiting for identity verification",
 }
 
 RELOAD_TIMEOUT = 5.0

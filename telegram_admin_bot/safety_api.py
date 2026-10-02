@@ -264,6 +264,9 @@ async def api_resume(tenant_id: int, body: ResumeBody) -> dict[str, Any]:
     if body.kind == controls.BILLING:
         raise HTTPException(status_code=400,
                             detail="A billing suspension is lifted by recording a payment or setting the status.")
+    if body.kind == controls.VERIFICATION:
+        raise HTTPException(status_code=400,
+                            detail="This lifts by itself when you approve the client's verification video (Review).")
     pool = _get_pool()
     removed = await controls.remove_hold(pool, tenant_id, body.kind, actor=ACTOR,
                                          reason=body.reason.strip() or "resumed from the panel")
