@@ -52,7 +52,7 @@ The public tokens (`tenants.calendar_token`, `bookings.customer_token`) are 244 
 
 ## Data model (Postgres)
 
-Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `0003_bookings.sql` (bookings), `0004_safety.sql` (safety and control), `0005_client_facing.sql` (client logins, unanswered queue, review, digest), `0006_whatsapp.sql` (WhatsApp), `0007_accounts.sql` (client sign-up, terms of service, manager logins), `0008_review.sql` (verification videos, photo review).
+Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `0003_bookings.sql` (bookings), `0004_safety.sql` (safety and control), `0005_client_facing.sql` (client logins, unanswered queue, review, digest), `0006_whatsapp.sql` (WhatsApp), `0007_accounts.sql` (client sign-up, terms of service, manager logins), `0008_review.sql` (verification videos, photo review), `0009_staff.sql` (staff roles, approval queue).
 
 | Table | Key columns | Notes |
 |---|---|---|
@@ -112,7 +112,15 @@ Public without any login: `/api/terms` (page `/terms/`), `/api/owner/signup-opti
 - **Sign-up** (`POST /api/owner/signup`) is closed until the admin opens it (`platform_settings.signup`, Terms overlay), and can't be opened before a terms version is published. It creates a `pending` login linked to no business, records the accepted terms version, raises one platform alert (`signup_pending`) and signs the person in. Limits: 3 per address and hour, at most 50 waiting at once. The admin (`/api/owners/{id}/approve|reject`) or a manager approves or rejects; only the admin links businesses. With SMTP set, the applicant gets an e-mail either way.
 - **The gate** (`owner_auth.gate`), checked by every owner route in this order: temporary password → `change_password`; pending → `pending_approval`; rejected → `rejected`; not accepted the newest version with `requires_acceptance` → `accept_terms`. `/api/owner/account` and `/api/owner/terms(/accept)` answer whatever the gate says, so the page can show the right screen.
 - **Terms** (`terms.py`): a version can't be edited or deleted; publishing is the only change. A version published without `requires_acceptance` (a correction) asks nobody to accept again. A body still containing `[[FILL IN` is refused, which is how the starter text (`terms.STARTER_BODY`) marks the parts only the platform owner can write. Format: `## ` heading, `- ` bullet, blank line = paragraph; rendered with textContent only.
-- **Managers** are created by the admin (`/api/managers`) with a temporary password; at first sign-in they choose their own and must set up an authenticator before any manager route opens. What they may do is a fixed list in `manager_api.py` (see its docstring): see every client, pause a bot, lift a manual or anomaly hold, read conversations, pause one chat, acknowledge alerts, approve/reject sign-ups, disable/enable client logins. Every action needs a reason and is audited as `manager:<username>`. They cannot change configs or prompts, touch billing or other holds, send messages, use the global stop or hard-off, link businesses, reset passwords, or manage managers or terms.
+- **Managers** are created by the admin (`/api/managers`) with a temporary password and a **role**; at first sign-in they choose their own password and must set up an authenticator before anything opens. See "Staff roles".
+
+## Staff roles (staff.py)
+
+A role (`staff_roles`, ☰ → Staff → Roles) sets every action of `staff.ACTIONS` to **off**, **allow** or **approve**, and says whether its members may sign in to the admin panel (username + their password + authenticator on the normal sign-in) or only to `/manager/`. Two roles are seeded: "Moderator" (what managers could do before) and "Senior moderator" (admin panel, sees most things, changes need approval).
+
+- Every route a manager can reach maps to one action (`staff.ROUTES`; `test_staff.py` fails on an unmapped route). `require_auth` lets the admin token through; for a manager it calls `staff.gate()`. Reads are off/allow only. Staff, roles and the queue (`/api/managers`, `/api/staff/`) are admin only, whatever the role.
+- **approve** = silent: the change is stored in `staff_requests` and **not** done, and the manager gets a plain success answer. The admin approves (`staff.run_approved` replays the stored request through the app: an admin-panel route with a short-lived admin token, a `/manager/` route with the manager's own session, so it is attributed to them) or rejects it. A reload shows the manager the real state. Protective changes (pause a bot or a chat, disable a login, reject a draft, cancel outreach, the global stop, ask to verify again) run at once even at **approve**.
+- Every change a manager makes is logged in `staff_requests` (status applied / pending / approved / rejected / failed); waiting ones raise the alert `staff_approval_pending`.
 
 ## Verification and photo review (review.py)
 

@@ -37,6 +37,9 @@ In the panel, **☰ Menu → Safety** shows every client's account health, the h
 | An escort business is "waiting for identity verification" | No approved video from its client yet (the bot answers nobody) | Approve their video in ☰ → Verification. The hold lifts by itself within a minute; it can't be resumed by hand |
 | A client's new photo isn't being sent by the bot | It waits for your review | ☰ → Verification → Photos: approve (you can edit the description the bot sees) or reject with a reason |
 | You suspect a client (wrong person, under age, someone else managing) | | ☰ → Verification → Businesses: *Ask to verify again* (their bot pauses until a new video is approved) and/or *Re-check all photos* (the bot stops using them until you approve each) |
+| A senior moderator can't sign in to the admin panel | Login not set up yet, or their role doesn't include the admin panel | They first sign in at `/manager/` (new password + authenticator). Then ☰ → Staff → Roles: tick "Can sign in to the admin panel" on their role |
+| A moderator says they did something but nothing happened | Their role puts that action under "Needs my approval": it looks done to them and waits for you | ☰ → Staff → Waiting for you: approve or reject |
+| A moderator gets "Your role does not include this" | That action is Off in their role | ☰ → Staff → Roles: set it to Allowed or Needs my approval |
 | A manager did something wrong | | Every manager action is in the audit log as `manager:<username>` (☰ → Clients → a client → Audit). ☰ → Managers → *Disable* ends their sessions at once |
 
 ## The Telegram account

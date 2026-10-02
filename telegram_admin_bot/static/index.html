@@ -25,6 +25,7 @@
   <span class="status"><span id="conn-dot" class="dot"></span><span id="conn-text">connecting…</span></span>
   <span class="spacer"></span>
   <span id="mode" class="status"></span>
+  <span id="me-chip" class="me-chip" hidden></span>
   <span id="off-chip" class="off-chip" hidden></span>
   <button id="menu-toggle" class="btn" type="button" aria-expanded="false" aria-controls="hdr-actions">☰ Menu</button>
   <nav id="hdr-actions">
@@ -43,6 +44,7 @@
   <button id="open-verify" class="btn" title="Identity videos and client photos that wait for your decision">Verification <span id="verify-count" class="count-badge"></span></button>
   <button id="open-terms" class="btn" title="Terms of service clients accept, and whether clients can sign up themselves">Terms</button>
   <button id="open-managers" class="btn" title="Moderator logins (/manager/) who can step in when you can't">Managers</button>
+  <button id="open-staff" class="btn" title="Staff roles, what each may do, and moderator changes waiting for your approval">Staff <span id="staff-count" class="count-badge"></span></button>
   <button id="logout" class="btn">Log out</button>
   </nav>
 </header>
@@ -57,6 +59,10 @@
     <p class="hint">Enter the shared admin password to manage sessions.</p>
     <div id="ag-notice" class="notice" hidden></div>
     <form id="ag-form" autocomplete="off">
+      <div class="field"><label for="ag-username">Username <span class="muted">(optional)</span></label>
+        <input id="ag-username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false"
+               maxlength="200">
+        <p class="ag-hint">Leave empty for the admin. Moderators: your moderator username.</p></div>
       <div class="field"><label for="ag-password">Password</label>
         <input id="ag-password" type="password" autocomplete="current-password" required></div>
       <div class="field" id="ag-code-field" hidden><label for="ag-code">Authenticator code</label>
@@ -346,6 +352,21 @@
   </div>
 </div>
 
+<div id="staff">
+  <div class="pf-shell">
+    <div class="pf-top">
+      <h2>Staff</h2>
+      <span class="muted">roles, permissions and changes waiting for you</span>
+      <span class="spacer"></span>
+      <button type="button" id="sr-close" class="btn">Close</button>
+    </div>
+    <div class="bk-scroll">
+      <div id="sr-tabs" class="pf-tabs"></div>
+      <div id="sr-body"></div>
+    </div>
+  </div>
+</div>
+
 <div id="outreach">
   <div class="sheet">
     <h2>Message my contacts</h2>
@@ -504,6 +525,7 @@
 <script src="/js/owners.js"></script>
 <script src="/js/terms.js"></script>
 <script src="/js/managers.js"></script>
+<script src="/js/staffroles.js"></script>
 <script src="/js/verify.js"></script>
 <script src="/js/boot.js"></script>
 </body>

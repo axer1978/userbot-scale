@@ -88,6 +88,8 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .topbar .who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar .brand { font-weight: 700; }
 .topbar .who .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar .who .role { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.btn { display: inline-flex; align-items: center; text-decoration: none; white-space: nowrap; }
 
 .stop-banner { background: var(--danger); color: #fff; font-weight: 600; padding: 10px 16px;
   font-size: 15px; overflow-wrap: anywhere; }

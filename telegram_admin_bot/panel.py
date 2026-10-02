@@ -78,12 +78,16 @@ import pg
 import platform_api
 import manager_admin_api
 import manager_api
+import manager_auth
+import owner_auth
 import owner_admin_api
 import owner_api
 import owner_review_api
 import review_admin_api
 import review_api
 import safety_api
+import staff
+import staff_api
 import tenant_config
 import tenants
 import terms_admin_api
@@ -381,6 +385,9 @@ async def publish(session_id: str, payload: dict[str, Any]) -> None:
 class LoginBody(BaseModel):
     password: str = ""
     code: str = ""  # authenticator code; only checked when ADMIN_TOTP_SECRET is set
+    # Empty = the admin. A manager's username = a staff sign-in (staff.py):
+    # their own password and authenticator, and their role decides the rest.
+    username: str = Field("", max_length=200)
 
 
 def _now() -> float:
@@ -443,9 +450,40 @@ def admin_token_from(cookies: Any) -> Optional[str]:
     return cookies.get(admin_cookie_name())
 
 
-def require_auth(request: Request) -> None:
-    if not _token_is_valid(admin_token_from(request.cookies)):
+async def staff_from(cookies: Any) -> Optional[dict[str, Any]]:
+    """The manager behind a manager cookie, with their role, when that role
+    may use the admin panel and the login is fully set up; else None."""
+    manager = await manager_auth.session_manager(pool, cookies.get(manager_auth.cookie_name()))
+    if manager is None or manager_auth.gate(manager):
+        return None
+    member = await staff.manager_with_role(pool, manager["id"])
+    return member if member and member["admin_panel"] else None
+
+
+async def require_auth(request: Request) -> None:
+    """The admin's token opens everything. A manager whose role includes
+    the admin panel gets through only what the role allows (staff.gate),
+    and a change the role puts up for approval is queued instead."""
+    if _token_is_valid(admin_token_from(request.cookies)):
+        return
+    member = await staff_from(request.cookies)
+    if member is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    request.state.staff = member
+    if request.url.path == "/api/me":
+        return
+    await staff.gate(request, member)
+
+
+def issue_internal_admin_token() -> str:
+    """A short-lived admin token for staff.run_approved() only."""
+    token = secrets.token_urlsafe(32)
+    _valid_tokens[token] = _now() + 120
+    return token
+
+
+def revoke_admin_token(token: str) -> None:
+    _valid_tokens.pop(token, None)
 
 
 def _credentials_ok(body: LoginBody) -> bool:
@@ -470,8 +508,58 @@ async def api_login_options() -> dict[str, Any]:
     return {"totp": bool(ADMIN_TOTP_SECRET)}
 
 
+async def _staff_login(body: LoginBody, request: Request) -> JSONResponse:
+    """A manager signing in to the admin panel. Same checks as /manager/
+    (owner_auth's failure limit, the manager's authenticator), plus: the
+    login must be fully set up and its role must include the admin panel."""
+    ip = _client_ip(request)
+    key = manager_auth.limit_key(body.username)
+    owner_auth.check_rate_limit(ip, key)
+    try:
+        row = await manager_auth.authenticate(pool, body.username, body.password, body.code)
+    except owner_auth.LoginFailed:
+        owner_auth.note_failure(ip, key)
+        log.warning("Failed staff login to the admin panel from %s.", ip)
+        raise HTTPException(status_code=401, detail="Wrong username, password or code") from None
+    except owner_auth.CodeRequired as exc:
+        if exc.wrong:
+            owner_auth.note_failure(ip, key)
+        raise HTTPException(status_code=401, detail="Wrong username, password or code") from None
+    owner_auth.clear_failures(ip, key)
+    token = await manager_auth.create_session(pool, row["id"], ip)
+    manager = await manager_auth.session_manager(pool, token)
+    member = await staff.manager_with_role(pool, row["id"])
+    problem = None
+    if manager_auth.gate(manager):
+        problem = "Finish setting up your login at /manager/ first (new password and authenticator app)."
+    elif not member or not member["admin_panel"]:
+        problem = "Your role does not include the admin panel. Sign in at /manager/ instead."
+    if problem:
+        await manager_auth.delete_session(pool, token)
+        raise HTTPException(status_code=403, detail=problem)
+    await pool.execute("UPDATE managers SET last_login_at = now() WHERE id = $1", row["id"])
+    await audit.record(pool, tenant_id=None, actor=f"manager:{row['username']}", event="staff_login",
+                       reason="admin panel login", payload={"ip": ip, "role": member["role_name"]})
+    response = JSONResponse({"ok": True, "staff": True})
+    manager_auth.set_cookie(response, token)
+    return response
+
+
+@app.get("/api/me", dependencies=[Depends(require_auth)])
+async def api_me(request: Request) -> dict[str, Any]:
+    """Who is signed in to the admin panel: the admin (everything), or a
+    manager and what their role lets them do, so the page can hide the rest."""
+    member = getattr(request.state, "staff", None)
+    if member is None:
+        return {"admin": True, "username": "admin"}
+    return {"admin": False, "username": member["username"], "display_name": member["display_name"],
+            "role": member["role_name"], "permissions": member["permissions"], "catalogue": staff.catalogue()}
+
+
 @app.post("/api/login")
 async def api_login(body: LoginBody, request: Request) -> JSONResponse:
+    if body.username.strip():
+        return await _staff_login(body, request)
     ip = _client_ip(request)
     now = _now()
     failures = _recent_failures(ip, now)
@@ -523,7 +611,11 @@ async def api_logout(request: Request) -> JSONResponse:
     admin_token = admin_token_from(request.cookies)
     if admin_token:
         _valid_tokens.pop(admin_token, None)
+    staff_token = manager_auth.token_from(request)
+    if staff_token:
+        await manager_auth.delete_session(pool, staff_token)
     response = JSONResponse({"ok": True})
+    manager_auth.clear_cookie(response)
     response.delete_cookie(admin_cookie_name(), path="/", httponly=True, samesite="strict",
                            secure=_cookie_secure())
     return response
@@ -1426,9 +1518,13 @@ async def _dispatch_live(
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
     # The Origin check happened in RequestGuard; this is the login check.
+    # A manager in the admin panel gets live updates when their role may
+    # see conversations.
     if not _token_is_valid(admin_token_from(ws.cookies)):
-        await ws.close(code=4401)
-        return
+        member = await staff_from(ws.cookies)
+        if member is None or member["permissions"].get("view.conversations") != staff.ALLOW:
+            await ws.close(code=4401)
+            return
 
     await ws.accept()
     db = db_for(session_id)
@@ -1475,6 +1571,12 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
             await forward_task
 
 
+@app.exception_handler(staff.Queued)
+async def queued(request: Request, exc: staff.Queued) -> JSONResponse:
+    """A manager's change that waits for the admin: answered like a success."""
+    return staff.silent_answer(exc)
+
+
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception) -> JSONResponse:
     """The full error goes to the log. Only a logged-in admin sees its text
@@ -1511,8 +1613,13 @@ owner_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(owner_api.router)
 owner_review_api.bind(get_pool=lambda: pool, get_bus=lambda: bus, get_data_dir=lambda: DATA_DIR)
 app.include_router(owner_review_api.router)
-# The moderator panel's API: its own login too (manager_auth.py), and a
-# fixed list of what a manager may do (manager_api.py).
+# Staff roles and the approval queue: admin only (staff.gate refuses
+# /api/staff/ to every manager, whatever the role).
+staff.bind(get_pool=lambda: pool, get_app=lambda: app, get_data_dir=lambda: DATA_DIR)
+staff_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(staff_api.router, dependencies=[Depends(require_auth)])
+# The moderator panel's API: its own login too (manager_auth.py); what a
+# manager may do there comes from their role (staff.py).
 manager_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(manager_api.router)
 

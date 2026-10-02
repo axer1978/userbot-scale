@@ -40,6 +40,7 @@ def bind(*, get_pool: Callable[[], Any], get_bus: Callable[[], Any]) -> None:
 _SELECT = """
 SELECT m.id, m.username, m.display_name, m.must_change_password, m.disabled,
        m.totp_secret_enc IS NOT NULL AS totp, m.last_login_at, m.created_by, m.created_at, m.updated_at,
+       m.role_id, (SELECT name FROM staff_roles r WHERE r.id = m.role_id) AS role_name,
        (SELECT count(*) FROM manager_sessions s WHERE s.manager_id = m.id AND s.expires_at > now()) AS sessions
   FROM managers m
 """
@@ -55,7 +56,7 @@ def _manager(row: asyncpg.Record) -> dict[str, Any]:
         "must_change_password": row["must_change_password"], "disabled": row["disabled"],
         "totp": row["totp"], "sessions": row["sessions"], "last_login_at": _iso(row["last_login_at"]),
         "created_by": row["created_by"], "created_at": _iso(row["created_at"]),
-        "updated_at": _iso(row["updated_at"]),
+        "updated_at": _iso(row["updated_at"]), "role_id": row["role_id"], "role_name": row["role_name"],
     }
 
 
@@ -88,6 +89,16 @@ class CreateBody(BaseModel):
     username: str = Field(..., max_length=64)
     display_name: str = Field("", max_length=200)
     password: str = Field(..., max_length=1000)
+    # None = the "Moderator" role.
+    role_id: Optional[int] = None
+
+
+async def _check_role(executor: Any, role_id: Optional[int]) -> int:
+    if role_id is None:
+        role_id = await executor.fetchval("SELECT id FROM staff_roles WHERE name = 'Moderator'")
+    if role_id is None or await executor.fetchval("SELECT id FROM staff_roles WHERE id = $1", role_id) is None:
+        raise HTTPException(status_code=400, detail="Unknown role")
+    return role_id
 
 
 @router.post("/api/managers")
@@ -102,10 +113,11 @@ async def api_create(body: CreateBody) -> dict[str, Any]:
     pool = _get_pool()
     try:
         async with pool.acquire() as con, con.transaction():
+            role_id = await _check_role(con, body.role_id)
             manager_id = await con.fetchval(
-                "INSERT INTO managers (username, display_name, password_hash, must_change_password, created_by) "
-                "VALUES ($1, $2, $3, true, $4) RETURNING id",
-                username, body.display_name.strip(), owner_auth.hash_password(body.password), ACTOR,
+                "INSERT INTO managers (username, display_name, password_hash, must_change_password, created_by, "
+                "role_id) VALUES ($1, $2, $3, true, $4, $5) RETURNING id",
+                username, body.display_name.strip(), owner_auth.hash_password(body.password), ACTOR, role_id,
             )
             await _audit(con, EVENT_CREATED, "manager login created", {"id": manager_id, "username": username})
     except asyncpg.exceptions.UniqueViolationError:
@@ -116,6 +128,7 @@ async def api_create(body: CreateBody) -> dict[str, Any]:
 class UpdateBody(BaseModel):
     display_name: Optional[str] = Field(None, max_length=200)
     disabled: Optional[bool] = None
+    role_id: Optional[int] = None
 
 
 @router.patch("/api/managers/{manager_id}")
@@ -129,6 +142,9 @@ async def api_update(manager_id: int, body: UpdateBody) -> dict[str, Any]:
             changes["display_name"] = body.display_name.strip()
         if body.disabled is not None and body.disabled != before["disabled"]:
             changes["disabled"] = body.disabled
+        if body.role_id is not None and body.role_id != before["role_id"]:
+            changes["role_id"] = await _check_role(con, body.role_id)
+            await con.execute("UPDATE managers SET role_id = $2 WHERE id = $1", manager_id, changes["role_id"])
         if changes:
             await con.execute(
                 "UPDATE managers SET display_name = coalesce($2, display_name), disabled = coalesce($3, disabled), "

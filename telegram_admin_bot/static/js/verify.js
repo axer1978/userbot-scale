@@ -59,7 +59,7 @@ function vfApplyCount(summary) {
 }
 
 async function vfPoll() {
-  if ($("admin-gate").classList.contains("open")) return;
+  if ($("admin-gate").classList.contains("open") || !can("view.verification")) return;
   try {
     vf.summary = await api("GET", "/api/review/summary");
     vfApplyCount(vf.summary);

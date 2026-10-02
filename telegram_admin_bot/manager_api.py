@@ -3,8 +3,11 @@
 Mounted by panel.py WITHOUT the admin login: these routes have their own
 (manager_auth.py), and every one but login/logout checks it.
 
-A manager moderates while the admin is away. What a manager may do is
-fixed here, never stored, so there is no setting that widens it:
+A manager moderates while the admin is away. What each manager may do
+now comes from their role (staff.py): every route below belongs to one
+action of staff.CATALOGUE, set to off / allow / approve by the admin. The
+table is what the default "Moderator" role allows; nothing here can go
+beyond it, since these routes only exist for what's listed:
 
   may                                          may not (admin only)
   ---------------------------------------      ------------------------------------------
@@ -40,6 +43,7 @@ import health
 import manager_auth
 import owner_admin_api
 import owner_auth
+import staff
 import totp
 from database import Database
 
@@ -84,6 +88,15 @@ def _reason(text: str) -> str:
     if not text:
         raise HTTPException(status_code=400, detail="Give a reason: the admin sees it in the audit log.")
     return text
+
+
+async def staffed_manager(request: Request) -> dict[str, Any]:
+    """The signed-in manager, past their role's check for this route
+    (staff.gate: 403 when off, queued when it needs the admin's approval)."""
+    manager = await manager_auth.current_manager(request)
+    member = await staff.manager_with_role(_get_pool(), manager["id"])
+    await staff.gate(request, member or {**manager, "permissions": {}, "role_name": ""})
+    return manager
 
 
 # ---------------------------------------------------------------- the page
@@ -147,8 +160,13 @@ async def api_logout(request: Request) -> JSONResponse:
 
 @router.get("/api/manager/account")
 async def api_account(manager: dict = Depends(manager_auth.any_manager)) -> dict[str, Any]:
+    member = await staff.manager_with_role(_get_pool(), manager["id"])
     return {"username": manager["username"], "display_name": manager["display_name"],
-            "totp": manager["totp"], "gate": manager_auth.gate(manager)}
+            "totp": manager["totp"], "gate": manager_auth.gate(manager),
+            # What the role lets them do here, so the page can hide the rest.
+            "role": member["role_name"] if member else None,
+            "permissions": member["permissions"] if member else {},
+            "admin_panel": bool(member and member["admin_panel"])}
 
 
 class PasswordBody(BaseModel):
@@ -226,7 +244,7 @@ async def api_totp_setup(body: CodeBody, request: Request,
 
 
 @router.get("/api/manager/overview")
-async def api_overview(manager: dict = Depends(manager_auth.current_manager)) -> dict[str, Any]:
+async def api_overview(manager: dict = Depends(staffed_manager)) -> dict[str, Any]:
     pool = _get_pool()
     rows = await pool.fetch(
         """
@@ -304,7 +322,7 @@ class ReasonBody(BaseModel):
 
 @router.post("/api/manager/tenants/{tenant_id}/pause")
 async def api_pause(reason_body: ReasonBody, tenant_id: int = Path(ge=1, le=MAX_ID),
-                    manager: dict = Depends(manager_auth.current_manager)) -> dict[str, Any]:
+                    manager: dict = Depends(staffed_manager)) -> dict[str, Any]:
     """Soft-off: messages are still received and stored, nothing is sent
     on its own until the hold is lifted."""
     reason = _reason(reason_body.reason)
@@ -324,7 +342,7 @@ class ResumeBody(BaseModel):
 
 @router.post("/api/manager/tenants/{tenant_id}/resume")
 async def api_resume(body: ResumeBody, tenant_id: int = Path(ge=1, le=MAX_ID),
-                     manager: dict = Depends(manager_auth.current_manager)) -> dict[str, Any]:
+                     manager: dict = Depends(staffed_manager)) -> dict[str, Any]:
     reason = _reason(body.reason)
     if body.kind not in RESUMABLE:
         raise HTTPException(status_code=403, detail="Only the admin can lift this kind of hold.")
@@ -350,13 +368,13 @@ def _db(tenant: dict[str, Any]) -> Database:
 
 @router.get("/api/manager/tenants/{tenant_id}/conversations")
 async def api_conversations(tenant_id: int = Path(ge=1, le=MAX_ID),
-                            manager: dict = Depends(manager_auth.current_manager)) -> list[dict[str, Any]]:
+                            manager: dict = Depends(staffed_manager)) -> list[dict[str, Any]]:
     return await _db(await _tenant(tenant_id)).list_conversations()
 
 
 @router.get("/api/manager/tenants/{tenant_id}/conversations/{chat_id}/messages")
 async def api_messages(tenant_id: int = Path(ge=1, le=MAX_ID), chat_id: int = Path(),
-                       manager: dict = Depends(manager_auth.current_manager)) -> dict[str, Any]:
+                       manager: dict = Depends(staffed_manager)) -> dict[str, Any]:
     db = _db(await _tenant(tenant_id))
     conversation = await db.get_conversation(chat_id)
     if conversation is None:
@@ -371,7 +389,7 @@ class ChatPauseBody(BaseModel):
 
 @router.post("/api/manager/tenants/{tenant_id}/conversations/{chat_id}/pause")
 async def api_chat_pause(body: ChatPauseBody, tenant_id: int = Path(ge=1, le=MAX_ID), chat_id: int = Path(),
-                         manager: dict = Depends(manager_auth.current_manager)) -> dict[str, Any]:
+                         manager: dict = Depends(staffed_manager)) -> dict[str, Any]:
     reason = _reason(body.reason)
     tenant = await _tenant(tenant_id)
     db = _db(tenant)
@@ -400,13 +418,13 @@ async def api_chat_pause(body: ChatPauseBody, tenant_id: int = Path(ge=1, le=MAX
 
 @router.get("/api/manager/alerts")
 async def api_alerts(open: bool = True, tenant_id: Optional[int] = None,
-                     manager: dict = Depends(manager_auth.current_manager)) -> list[dict[str, Any]]:
+                     manager: dict = Depends(staffed_manager)) -> list[dict[str, Any]]:
     return await alerts.list_alerts(_get_pool(), open_only=open, tenant_id=tenant_id, limit=200)
 
 
 @router.post("/api/manager/alerts/{alert_id}/ack")
 async def api_ack(alert_id: int = Path(ge=1, le=MAX_ID),
-                  manager: dict = Depends(manager_auth.current_manager)) -> dict[str, Any]:
+                  manager: dict = Depends(staffed_manager)) -> dict[str, Any]:
     pool = _get_pool()
     alert = await alerts.acknowledge(pool, alert_id, by=manager_auth.actor(manager))
     if alert is None:
@@ -420,7 +438,7 @@ async def api_ack(alert_id: int = Path(ge=1, le=MAX_ID),
 
 
 @router.get("/api/manager/clients")
-async def api_clients(manager: dict = Depends(manager_auth.current_manager)) -> list[dict[str, Any]]:
+async def api_clients(manager: dict = Depends(staffed_manager)) -> list[dict[str, Any]]:
     """Every client login, waiting sign-ups first."""
     rows = await _get_pool().fetch(owner_admin_api._SELECT +
                                    " ORDER BY o.status <> 'pending', lower(o.username)")
@@ -429,7 +447,7 @@ async def api_clients(manager: dict = Depends(manager_auth.current_manager)) -> 
 
 @router.post("/api/manager/clients/{owner_id}/approve")
 async def api_approve(body: ReasonBody, owner_id: int = Path(ge=1, le=MAX_ID),
-                      manager: dict = Depends(manager_auth.current_manager)) -> dict[str, Any]:
+                      manager: dict = Depends(staffed_manager)) -> dict[str, Any]:
     """Activates the login; linking it to a business stays with the admin."""
     return await owner_admin_api.approve(_get_pool(), owner_id, actor=manager_auth.actor(manager),
                                          reason=_reason(body.reason))
@@ -437,7 +455,7 @@ async def api_approve(body: ReasonBody, owner_id: int = Path(ge=1, le=MAX_ID),
 
 @router.post("/api/manager/clients/{owner_id}/reject")
 async def api_reject(body: ReasonBody, owner_id: int = Path(ge=1, le=MAX_ID),
-                     manager: dict = Depends(manager_auth.current_manager)) -> dict[str, Any]:
+                     manager: dict = Depends(staffed_manager)) -> dict[str, Any]:
     return await owner_admin_api.reject(_get_pool(), owner_id, actor=manager_auth.actor(manager),
                                         reason=body.reason)
 
@@ -449,6 +467,6 @@ class DisableBody(BaseModel):
 
 @router.post("/api/manager/clients/{owner_id}/disabled")
 async def api_disable(body: DisableBody, owner_id: int = Path(ge=1, le=MAX_ID),
-                      manager: dict = Depends(manager_auth.current_manager)) -> dict[str, Any]:
+                      manager: dict = Depends(staffed_manager)) -> dict[str, Any]:
     return await owner_admin_api.set_disabled(_get_pool(), owner_id, body.disabled,
                                               actor=manager_auth.actor(manager), reason=_reason(body.reason))

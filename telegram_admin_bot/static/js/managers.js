@@ -6,37 +6,43 @@
 // password set here, choose their own and must set up an authenticator app
 // before anything opens. Nothing here ever shows a stored password or
 // authenticator secret; the server never returns them. Temporary passwords
-// come from owTempPassword (owners.js).
+// come from owTempPassword (owners.js). What each manager may do is their
+// role's (Staff → Roles, staffroles.js); a role with the admin panel signs
+// in at / as well, the rest only at /manager/.
 
-const mg = { tab: "list", managers: [] };
+const mg = { tab: "list", managers: [], roles: [] };
 
 const MG_TABS = [["list", "Managers"], ["new", "New manager"]];
 
-const MG_CAN = [
-  "see every client's status, health and alerts",
-  "pause a client's bot",
-  "lift manual or anomaly holds",
-  "read conversations (read-only)",
-  "pause and resume single chats",
-  "acknowledge alerts",
-  "approve or reject client sign-ups",
-  "disable and enable client logins",
-];
-
-const MG_CANNOT = [
-  "change configs or prompts",
-  "touch billing",
-  "lift any other hold",
-  "send messages",
-  "use the global stop or hard-off",
-  "link businesses to client logins",
-  "set or reset passwords",
-  "manage managers",
-  "change the terms or sign-up",
-];
-
 function mgUrl() {
   return location.origin + "/manager/";
+}
+
+function mgRole(id) {
+  return mg.roles.find((r) => r.id === id) || null;
+}
+
+// Where a manager with this role signs in.
+function mgSignInUrl(roleId) {
+  const role = mgRole(roleId);
+  return role && role.admin_panel ? location.origin + "/" : mgUrl();
+}
+
+// A role picker; "" stands for the default (the server's "Moderator").
+function mgRoleSelect(current, withDefault) {
+  const select = el("select", "mg-role");
+  if (withDefault) {
+    const option = el("option", null, "Moderator (default)");
+    option.value = "";
+    select.appendChild(option);
+  }
+  for (const r of mg.roles) {
+    const option = el("option", null, r.name + (r.admin_panel ? " · admin panel" : ""));
+    option.value = String(r.id);
+    select.appendChild(option);
+  }
+  if (current !== null && current !== undefined) select.value = String(current);
+  return select;
 }
 
 async function openManagers(tab) {
@@ -58,7 +64,12 @@ async function mgRender() {
   const box = $("mg-body");
   box.textContent = "";
   try {
-    mg.managers = await api("GET", "/api/managers");
+    const [managers, roles] = await Promise.all([
+      api("GET", "/api/managers"),
+      api("GET", "/api/staff/roles").catch(() => null),
+    ]);
+    mg.managers = managers;
+    mg.roles = roles ? roles.roles : [];
   } catch (err) { box.appendChild(el("div", "pf-errors", err.message)); return; }
   (mg.tab === "new" ? mgNew : mgList)(box);
 }
@@ -75,29 +86,37 @@ async function mgCall(method, path, body, done) {
   }
 }
 
-// What a manager can and can't do, and the rules every manager login has.
+// What a manager can do is their role's; the roles there are, and the rules
+// every manager login has.
 function mgRules(box) {
   const note = el("div", "pf-note mg-rules");
-  const col = (heading, items) => {
-    const wrap = el("div");
-    wrap.appendChild(el("div", "mg-rules-head", heading));
+  note.appendChild(el("div", "mg-rules-head", "What a manager can do comes from their role"));
+  if (mg.roles.length) {
     const ul = el("ul");
-    for (const item of items) ul.appendChild(el("li", null, item));
-    wrap.appendChild(ul);
-    return wrap;
-  };
-  const cols = el("div", "mg-rules-cols");
-  cols.append(col("A manager can", MG_CAN), col("A manager cannot", MG_CANNOT));
-  note.appendChild(cols);
-  note.appendChild(el("p", null, "An authenticator app is required: they set one up at their first sign-in, " +
-    "before anything opens. Every action they take is in the audit log as \"manager:<username>\"."));
+    for (const r of mg.roles) {
+      const li = el("li");
+      li.appendChild(el("b", null, r.name));
+      li.appendChild(document.createTextNode(
+        ` (${r.admin_panel ? "admin panel and " : ""}/manager/)` + (r.description ? ": " + r.description : "")));
+      ul.appendChild(li);
+    }
+    note.appendChild(ul);
+  }
+  const edit = el("button", "btn small", "Edit roles");
+  edit.type = "button";
+  edit.addEventListener("click", () => { closeManagers(); openStaff("roles"); });
+  note.appendChild(edit);
+  note.appendChild(el("p", null, "An authenticator app is required: they set one up at their first sign-in " +
+    "at " + mgUrl() + ", before anything opens (also for the admin panel). Every change they make is in Staff → " +
+    "Activity and the audit log as \"manager:<username>\"."));
   box.appendChild(note);
 }
 
 /* ------------------------------------------------------------- the list */
 
 function mgList(box) {
-  box.appendChild(el("p", "pf-note", "Managers sign in at " + mgUrl() + "."));
+  box.appendChild(el("p", "pf-note", "Managers sign in at " + mgUrl() + ". Those whose role includes the " +
+    "admin panel can also sign in at " + location.origin + "/ with their username."));
   mgRules(box);
   if (!mg.managers.length) {
     box.appendChild(el("div", "pf-note", "No managers yet."));
@@ -117,12 +136,26 @@ function mgCard(m) {
   if (m.disabled) badges.appendChild(el("span", "badge paused", "disabled"));
   if (m.must_change_password) badges.appendChild(el("span", "badge", "temporary password"));
   badges.appendChild(m.totp ? el("span", "badge link", "2FA on") : el("span", "badge paused", "no authenticator yet"));
+  badges.appendChild(el("span", "badge takeover", m.role_name || "no role"));
   title.appendChild(badges);
   card.appendChild(title);
   card.appendChild(el("div", "pf-note ow-meta",
     `${m.display_name || "No name"} · last sign-in ${owTime(m.last_login_at)} · ` +
     `${m.sessions} active session${m.sessions === 1 ? "" : "s"} · created ${owTime(m.created_at)}` +
-    (m.created_by ? ` by ${m.created_by}` : "")));
+    (m.created_by ? ` by ${m.created_by}` : "") + ` · signs in at ${mgSignInUrl(m.role_id)}`));
+
+  // Role
+  if (mg.roles.length) {
+    const roleRow = el("div", "pf-actions");
+    const role = mgRoleSelect(m.role_id, m.role_id === null);
+    const saveRole = el("button", "btn small", "Change role");
+    saveRole.addEventListener("click", () => {
+      if (!role.value || Number(role.value) === m.role_id) return;
+      mgCall("PATCH", `/api/managers/${m.id}`, { role_id: Number(role.value) }, "Role changed.");
+    });
+    roleRow.append(el("span", "muted", "Role"), role, saveRole);
+    card.appendChild(roleRow);
+  }
 
   // Name
   const nameRow = el("div", "pf-actions");
@@ -224,15 +257,30 @@ function mgNew(box) {
   pwWrap.append(el("label", null, "Temporary password (at least 10 characters; they change it at the first sign-in)"),
     pwRow);
   form.appendChild(pwWrap);
+  const role = mgRoleSelect(null, true);
+  const fallback = mg.roles.find((r) => r.name === "Moderator");
+  if (fallback) role.value = String(fallback.id);
+  field("Role (what they may do; Staff → Roles)", role);
+  const where = el("p", "pf-note");
+  const showWhere = () => {
+    const url = mgSignInUrl(role.value ? Number(role.value) : (fallback ? fallback.id : null));
+    where.textContent = url === mgUrl()
+      ? "They sign in at " + mgUrl() + "."
+      : "This role includes the admin panel: they set up their login at " + mgUrl() + " first, then sign in at " +
+        url + " with their username.";
+  };
+  role.addEventListener("change", showWhere);
+  showWhere();
+  form.appendChild(where);
 
   const actions = el("div", "pf-actions");
   const create = el("button", "btn primary", "Create manager");
   create.addEventListener("click", async () => {
     create.disabled = true;
     try {
-      const manager = await api("POST", "/api/managers", {
-        username: username.value.trim(), display_name: name.value.trim(), password: password.value,
-      });
+      const body = { username: username.value.trim(), display_name: name.value.trim(), password: password.value };
+      if (role.value) body.role_id = Number(role.value);
+      const manager = await api("POST", "/api/managers", body);
       const temp = password.value;
       toast(`Manager ${manager.username} created.`, "info");
       mg.tab = "list";

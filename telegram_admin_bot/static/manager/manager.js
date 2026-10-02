@@ -8,7 +8,13 @@
 
    Built for a strict Content-Security-Policy (script-src 'self', no inline
    styles): every node is made with createElement and filled with
-   textContent, never innerHTML, and styles come from manager.css. */
+   textContent, never innerHTML, and styles come from manager.css.
+
+   What a moderator may do is their role's (staff.py): the page hides what
+   the role leaves out, and the server refuses it anyway. A change the role
+   puts up for the admin's approval answers like a done one ({"ok": true})
+   but is not done yet, so after a change the page says "Done." and reloads
+   what is on screen instead of drawing from the answer. */
 
 const $ = (id) => document.getElementById(id);
 
@@ -26,6 +32,8 @@ const st = {
 
 const TAB_KEY = "manager.tab";
 const TABS = ["clients", "signups", "alerts"];
+// The view each tab needs from the role.
+const TAB_NEEDS = { clients: "view.safety", signups: "view.clients", alerts: "view.safety" };
 const CHANGE_PASSWORD = "change_password";
 const SETUP_TOTP = "setup_totp";
 const CODE_REQUIRED = "code_required";
@@ -153,6 +161,50 @@ function kv(pairs) {
 
 function actorName(actor) {
   return actor ? String(actor).replace(/^(manager|owner):/, "") : "";
+}
+
+/* ------------------------------------------------------------- the role */
+
+// "allow" (done at once) or "approve" (waits for the admin, looks done).
+function can(key) {
+  const perms = (st.me && st.me.permissions) || {};
+  return perms[key] === "allow" || perms[key] === "approve";
+}
+
+function allowedTabs() {
+  return TABS.filter((tab) => can(TAB_NEEDS[tab]));
+}
+
+// The top bar and the tabs for this moderator's role.
+function applyMe() {
+  const me = st.me || {};
+  $("app-user").textContent = me.display_name || me.username || "";
+  const role = $("app-role");
+  role.textContent = me.role ? "Role: " + me.role : "";
+  role.hidden = !me.role;
+  $("admin-link").hidden = !me.admin_panel;
+  const tabs = allowedTabs();
+  for (const tab of document.querySelectorAll(".tab")) tab.hidden = !tabs.includes(tab.dataset.tab);
+  if (!tabs.includes(st.tab)) {
+    st.tab = tabs[0] || null;
+    st.client = null;
+    st.chat = null;
+  }
+}
+
+// The role may have changed since the page loaded (it applies from the
+// next click). False when the login needs a new password or app first.
+async function reloadAccount() {
+  st.me = await api("GET", "/api/manager/account");
+  if (st.me.gate) { routeGate(st.me.gate); return false; }
+  applyMe();
+  return true;
+}
+
+// After a change: it may wait for the admin, so show what is really there.
+async function afterChange() {
+  toast("Done.", "info");
+  await refresh();
 }
 
 /* -------------------------------------------------------------- screens */
@@ -427,11 +479,11 @@ function askReason(slot, opts) {
 
 function startApp() {
   show("screen-app");
-  $("app-user").textContent = st.me ? (st.me.display_name || st.me.username) : "";
   const saved = readTab();
   st.tab = TABS.includes(saved) ? saved : "clients";
   st.client = null;
   st.chat = null;
+  applyMe();
   refresh();
 }
 
@@ -441,8 +493,13 @@ async function loadOverview() {
 }
 
 function renderChrome() {
+  for (const tab of document.querySelectorAll(".tab")) {
+    const on = tab.dataset.tab === st.tab;
+    tab.classList.toggle("on", on);
+    if (on) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
+  }
   const o = st.overview;
-  if (!o) return;
+  if (!o) { $("global-stop").hidden = true; return; }
   if (o.me) $("app-user").textContent = o.me.display_name || o.me.username;
   const banner = clear($("global-stop"));
   const stop = o.global_stop || {};
@@ -456,11 +513,6 @@ function renderChrome() {
   setBadge("badge-signups", o.pending_signups, "warm");
   const alerts = o.alerts || { total: 0, critical: 0 };
   setBadge("badge-alerts", alerts.total, alerts.critical > 0 ? "hot" : "warm");
-  for (const tab of document.querySelectorAll(".tab")) {
-    const on = tab.dataset.tab === st.tab;
-    tab.classList.toggle("on", on);
-    if (on) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
-  }
 }
 
 function setBadge(id, count, kind) {
@@ -470,25 +522,40 @@ function setBadge(id, count, kind) {
   b.hidden = !count;
 }
 
+// The overview (every client's state, the counts, the global stop) is part
+// of the safety view; a role without it gets the other tabs only.
 async function refresh() {
   const box = $("content");
   if (!st.overview) clear(box).appendChild(el("div", "loading", "Loading…"));
-  try {
-    await loadOverview();
-  } catch (err) {
-    if (authProblem(err)) return;
-    clear(box).appendChild(el("div", "error-box", "Could not load: " + err.message));
-    return;
+  if (can("view.safety")) {
+    try {
+      await loadOverview();
+    } catch (err) {
+      if (authProblem(err)) return;
+      clear(box).appendChild(el("div", "error-box", "Could not load: " + err.message));
+      return;
+    }
+  } else {
+    st.overview = null;
+    renderChrome();
   }
   render();
 }
 
 // After an action: fresh counts and banner, without redrawing the view.
 async function refreshQuiet() {
+  if (!can("view.safety")) return;
   try { await loadOverview(); } catch (err) { authProblem(err); }
 }
 
-$("refresh").addEventListener("click", withBusy($("refresh"), refresh));
+$("refresh").addEventListener("click", withBusy($("refresh"), async () => {
+  try {
+    if (!(await reloadAccount())) return;
+  } catch (err) {
+    if (authProblem(err)) return;
+  }
+  await refresh();
+}));
 
 for (const tab of document.querySelectorAll(".tab")) {
   tab.addEventListener("click", () => {
@@ -507,10 +574,19 @@ function render() {
   const box = clear($("content"));
   const seq = ++st.seq;
   st.threadSeq++;
-  if (st.tab === "signups") renderSignups(box, seq);
+  if (!st.tab) renderNothing(box);
+  else if (st.tab === "signups") renderSignups(box, seq);
   else if (st.tab === "alerts") renderAlerts(box, seq);
   else if (st.client !== null) renderClient(box, seq);
   else renderClients(box);
+}
+
+function renderNothing(box) {
+  const s = section("Nothing here for your role");
+  s.appendChild(el("p", "hint", st.me && st.me.admin_panel
+    ? "Your role works in the admin panel: use \"Open the admin panel\" at the top."
+    : "Your role does not include any part of this page. Ask the admin if that is a mistake."));
+  box.appendChild(s);
 }
 
 function tenantById(id) {
@@ -543,8 +619,10 @@ function statePills(t) {
 function renderClients(box) {
   const tenants = st.overview.tenants;
   const s = section("Clients", el("span", "muted small", tenants.length + (tenants.length === 1 ? " client" : " clients")));
-  s.appendChild(el("p", "hint", "Pausing a bot keeps receiving and storing messages; nothing is sent until the hold " +
-    "is lifted. You can lift a pause or an anomaly hold; billing, AI-limit and connection holds stay with the admin."));
+  s.appendChild(el("p", "hint", can("tenant.pause")
+    ? "Pausing a bot keeps receiving and storing messages; nothing is sent until the hold " +
+      "is lifted. You can lift a pause or an anomaly hold; billing, AI-limit and connection holds stay with the admin."
+    : "The state of every client's bot. Your role does not include pausing bots."));
   if (!tenants.length) {
     s.appendChild(el("div", "empty", "No clients yet."));
   } else {
@@ -553,12 +631,6 @@ function renderClients(box) {
     s.appendChild(grid);
   }
   box.appendChild(s);
-}
-
-function applyControls(t, res) {
-  t.holds = res.holds || [];
-  if (st.overview && res.global_stop) st.overview.global_stop = res.global_stop;
-  renderChrome();
 }
 
 function tenantCard(t) {
@@ -592,19 +664,19 @@ function tenantCard(t) {
 
   const actions = el("div", "actions");
   const slot = el("div");
-  if (!t.holds.some((h) => h.kind === "manual")) {
+  if (can("tenant.pause") && !t.holds.some((h) => h.kind === "manual")) {
     actions.appendChild(button("Pause bot", "small danger", () => askReason(slot, {
       key: "pause", label: "Why pause this bot? The admin sees it.", submit: "Pause bot", danger: true,
       placeholder: "e.g. the client asked to stop for today",
       onSubmit: async (reason) => {
-        const res = await api("POST", `/api/manager/tenants/${encodeURIComponent(t.id)}/pause`, { reason });
-        applyControls(t, res);
-        card.replaceWith(tenantCard(t));
-        toast(`${t.name}: bot paused.`, "info");
+        await api("POST", `/api/manager/tenants/${encodeURIComponent(t.id)}/pause`, { reason });
+        await afterChange();
       },
     })));
   }
-  if (t.session_state) actions.appendChild(button("Conversations", "small", () => openClient(t.id)));
+  if (t.session_state && can("view.conversations")) {
+    actions.appendChild(button("Conversations", "small", () => openClient(t.id)));
+  }
   card.appendChild(actions);
   card.appendChild(slot);
   return card;
@@ -618,19 +690,17 @@ function holdItem(t, card, h) {
   if (h.created_at) body.appendChild(el("div", "when", "since " + fmtWhen(h.created_at)));
   li.appendChild(body);
   const slot = el("div", "slot");
-  if (h.resumable) {
+  if (h.resumable && can("tenant.pause")) {
     li.appendChild(button("Lift", "small", () => askReason(slot, {
       key: "lift", label: `Why lift "${h.label || h.kind}"? The admin sees it.`, submit: "Lift hold",
       placeholder: "e.g. checked with the client, all fine",
       onSubmit: async (reason) => {
-        const res = await api("POST", `/api/manager/tenants/${encodeURIComponent(t.id)}/resume`,
-          { kind: h.kind, reason });
-        applyControls(t, res);
-        card.replaceWith(tenantCard(t));
-        refreshQuiet();
-        toast(`${t.name}: "${h.label || h.kind}" lifted.`, "info");
+        await api("POST", `/api/manager/tenants/${encodeURIComponent(t.id)}/resume`, { kind: h.kind, reason });
+        await afterChange();
       },
     })));
+  } else if (h.resumable) {
+    li.appendChild(el("span", "muted small", "Your role can't lift this."));
   } else {
     li.appendChild(el("span", "muted small", "Only the admin can lift this."));
   }
@@ -780,18 +850,7 @@ async function loadThread(chatId) {
   if (seq !== st.threadSeq) return;
   pane.lastChild.remove();
 
-  // After a pause or resume: redraw the head and the list entry.
-  let headNode = null;
-  const onChanged = (conv) => {
-    const i = st.convs.findIndex((c) => c.chat_id === conv.chat_id);
-    if (i >= 0) st.convs[i] = Object.assign({}, st.convs[i], conv);
-    renderConvList();
-    const fresh = threadHead(t, conv, onChanged);
-    headNode.replaceWith(fresh);
-    headNode = fresh;
-  };
-  headNode = threadHead(t, data.conversation, onChanged);
-  pane.appendChild(headNode);
+  pane.appendChild(threadHead(t, data.conversation));
 
   const thread = el("div", "thread");
   if (!data.messages.length) thread.appendChild(el("div", "empty", "No messages stored for this chat."));
@@ -805,25 +864,23 @@ async function loadThread(chatId) {
   if (last && window.matchMedia("(max-width: 959px)").matches) last.scrollIntoView({ block: "end" });
 }
 
-function threadHead(t, conv, onChanged) {
+function threadHead(t, conv) {
   const head = el("div", "thread-head");
   const top = el("div", "top");
   top.appendChild(el("span", "title", convName(conv)));
   const slot = el("div");
   const paused = conv.automation_paused;
-  if (onChanged) {
+  if (can("chat.pause")) {
     top.appendChild(button(paused ? "Resume this chat" : "Pause this chat", "small " + (paused ? "" : "danger"),
       () => askReason(slot, {
         key: "chat", submit: paused ? "Resume this chat" : "Pause this chat", danger: !paused,
         label: (paused ? "Why let the bot answer here again?" : "Why stop the bot in this chat?") +
           " The admin sees it.",
         onSubmit: async (reason) => {
-          const updated = await api("POST",
+          await api("POST",
             `/api/manager/tenants/${encodeURIComponent(t.id)}/conversations/${encodeURIComponent(conv.chat_id)}/pause`,
             { paused: !paused, reason });
-          toast(updated.automation_paused ? "Chat paused: the bot stays quiet here." :
-            "Chat resumed: the bot answers here again.", "info");
-          onChanged(updated);
+          await afterChange();   // redraws this client, with this chat open
         },
       })));
   }
@@ -918,6 +975,7 @@ function signupCard(c) {
     ["Phone", c.phone], ["Signed up", fmtWhen(c.created_at)],
     ["Terms", c.terms_accepted ? "accepted (version " + c.terms_accepted + ")" : "not accepted"],
   ]));
+  if (!can("clients.approve")) return card;
   const actions = el("div", "actions");
   const slot = el("div");
   actions.appendChild(button("Approve", "small primary", () => askReason(slot, {
@@ -925,7 +983,7 @@ function signupCard(c) {
     placeholder: "e.g. checked the company and the phone number",
     onSubmit: async (reason) => {
       await api("POST", `/api/manager/clients/${encodeURIComponent(c.id)}/approve`, { reason });
-      toast(`${c.username} approved.`, "info");
+      toast("Done.", "info");
       afterReview();
     },
   })));
@@ -934,7 +992,7 @@ function signupCard(c) {
     emptyText: NEED_REASON_APPLICANT, placeholder: "e.g. we could not verify the business",
     onSubmit: async (reason) => {
       await api("POST", `/api/manager/clients/${encodeURIComponent(c.id)}/reject`, { reason });
-      toast(`${c.username} rejected.`, "info");
+      toast("Done.", "info");
       afterReview();
     },
   })));
@@ -964,29 +1022,31 @@ function clientCard(c) {
   const actions = el("div", "actions");
   const slot = el("div");
   const disabling = !c.disabled;
-  actions.appendChild(button(disabling ? "Disable" : "Enable", "small" + (disabling ? " danger" : ""),
-    () => askReason(slot, {
-      key: "disabled", submit: disabling ? "Disable login" : "Enable login", danger: disabling,
-      label: (disabling ? "Why disable this login? It is signed out everywhere at once." :
-        "Why enable this login again?") + " The admin sees it.",
-      onSubmit: async (reason) => {
-        const row = await api("POST", `/api/manager/clients/${encodeURIComponent(c.id)}/disabled`,
-          { disabled: disabling, reason });
-        card.replaceWith(clientCard(row));
-        toast(`${row.username} ${row.disabled ? "disabled" : "enabled"}.`, "info");
-      },
-    })));
-  if (c.status === "rejected") {
+  if (can("clients.disable")) {
+    actions.appendChild(button(disabling ? "Disable" : "Enable", "small" + (disabling ? " danger" : ""),
+      () => askReason(slot, {
+        key: "disabled", submit: disabling ? "Disable login" : "Enable login", danger: disabling,
+        label: (disabling ? "Why disable this login? It is signed out everywhere at once." :
+          "Why enable this login again?") + " The admin sees it.",
+        onSubmit: async (reason) => {
+          await api("POST", `/api/manager/clients/${encodeURIComponent(c.id)}/disabled`,
+            { disabled: disabling, reason });
+          toast("Done.", "info");
+          afterReview();
+        },
+      })));
+  }
+  if (c.status === "rejected" && can("clients.approve")) {
     actions.appendChild(button("Approve after all", "small", () => askReason(slot, {
       key: "approve", label: "Why approve now? The admin sees it.", submit: "Approve",
       onSubmit: async (reason) => {
         await api("POST", `/api/manager/clients/${encodeURIComponent(c.id)}/approve`, { reason });
-        toast(`${c.username} approved.`, "info");
+        toast("Done.", "info");
         afterReview();
       },
     })));
   }
-  card.append(actions, slot);
+  if (actions.childNodes.length) card.append(actions, slot);
   return card;
 }
 
@@ -1024,7 +1084,7 @@ async function renderAlerts(box, seq) {
     listBox.appendChild(el("div", "empty", st.alertsAll ? "No alerts." : "No open alerts. All quiet."));
     return;
   }
-  for (const a of alerts) listBox.appendChild(alertCard(a, listBox));
+  for (const a of alerts) listBox.appendChild(alertCard(a));
 }
 
 function tenantName(id) {
@@ -1033,7 +1093,7 @@ function tenantName(id) {
   return t ? t.name : "Client #" + id;
 }
 
-function alertCard(a, listBox) {
+function alertCard(a) {
   const done = !!a.acknowledged_at;
   const card = el("div", "item" + (done ? " done" : ""));
   const top = el("div", "top");
@@ -1050,41 +1110,22 @@ function alertCard(a, listBox) {
       ", " + fmtWhen(a.acknowledged_at));
   }
   if (meta.length) card.appendChild(el("div", "meta", meta.join(" · ")));
-  if (!done) {
+  if (!done && can("alerts.ack")) {
     const actions = el("div", "actions");
     const b = button("Acknowledge", "small primary");
     b.addEventListener("click", withBusy(b, async () => {
-      let row;
       try {
-        row = await api("POST", `/api/manager/alerts/${encodeURIComponent(a.id)}/ack`);
+        await api("POST", `/api/manager/alerts/${encodeURIComponent(a.id)}/ack`);
       } catch (err) {
         if (!authProblem(err)) toast(err.message);
         return;
       }
-      countAck(a);
-      if (st.alertsAll) card.replaceWith(alertCard(row, listBox));
-      else {
-        card.remove();
-        if (!listBox.childNodes.length) listBox.appendChild(el("div", "empty", "No open alerts. All quiet."));
-      }
-      toast("Alert acknowledged.", "info");
+      await afterChange();
     }));
     actions.appendChild(b);
     card.appendChild(actions);
   }
   return card;
-}
-
-function countAck(a) {
-  const o = st.overview;
-  if (!o) return;
-  if (o.alerts) {
-    o.alerts.total = Math.max(0, (o.alerts.total || 0) - 1);
-    if (a.severity === "critical") o.alerts.critical = Math.max(0, (o.alerts.critical || 0) - 1);
-  }
-  const t = tenantById(a.tenant_id);
-  if (t) t.open_alerts = Math.max(0, (t.open_alerts || 0) - 1);
-  renderChrome();
 }
 
 boot();
