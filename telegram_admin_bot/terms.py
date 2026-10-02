@@ -195,7 +195,7 @@ STARTER_TITLE = "Terms of Service"
 # rest is a strict default for an AI reply assistant running on a client's
 # own Telegram or WhatsApp account. It is a starting point, not legal advice.
 STARTER_BODY = """\
-These Terms of Service ("Terms") are a binding agreement between you and [[FILL IN: your company's legal name, registration number and registered address]] ("we", "us"). By creating an account, signing in, or using the service you accept these Terms. If you do not accept them, do not use the service.
+These Terms of Service ("Terms") are a binding agreement between you and [[FILL IN: your company's legal name, registration number and registered address]] ("we", "us"). By ticking the acceptance box, creating an account, signing in, or using the service you confirm that you are at least 18 years old and you accept these Terms. If you are under 18 or do not accept them, do not use the service.
 
 ## 1. The service
 We provide an AI assistant that reads and answers messages on a Telegram or WhatsApp account you connect, takes booking requests, and shows you a dashboard ("the service").
@@ -204,7 +204,9 @@ We provide an AI assistant that reads and answers messages on a Telegram or What
 - We do not promise that the service is available at any particular time or free of errors.
 
 ## 2. Who may use it
-- You must be at least 18 years old and use the service only for a business you own or are authorised to act for.
+- You must be at least 18 years old, or the age of majority where you live if that is higher. By accepting these Terms you confirm that you are. Accepting them while under age is a breach of these Terms, and you alone are responsible for its consequences.
+- Use the service only for a business you own or are authorised to act for.
+- We may ask you at any time for proof of your identity and age. If you do not provide it, we may suspend your account.
 - The information you give us when you sign up must be true and kept up to date.
 - We approve accounts at our own discretion and may refuse one without giving a reason.
 - One login is for one person. Do not share it. Keep your password secret and turn on two-step sign-in.
@@ -218,7 +220,8 @@ We provide an AI assistant that reads and answers messages on a Telegram or What
 ## 4. Acceptable use
 You must not use the service, or let it be used, to:
 - send spam, bulk or unsolicited messages, or message people who have not contacted you first or agreed to hear from you;
-- offer, sell or promote anything illegal where you or your customers are, or anything involving weapons, drugs, gambling, adult or sexual content, or counterfeit goods;
+- offer, sell or promote anything illegal where you or your customers are, or anything involving weapons, drugs, gambling or counterfeit goods;
+- offer adult or escort services in any way not allowed by section 5;
 - run or promote scams, pyramid schemes, investment or cryptocurrency offers, loans, or requests for payment details, passwords or codes;
 - harass, threaten, deceive or discriminate against anyone, or publish hateful content;
 - contact anyone under 18 for marketing, or collect sensitive personal data (health, religion, sexuality, ethnicity, political views, criminal records, financial account details) through the assistant;
@@ -226,53 +229,70 @@ You must not use the service, or let it be used, to:
 - give medical, legal or financial advice through the assistant as if it came from a qualified professional;
 - get around the limits, safety checks or pauses we put on the service, or test, probe, copy, reverse engineer or overload it;
 - resell, sublicense or give access to the service to anyone else.
-Breaking any of these rules allows us to stop the service immediately (see section 8).
+Breaking any of these rules allows us to stop the service immediately (see section 9).
 
-## 5. Your content and instructions
+## 5. Adult and escort services
+Escort services are allowed only when all of the following are true:
+- you are an independent adult offering only your own services, for yourself and on your own behalf;
+- you do so voluntarily, and nobody else controls, directs or takes a share of that work or of your earnings;
+- the services, and the way you advertise and arrange them, are legal where you offer them and where your customers are, and you meet every local rule that applies (registration, health, tax and advertising).
+The following are forbidden, and we will close the account at once:
+- pimping, procuring or managing: arranging, advertising, booking or profiting from another person's sexual services, including as an agency, manager, driver or "booker";
+- one account handling bookings for more than one worker;
+- anyone under 18, or anyone who appears to be under 18, in any role or any content;
+- any sign of coercion, trafficking, debt bondage or exploitation;
+- sending sexually explicit images or videos through the assistant. It may handle availability, prices, bookings and practical information.
+We may ask for proof of age, identity and independence at any time. Where we suspect a minor, trafficking or exploitation, we suspend the account without notice, keep the relevant records, and report it to the authorities.
+We provide software only. We do not offer, arrange, advertise, take part in or take any share of the services you provide or of your earnings. We are not a party to any agreement between you and your customers.
+
+## 6. Your content and instructions
 - You are responsible for the information you give the assistant (prices, services, opening hours, answers, files) and for keeping it correct.
 - You allow us to store and process that information, and your conversations, only to run, secure and support the service.
 - You must not give the assistant anything you do not have the right to use.
+- You alone are responsible and liable for how the service is used through your account, for every message the assistant sends for you, for the services you offer, and for your compliance with every law and platform rule that applies to you. We do not check your business, your customers or your messages before they are sent.
 
-## 6. Personal data
+## 7. Personal data
 - For your customers' personal data you are the controller and we act as your processor. You must have a lawful basis for processing it and tell your customers, in your own privacy notice, that an automated assistant answers messages.
 - We process personal data as described in [[FILL IN: link to your privacy policy and data processing agreement]].
 - We use subprocessors to run the service, including hosting providers and AI model providers. Messages are sent to the AI model provider to write replies.
 - We keep conversation data for [[FILL IN: how long, e.g. 12 months]] and delete it within [[FILL IN: number]] days after your account ends, unless the law requires us to keep it longer.
 
-## 7. Safety, monitoring and moderation
+## 8. Safety, monitoring and moderation
 - We monitor the service for misuse. Our staff (administrators and moderators) may read conversations, settings and logs to investigate problems, enforce these Terms, and give support.
 - Automatic safety checks may hold back a reply, pause a conversation, or pause your assistant (for example on unusual sending volume, a new login to your account, reaching a usage limit, or suspicious content). A paused assistant does not answer messages received during the pause later.
 - We may pause, limit or switch off your assistant, or disconnect your messaging account, at any time and without notice when we believe it is needed to protect you, your customers, other clients, the platform or third parties.
 - We keep a record of actions taken on your account.
 
-## 8. Suspension and termination
+## 9. Suspension and termination
 - We may suspend or close your account immediately, without notice, if you break these Terms, do not pay, give false information, or if we are required to by law or by Telegram or WhatsApp.
 - You may close your account by giving [[FILL IN: notice period, e.g. 14 days]] written notice to [[FILL IN: contact e-mail]].
-- When your account ends the assistant stops, and we delete your data as described in section 6. Fees already paid are not refunded except as stated in section 9.
+- When your account ends the assistant stops, and we delete your data as described in section 7. Fees already paid are not refunded except as stated in section 10.
 
-## 9. Fees and payment
+## 10. Fees and payment
 - Prices and billing period: [[FILL IN: prices, billing period, currency and how invoices are sent]].
 - Payment method and due date: [[FILL IN: how and by when clients pay]].
 - If a payment is late, the service enters a grace period; when it ends unpaid, the assistant is paused until payment is received.
 - Refunds: [[FILL IN: your refund policy]].
+- Fees are a fixed subscription for the software. They never depend on your bookings, customers or earnings.
 
-## 10. No warranty
+## 11. No warranty
 The service is provided "as is" and "as available". To the fullest extent the law allows, we give no warranty of any kind, express or implied, including that the service or the assistant's replies are accurate, suitable for your purpose, uninterrupted or secure.
 
-## 11. Limitation of liability
+## 12. Limitation of liability
 - To the fullest extent the law allows, we are not liable for any indirect, incidental, special or consequential loss, including lost profits, lost bookings, lost customers, lost data, or the loss or ban of a messaging account.
 - Our total liability for all claims arising from the service is limited to [[FILL IN: your liability cap, e.g. the fees you paid in the 3 months before the claim]].
+- We are not liable for the services you offer, your dealings with your customers, or anything you or your customers do. That liability is yours alone.
 - Nothing in these Terms limits liability that cannot be limited by law.
 
-## 12. Indemnity
-You will compensate us for any claim, loss, fine or cost arising from your use of the service, your content, your customers, your breach of these Terms, or your breach of Telegram's or WhatsApp's terms.
+## 13. Indemnity
+You will defend us and compensate us in full for any claim, loss, fine, penalty or cost, including reasonable legal costs, that arises from your use of the service, your content, the services you offer, your customers, your breach of these Terms or of any law, your breach of Telegram's or WhatsApp's terms, or any claim or investigation by a third party or an authority about any of these.
 
-## 13. Changes to these Terms
-We may change these Terms. When a change matters, you will be asked to accept the new version the next time you sign in, and you cannot use the dashboard until you do. If you do not accept, stop using the service and close your account as described in section 8.
+## 14. Changes to these Terms
+We may change these Terms. When a change matters, you will be asked to accept the new version the next time you sign in, and you cannot use the dashboard until you do. If you do not accept, stop using the service and close your account as described in section 9.
 
-## 14. Law and disputes
+## 15. Law and disputes
 These Terms are governed by [[FILL IN: governing law, e.g. the laws of the Republic of Latvia]]. Disputes go to [[FILL IN: competent courts]].
 
-## 15. Contact
+## 16. Contact
 [[FILL IN: support e-mail address and postal address]]
 """
