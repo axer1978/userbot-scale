@@ -146,6 +146,16 @@ export class PostgresAuthStore {
   }
 }
 
+/**
+ * Whether these creds belong to a linked device. Baileys sets `registered`
+ * only on the pairing-code path; a QR link never does, so a linked device is
+ * also one that WhatsApp gave an identity (`me`) and a signed device
+ * identity (`account`), which is what pair-success writes on both paths.
+ */
+export function isLinked(creds: AuthenticationCreds): boolean {
+  return creds.registered || (!!creds.me?.id && !!creds.account);
+}
+
 export type PostgresAuthState = {
   state: AuthenticationState;
   saveCreds: () => Promise<void>;

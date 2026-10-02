@@ -9,7 +9,7 @@
  */
 import type { WAPresence, WASocket, proto } from 'baileys';
 import type pino from 'pino';
-import { usePostgresAuthState, type PostgresAuthState } from './authstate.ts';
+import { isLinked, usePostgresAuthState, type PostgresAuthState } from './authstate.ts';
 import type { BrowserTuple } from './browser.ts';
 import { GatewayError } from './bus.ts';
 import type { Pool } from './db.ts';
@@ -123,7 +123,7 @@ export class SessionSocket {
   /** Loads the auth state (throws when there are no creds) and connects. */
   async start(): Promise<void> {
     const auth = await usePostgresAuthState(this.opts.pool, this.sessionId, baileysLogger(this.sessionId));
-    if (!auth.existed || !auth.state.creds.registered) {
+    if (!auth.existed || !isLinked(auth.state.creds)) {
       throw new Error('session has no registered WhatsApp credentials; pair first');
     }
     this.auth = auth;

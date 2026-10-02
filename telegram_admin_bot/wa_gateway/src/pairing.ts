@@ -8,7 +8,7 @@
  */
 import type { WASocket } from 'baileys';
 import type pino from 'pino';
-import { PostgresAuthStore, usePostgresAuthState, type PostgresAuthState } from './authstate.ts';
+import { isLinked, PostgresAuthStore, usePostgresAuthState, type PostgresAuthState } from './authstate.ts';
 import type { BrowserTuple } from './browser.ts';
 import type { Pool } from './db.ts';
 import { classifyDisconnect } from './disconnect.ts';
@@ -174,9 +174,14 @@ export class PairingRun {
       }
       if (update.connection === 'open') {
         const me = meFromUser(sock.user);
-        if (!auth.state.creds.registered) {
+        if (!isLinked(auth.state.creds)) {
           this.settle({ ok: false, reason: 'connection opened but creds are not registered' });
           return;
+        }
+        if (!auth.state.creds.registered) {
+          // A QR link: record it as registered too, like the pairing-code path does.
+          auth.state.creds.registered = true;
+          auth.saveCreds().catch((exc) => this.log.error({ err: exc }, 'could not persist creds during pairing'));
         }
         // Let the phone push its first app-state/prekey material before we end.
         setTimeout(() => this.settle({ ok: true, me }), this.opts.settleMs ?? PAIR_SETTLE_MS);
