@@ -148,7 +148,12 @@ Telegram DM ─▶ SessionRuntime.on_incoming
    AI limit reached? ─▶ stop.  No booking news and a reply limit / bare "ok"? ─▶ note, stop
    history (last 30) ─▶ ai_responder.generate_reply(system_prompt = rendered layers,
                                                     booking note, burst_max, language lock,
-                                                    no-reply instruction if no news, …)
+                                                    no-reply instruction if no news,
+                                                    delete instruction, …)
+   "[DELETE]" line (only with replies.delete_instruction) ─▶ auto_send on: the customer's
+       messages since the last reply are deleted in Telegram for both sides, rows get
+       deleted_at (kept in the panel, left out of the AI history), note + audit
+       messages_deleted; auto_send off: only a note. Nothing else in the reply ─▶ stop
    "[NO_REPLY]" ─▶ note + audit reply_skipped, stop
                          └─ llm_usage.record (3 token kinds, 3 rates) per call
    media tags → attachments; split into ≤ burst.max_messages parts
@@ -236,6 +241,7 @@ alerts.py     one open alert per (tenant, kind) ──▶ panel, e-mail, webhook
 
 - AI usage (`ai_limits.limit_reached`): tokens and EUR per day and per month in the tenant's zone, summed from `llm_usage`. At a limit no model call is made; the panel and audit log are told once.
 - Replies (`ai_limits.reply_limit`, only when there is no booking news): AI-written messages per chat per hour/24 h and the least gap, counted from `messages` on the database clock; bare acknowledgements; and the tenant's `no_reply_instruction`, where the model may answer `[NO_REPLY]`. Every skip is a note and a `reply_skipped` audit row.
+- Deleting (`replies.delete_instruction`, empty = never): the model may put `[DELETE]` on a line of its own to have the customer's messages since the bot's last reply deleted in Telegram (`revoke=True`, both sides). Only with auto-send on; a failed delete is a note and never costs the reply.
 
 ## Where changes reach a running account
 

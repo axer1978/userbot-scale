@@ -324,12 +324,17 @@ async def generate_reply(
     burst_max: int = MAX_BURST_MESSAGES,
     usage_sink: Optional[UsageSink] = None,
     no_reply_instruction: str = "",
+    delete_instruction: str = "",
 ) -> str:
     """Return the draft reply text, or raise AIResponderError with a safe message.
 
     `no_reply_instruction` is the tenant's own "when not to answer" text
     (replies.no_reply_instruction). When given, the model may answer with
     just NO_REPLY_MARKER; the caller checks with is_no_reply().
+
+    `delete_instruction` (replies.delete_instruction) likewise lets the
+    model put DELETE_MARKER on a line of its own to have the customer's
+    latest messages deleted; the caller takes it out with take_delete().
 
     The text may contain BURST_SEPARATOR; callers pass it through split_burst
     before sending. `booking_note` is the state of this chat's appointments
@@ -369,6 +374,8 @@ async def generate_reply(
     sections.append(burst_note(burst_max))
     if (no_reply_instruction or "").strip():
         sections.append(no_reply_section(no_reply_instruction))
+    if (delete_instruction or "").strip():
+        sections.append(delete_section(delete_instruction))
 
     messages = [{"role": "system", "content": "\n\n".join(sections)}]
     messages.extend(_merge_consecutive_turns(history))
@@ -393,6 +400,28 @@ def no_reply_section(instruction: str) -> str:
 
 def is_no_reply(text: str) -> bool:
     return (text or "").strip().strip("`\"'").upper().startswith(NO_REPLY_MARKER)
+
+
+DELETE_MARKER = "[DELETE]"
+# The marker on a line of its own, wherever the model put it, quoted or not.
+_DELETE_LINE = re.compile(r"(?im)^[ \t`\"']*\[DELETE\][ \t`\"'.]*$\n?")
+
+
+def delete_section(instruction: str) -> str:
+    return (
+        "WHICH MESSAGES TO DELETE (from the business): " + instruction.strip() + "\n"
+        f"If their messages since your last reply fall under this, put {DELETE_MARKER} on a line of "
+        "its own at the start of your answer: those messages are then deleted from the chat. "
+        f"Write your reply after it as usual, or nothing after it if no reply is needed. "
+        f"Never mention {DELETE_MARKER} or the deletion in the reply itself."
+    )
+
+
+def take_delete(text: str) -> tuple[bool, str]:
+    """(whether the model marked the customer's messages for deletion, the
+    reply with the marker taken out)."""
+    rest, count = _DELETE_LINE.subn("", text or "")
+    return count > 0, rest.strip()
 
 
 async def generate_opener(

@@ -282,6 +282,12 @@ class Replies(_Strict):
     # answers. When set, the reply writer may decline to answer a message
     # that matches; each time is noted in the chat and in the audit log.
     no_reply_instruction: str = Field("", max_length=2000)
+    # Which customer messages the bot should delete in Telegram, in your own
+    # words. Empty = it never deletes. When set, the reply writer may mark
+    # the customer's latest messages (those since the bot's last reply) for
+    # deletion; they are deleted for both sides when auto-send is on, and
+    # each time is noted in the chat and in the audit log.
+    delete_instruction: str = Field("", max_length=2000)
 
 
 class Anomaly(_Strict):

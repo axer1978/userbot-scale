@@ -665,6 +665,7 @@ class Database:
                        AND status = ANY($3)
                        AND direction = ANY($4)
                        AND btrim(text) <> ''
+                       AND deleted_at IS NULL
                      ORDER BY id DESC LIMIT $5
                 ) AS recent ORDER BY id ASC
                 """,
@@ -678,6 +679,41 @@ class Database:
             {"role": "user" if r["direction"] == DIR_IN else "assistant", "content": r["text"]}
             for r in rows
         ]
+
+    async def customer_messages_since_reply(self, chat_id: int) -> list[dict[str, Any]]:
+        """The customer's messages after the last one that went out to them,
+        oldest first: what a reply being written now answers. Only those
+        Telegram knows (a telegram_id) and not deleted already."""
+        tid = await self.tenant_id()
+        async with self._pool.acquire() as con:
+            rows = await con.fetch(
+                """
+                SELECT * FROM messages
+                 WHERE tenant_id = $1 AND chat_id = $2
+                   AND direction = $3 AND status = $4
+                   AND telegram_id IS NOT NULL AND deleted_at IS NULL
+                   AND id > COALESCE((SELECT MAX(id) FROM messages
+                                       WHERE tenant_id = $1 AND chat_id = $2
+                                         AND direction = $5 AND status = $6), 0)
+                 ORDER BY id
+                """,
+                tid, chat_id, DIR_IN, STATUS_RECEIVED, DIR_OUT, STATUS_SENT,
+            )
+        return [_message(r) for r in rows]
+
+    async def mark_deleted(self, message_ids: list[int]) -> list[dict[str, Any]]:
+        """Note that these messages were deleted in Telegram. Returns the
+        updated rows."""
+        if not message_ids:
+            return []
+        tid = await self.tenant_id()
+        async with self._pool.acquire() as con:
+            rows = await con.fetch(
+                "UPDATE messages SET deleted_at = now()"
+                " WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL RETURNING *",
+                tid, message_ids,
+            )
+        return sorted((_message(r) for r in rows), key=lambda m: m["id"])
 
     async def update_message(
         self,
@@ -1199,6 +1235,7 @@ def _message(row: asyncpg.Record) -> dict[str, Any]:
         "attachments": _attachments(row),
         "llm_model": row["llm_model"],
         "prompt_version": row["prompt_version"],
+        "deleted_at": _iso(row["deleted_at"]),
     }
 
 

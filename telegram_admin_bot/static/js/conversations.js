@@ -251,9 +251,10 @@ function messageNode(msg) {
 
   const isIn = msg.direction === "in";
   const cls = msg.status === "rejected" ? "msg rejected" : (isIn ? "msg in" : "msg out");
-  const node = el("div", cls);
+  const node = el("div", cls + (msg.deleted_at ? " deleted" : ""));
   node.appendChild(el("div", "label",
-    isIn ? "them" : (msg.status === "rejected" ? "rejected draft" : "me")));
+    (isIn ? "them" : (msg.status === "rejected" ? "rejected draft" : "me")) +
+    (msg.deleted_at ? " · deleted " + fmtTime(msg.deleted_at) : "")));
   if (msg.text) node.appendChild(el("div", null, msg.text));
   const files = attachmentsNode(msg);
   if (files) node.appendChild(files);

@@ -1588,6 +1588,7 @@ class SessionRuntime:
             # The tenant's "when not to answer" instruction is only offered
             # when there is nothing the reply must pass on.
             no_reply = "" if note.has_news else self.config["replies"]["no_reply_instruction"]
+            delete_instruction = self.config["replies"]["delete_instruction"]
 
             media_note = self.media_prompt()
             prompt = self.bundle.prompt if self.bundle is not None else None
@@ -1609,7 +1610,14 @@ class SessionRuntime:
                     burst_max=self.config["burst"]["max_messages"],
                     usage_sink=self.usage_sink("reply"),
                     no_reply_instruction=no_reply,
+                    delete_instruction=delete_instruction,
                 )
+
+            wants_delete = False
+            if delete_instruction.strip():
+                wants_delete, text = ai_responder.take_delete(text)
+            if wants_delete:
+                await self.delete_as_instructed(chat_id)
 
             if no_reply and ai_responder.is_no_reply(text):
                 await self.skip_reply(chat_id, "the no-reply instruction applies to this message")
@@ -1621,6 +1629,11 @@ class SessionRuntime:
                 attachments = []
             parts = ai_responder.split_burst(text, self.config["burst"]["max_messages"])
             if not parts and not attachments:
+                if wants_delete and not note.has_news:
+                    # Deleted, and nothing to say: what the instruction asked.
+                    log.info("[%s]   deleted the messages; no reply in chat %s.", self.session_id, chat_id)
+                    self.schedule_go_offline(chat_id)
+                    return
                 raise ai_responder.AIResponderError("The reply came back empty.")
             if attachments:
                 log.info("[%s]   attaching %s.", self.session_id, ", ".join(
@@ -1732,6 +1745,41 @@ class SessionRuntime:
                 and ai_limits.is_acknowledgement(last.get("content", ""), replies["acknowledgements"])):
             return ACK_SKIP
         return await ai_limits.reply_limit(self.pool, self.tenant_id, chat_id, replies)
+
+    async def delete_as_instructed(self, chat_id: int) -> int:
+        """Delete the customer's messages since the last reply in Telegram,
+        for both sides: the reply writer marked them under the client's
+        delete instruction. Only with auto-send on; with drafts the panel
+        just notes it. A failure is noted and never costs the reply.
+        Returns how many were deleted."""
+        rows = await self.db.customer_messages_since_reply(chat_id)
+        if not rows:
+            return 0
+        count = len(rows)
+        what = "1 message" if count == 1 else f"{count} messages"
+        if not self.config["auto_send"]:
+            await self.post_note(chat_id, f"The AI marked {what} for deletion under the delete instruction. "
+                                          "Auto-send is off, so nothing was deleted.")
+            return 0
+        telegram_ids = [r["telegram_id"] for r in rows]
+        try:
+            peer = await self.resolve_peer(chat_id)
+            await self.client.delete_messages(peer, telegram_ids, revoke=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("[%s] Could not delete %s in chat %s: %s: %s",
+                        self.session_id, what, chat_id, type(exc).__name__, exc)
+            await self._best_effort(self.post_note(chat_id, f"Could not delete {what}: {type(exc).__name__}."),
+                                    "note a failed deletion")
+            return 0
+        log.info("[%s]   deleted %s in chat %s (delete instruction).", self.session_id, what, chat_id)
+        for row in await self.db.mark_deleted([r["id"] for r in rows]):
+            await self.push_message(row)
+        await self.post_note(chat_id, f"Deleted {what} under the delete instruction.")
+        await self.write_audit(audit.MESSAGES_DELETED, reason="delete instruction",
+                               payload={"chat_id": chat_id, "count": count, "telegram_ids": telegram_ids})
+        return count
 
     async def skip_reply(self, chat_id: int, reason: str) -> None:
         log.info("[%s]   not replying in chat %s: %s", self.session_id, chat_id, reason)

@@ -51,6 +51,9 @@ REMINDER_SENT = "reminder_sent"
 # The bot did not answer a message: a reply limit, an acknowledgement, or
 # the tenant's own no-reply instruction.
 REPLY_SKIPPED = "reply_skipped"
+# Customer messages deleted in Telegram under the tenant's delete
+# instruction. payload: chat_id, count, telegram_ids.
+MESSAGES_DELETED = "messages_deleted"
 AI_LIMIT_REACHED = "ai_limit_reached"
 # Soft-off (controls.py): payload.kind says which hold was added or lifted.
 TENANT_SOFT_OFF = "tenant_soft_off"

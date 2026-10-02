@@ -112,6 +112,8 @@ main { flex: 1; display: flex; min-height: 0; }
 .msg.in { background: var(--in); align-self: flex-start; border-bottom-left-radius: 3px; }
 .msg.out { background: var(--out); align-self: flex-end; border-bottom-right-radius: 3px; }
 .msg.rejected { background: var(--in); align-self: flex-end; opacity: .5; text-decoration: line-through; }
+.msg.deleted { opacity: .55; }
+.msg.deleted > div:not(.label):not(.time) { text-decoration: line-through; }
 .msg.error {
   align-self: center; max-width: 88%; background: #3a1a1c;
   border: 1px solid var(--danger); color: #ffd7d8; font-size: 13px;
