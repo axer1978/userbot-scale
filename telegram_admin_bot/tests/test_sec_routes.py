@@ -32,9 +32,15 @@ PUBLIC = {
     ("GET", "/api/login-options"), ("POST", "/api/login"), ("POST", "/api/logout"),
     ("POST", "/api/owner/login"), ("POST", "/api/owner/logout"),
     ("GET", "/owner"),  # a redirect to the dashboard page (static)
+    # Sign-up and the terms of service, for people without a login yet.
+    ("GET", "/api/terms"), ("GET", "/api/owner/signup-options"), ("POST", "/api/owner/signup"),
+    ("POST", "/api/manager/login"), ("POST", "/api/manager/logout"),
+    ("GET", "/manager"),  # a redirect to the moderator page (static)
 }
 # Owner (client dashboard) routes live here and nowhere else.
 OWNER_PREFIX = "/api/owner/"
+# Manager (moderator) routes likewise.
+MANAGER_PREFIX = "/api/manager/"
 # The static files (login page, scripts, the dashboard page): the one mount.
 MOUNTS = {"/"}
 WEBSOCKETS = {"/ws/{session_id}"}
@@ -136,12 +142,12 @@ async def test_the_owner_cookie_opens_no_admin_route(panel_client, pg_pool):
         await owner.aclose()
 
 
-async def test_the_admin_cookie_opens_no_owner_route(panel_client):
+async def test_the_admin_cookie_opens_no_owner_or_manager_route(panel_client):
     admin = client(cookies={"admin_token": panel_client.cookies.get("admin_token")})
     async with admin:
         assert (await admin.get("/api/sessions")).status_code == 200  # the cookie works
         for method, path in api_routes():
-            if (method, path) in PUBLIC or not path.startswith(OWNER_PREFIX):
+            if (method, path) in PUBLIC or not path.startswith((OWNER_PREFIX, MANAGER_PREFIX)):
                 continue
             r = await admin.request(method, concrete(path), json={})
             assert r.status_code == 401, (method, path, r.status_code, r.text)

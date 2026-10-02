@@ -28,6 +28,12 @@ In the panel, **☰ Menu → Safety** shows every client's account health, the h
 | Panel loads but shows "connecting…" forever | The websocket isn't reaching the panel (proxy), or Valkey is down | `docker compose ps valkey`; `docker compose logs --tail 20 valkey panel`. `docker compose restart valkey panel` |
 | Client can't log in to `/owner/` | Disabled login, wrong username, or 5 failures | ☰ → Client logins: enable, or *Reset password…* (kills their sessions, forces a new password) |
 | Client lost their authenticator | | ☰ → Client logins → *Remove 2FA* |
+| Client says "waiting for approval" | They signed up themselves; nobody approved them yet | ☰ → Client logins → *Waiting*: approve (and tick their business) or reject with a reason. A manager can approve too, but only you can link a business |
+| Client is stuck on the terms screen | A new terms version that requires acceptance was published | Expected: they must tick and accept it. ☰ → Terms shows how many have not accepted yet |
+| Nobody can sign up / no "Create an account" link | Sign-up is closed (the default), or no terms are published | ☰ → Terms: publish the terms (every `[[FILL IN` must be written first), then *Open sign-up* |
+| Sign-up says "try again later" | 50 sign-ups already wait for approval (spam guard) | Approve or reject the waiting ones |
+| Manager can't log in to `/manager/` | Disabled, wrong password, 5 failures, or lost the authenticator | ☰ → Managers: enable, *Reset password…* or *Remove 2FA* (they set up a new app at the next sign-in) |
+| A manager did something wrong | | Every manager action is in the audit log as `manager:<username>` (☰ → Clients → a client → Audit). ☰ → Managers → *Disable* ends their sessions at once |
 
 ## The Telegram account
 

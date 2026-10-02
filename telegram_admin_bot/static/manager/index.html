@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0e1116">
+<title>Moderator panel</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234c8dff'/%3E%3Cpath d='M16 6l9 4v6c0 5-4 9-9 10-5-1-9-5-9-10v-6z' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/manager/manager.css">
+</head>
+<body>
+
+<!-- sign in -->
+<section id="screen-login" class="screen center" hidden>
+  <div class="card narrow">
+    <div class="logo" aria-hidden="true">
+      <svg width="24" height="24" viewBox="0 0 32 32"><path d="M16 6l9 4v6c0 5-4 9-9 10-5-1-9-5-9-10v-6z" fill="#fff"/></svg>
+    </div>
+    <h1>Moderator panel</h1>
+    <p class="hint">Sign in to look after the clients' bots while the admin is away.</p>
+    <div id="login-notice" class="notice" role="alert" hidden></div>
+    <form id="login-form" autocomplete="on">
+      <label class="field">Username
+        <input id="login-username" name="username" type="text" autocomplete="username" autocapitalize="none"
+               spellcheck="false" required></label>
+      <label class="field">Password
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required></label>
+      <label class="field" id="login-code-field" hidden>Code from your authenticator app
+        <input id="login-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+               maxlength="7" placeholder="6 digits"></label>
+      <button type="submit" class="btn primary block">Sign in</button>
+    </form>
+  </div>
+</section>
+
+<!-- forced password change -->
+<section id="screen-change" class="screen center" hidden>
+  <div class="card narrow">
+    <h1>Choose your password</h1>
+    <p class="hint">You signed in with a temporary password. Choose your own to continue
+      (at least 10 characters).</p>
+    <div id="change-notice" class="notice" role="alert" hidden></div>
+    <form id="change-form" autocomplete="on">
+      <input type="text" name="username" autocomplete="username" hidden>
+      <label class="field">Temporary password
+        <input id="change-current" type="password" autocomplete="current-password" required></label>
+      <label class="field">New password
+        <input id="change-new" type="password" autocomplete="new-password" minlength="10" required></label>
+      <label class="field">New password again
+        <input id="change-repeat" type="password" autocomplete="new-password" minlength="10" required></label>
+      <button type="submit" class="btn primary block">Save and continue</button>
+    </form>
+    <button type="button" id="change-logout" class="btn ghost block">Sign out</button>
+  </div>
+</section>
+
+<!-- mandatory authenticator setup -->
+<section id="screen-totp" class="screen center" hidden>
+  <div class="card narrow">
+    <h1>Set up an authenticator app</h1>
+    <p class="hint">You can read every client's conversations, so an authenticator app is required.
+      Signing in will ask for a 6-digit code from an app such as Google Authenticator, Authy or 1Password.</p>
+    <div id="totp-notice" class="notice" role="alert" hidden></div>
+    <div id="totp-box"></div>
+    <button type="button" id="totp-logout" class="btn ghost block">Sign out</button>
+  </div>
+</section>
+
+<!-- the panel -->
+<section id="screen-app" class="screen" hidden>
+  <header class="topbar">
+    <div class="who">
+      <span class="brand">Moderator panel</span>
+      <span id="app-user" class="muted small"></span>
+    </div>
+    <button type="button" id="refresh" class="btn ghost" title="Load the latest state">Refresh</button>
+    <button type="button" id="logout" class="btn">Sign out</button>
+  </header>
+  <div id="global-stop" class="stop-banner" role="alert" hidden></div>
+  <nav class="tabs" aria-label="Sections">
+    <button type="button" class="tab" data-tab="clients">Clients <span class="badge" id="badge-clients" hidden></span></button>
+    <button type="button" class="tab" data-tab="signups">Sign-ups <span class="badge" id="badge-signups" hidden></span></button>
+    <button type="button" class="tab" data-tab="alerts">Alerts <span class="badge" id="badge-alerts" hidden></span></button>
+  </nav>
+  <main id="content"></main>
+</section>
+
+<div id="toasts" aria-live="polite"></div>
+
+<script src="/manager/manager.js"></script>
+</body>
+</html>

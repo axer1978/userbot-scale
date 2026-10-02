@@ -76,12 +76,15 @@ import controls
 import media
 import pg
 import platform_api
+import manager_admin_api
+import manager_api
 import owner_admin_api
 import owner_api
 import review_api
 import safety_api
 import tenant_config
 import tenants
+import terms_admin_api
 import unanswered_api
 import totp
 import wa_device_profiles
@@ -1488,14 +1491,19 @@ app.include_router(booking_api.router, dependencies=[Depends(require_auth)])
 # Kill switches, billing, alerts and health: admin only, like everything here.
 safety_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(safety_api.router, dependencies=[Depends(require_auth)])
-# Phase 4. Admin only: client logins, the unanswered queue, review batches.
-for _module in (owner_admin_api, unanswered_api, review_api):
+# Phase 4. Admin only: client logins, the unanswered queue, review batches;
+# and manager logins, the terms of service and the sign-up switch.
+for _module in (owner_admin_api, unanswered_api, review_api, manager_admin_api, terms_admin_api):
     _module.bind(get_pool=lambda: pool, get_bus=lambda: bus)
     app.include_router(_module.router, dependencies=[Depends(require_auth)])
 # The client dashboard's API has its own login (owner_auth.py), never the
 # admin's; every route there checks it.
 owner_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(owner_api.router)
+# The moderator panel's API: its own login too (manager_auth.py), and a
+# fixed list of what a manager may do (manager_api.py).
+manager_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(manager_api.router)
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 

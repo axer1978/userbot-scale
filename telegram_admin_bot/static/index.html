@@ -40,6 +40,8 @@
   <button id="open-onboarding" class="btn" title="Set up a new client step by step, or continue one">New client</button>
   <button id="open-review" class="btn" title="Review the bot's replies and export them for training">Review</button>
   <button id="open-owners" class="btn" title="Logins for business owners to their own dashboard (/owner/)">Client logins</button>
+  <button id="open-terms" class="btn" title="Terms of service clients accept, and whether clients can sign up themselves">Terms</button>
+  <button id="open-managers" class="btn" title="Moderator logins (/manager/) who can step in when you can't">Managers</button>
   <button id="logout" class="btn">Log out</button>
   </nav>
 </header>
@@ -298,6 +300,36 @@
   </div>
 </div>
 
+<div id="terms">
+  <div class="pf-shell">
+    <div class="pf-top">
+      <h2>Terms &amp; sign-up</h2>
+      <span class="muted">what clients accept, and who can ask for a login</span>
+      <span class="spacer"></span>
+      <button type="button" id="tm-close" class="btn">Close</button>
+    </div>
+    <div class="bk-scroll">
+      <div id="tm-tabs" class="pf-tabs"></div>
+      <div id="tm-body"></div>
+    </div>
+  </div>
+</div>
+
+<div id="managers">
+  <div class="pf-shell">
+    <div class="pf-top">
+      <h2>Managers</h2>
+      <span class="muted">moderators who can step in when you can't</span>
+      <span class="spacer"></span>
+      <button type="button" id="mg-close" class="btn">Close</button>
+    </div>
+    <div class="bk-scroll">
+      <div id="mg-tabs" class="pf-tabs"></div>
+      <div id="mg-body"></div>
+    </div>
+  </div>
+</div>
+
 <div id="outreach">
   <div class="sheet">
     <h2>Message my contacts</h2>
@@ -454,6 +486,8 @@
 <script src="/js/onboarding.js"></script>
 <script src="/js/unanswered.js"></script>
 <script src="/js/owners.js"></script>
+<script src="/js/terms.js"></script>
+<script src="/js/managers.js"></script>
 <script src="/js/boot.js"></script>
 </body>
 </html>

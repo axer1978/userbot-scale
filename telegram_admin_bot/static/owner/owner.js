@@ -17,10 +17,18 @@ const st = {
   chart: "bookings",   // or "messages"
   queue: "open",       // open | reviewed | all
   renderSeq: 0,        // drops a slow answer that arrives after a newer view was asked for
+  signupOptions: null, // GET /api/owner/signup-options, once it answered
+  terms: null,         // the terms version on the accept-terms screen
 };
 
 const VIEW_KEY = "owner.view";
 const CHANGE_PASSWORD = "change_password";
+const PENDING_APPROVAL = "pending_approval";
+const REJECTED = "rejected";
+const ACCEPT_TERMS = "accept_terms";
+const GATES = [CHANGE_PASSWORD, PENDING_APPROVAL, REJECTED, ACCEPT_TERMS];
+const SCREENS = ["screen-login", "screen-signup", "screen-change", "screen-pending", "screen-rejected",
+                 "screen-terms", "screen-app"];
 const CODE_REQUIRED = "code_required";
 const MIN_PASSWORD = 10;
 
@@ -107,6 +115,8 @@ const fmtDay = (iso, tz) => fmt(iso, tz, { weekday: "long", day: "numeric", mont
 const fmtShortDay = (iso, tz) => fmt(iso, tz, { day: "numeric", month: "short" });
 const fmtWhen = (iso, tz) => fmt(iso, tz, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
+const fmtDate = (iso) => fmt(iso, undefined, { day: "numeric", month: "long", year: "numeric" });
+
 function withBusy(button, fn) {
   return async (...args) => {
     if (button.disabled) return;
@@ -115,11 +125,50 @@ function withBusy(button, fn) {
   };
 }
 
+/* Terms text: "## " starts a heading, "- " a bullet (consecutive bullets
+   share one list), a blank line ends the paragraph or list, and other
+   consecutive lines join into one paragraph. Text only, never markup. */
+function renderTerms(container, body) {
+  let para = null;
+  let list = null;
+  const flush = () => {
+    if (para) container.appendChild(el("p", null, para.join(" ")));
+    para = null;
+  };
+  for (const raw of String(body || "").split("\n")) {
+    const line = raw.replace(/\s+$/, "");
+    if (!line.trim()) {
+      flush();
+      list = null;
+    } else if (line.startsWith("## ")) {
+      flush();
+      list = null;
+      container.appendChild(el("h2", null, line.slice(3).trim()));
+    } else if (line.startsWith("- ")) {
+      flush();
+      if (!list) list = container.appendChild(el("ul"));
+      list.appendChild(el("li", null, line.slice(2).trim()));
+    } else {
+      list = null;
+      if (!para) para = [];
+      para.push(line.trim());
+    }
+  }
+  flush();
+  return container;
+}
+
+function termsMeta(terms) {
+  const date = fmtDate(terms.published_at);
+  return `Version ${terms.version}` + (date ? `, published ${date}` : "");
+}
+
 /* -------------------------------------------------------------- screens */
 
 function show(id) {
-  for (const s of ["screen-login", "screen-change", "screen-app"]) $(s).hidden = s !== id;
+  for (const s of SCREENS) $(s).hidden = s !== id;
   if (id !== "screen-app") $("settings").hidden = true;
+  if (id !== "screen-signup") hideSignupTerms();
 }
 
 function notice(id, text, kind) {
@@ -136,6 +185,7 @@ function showLogin(message) {
   $("login-code-field").hidden = true;
   $("login-code").value = "";
   $("login-username").focus();
+  loadSignupOptions().then(updateSignupLink);
 }
 
 function showChange(message) {
@@ -145,11 +195,46 @@ function showChange(message) {
   $("change-current").focus();
 }
 
-// A 401 or a pending password change can come back from any call: the
-// session ran out, the admin disabled the login or reset its password.
+function showPending(account, message) {
+  show("screen-pending");
+  const name = account.display_name || account.username || "";
+  $("pending-text").textContent = (name ? `Thanks, ${name}. ` : "Thanks. ") +
+    "Your account is waiting for approval. We check every new account before it opens. " +
+    "Please come back later, or tap Refresh status.";
+  notice("pending-notice", message || "", "info");
+}
+
+function showRejected(account) {
+  show("screen-rejected");
+  const reason = (account.review_reason || "").trim();
+  $("rejected-reason").textContent = reason ? "Reason: " + reason : "";
+  $("rejected-reason").hidden = !reason;
+}
+
+// What stands between a signed-in login and the dashboard: a password
+// change, an approval, a rejection or new terms. Asks the server, which
+// knows, and opens the matching screen.
+async function routeGate(cause) {
+  let account;
+  try {
+    account = await api("GET", "/api/owner/account");
+  } catch (err) {
+    if (err.status === 401) showLogin("You were signed out. Please sign in again.");
+    else showLogin("Could not reach the server: " + err.message);
+    return;
+  }
+  if (account.gate === CHANGE_PASSWORD) showChange();
+  else if (account.gate === PENDING_APPROVAL) showPending(account);
+  else if (account.gate === REJECTED) showRejected(account);
+  else if (account.gate === ACCEPT_TERMS) await showTerms();
+  else showLogin("Could not open the dashboard: " + (cause ? cause.message : "please try again."));
+}
+
+// A 401 or a gate can come back from any call: the session ran out, the
+// admin disabled the login or reset its password, or new terms came out.
 function authProblem(err) {
   if (err && err.status === 401) { showLogin("You were signed out. Please sign in again."); return true; }
-  if (err && err.status === 403 && err.detail === CHANGE_PASSWORD) { showChange(); return true; }
+  if (err && err.status === 403 && GATES.includes(err.detail)) { routeGate(err); return true; }
   return false;
 }
 
@@ -158,12 +243,210 @@ async function boot() {
     st.me = await api("GET", "/api/owner/me");
   } catch (err) {
     if (err.status === 401) showLogin();
-    else if (err.status === 403 && err.detail === CHANGE_PASSWORD) showChange();
+    else if (err.status === 403) await routeGate(err);
     else showLogin("Could not reach the server: " + err.message);
     return;
   }
   startApp();
 }
+
+/* -------------------------------------------------------------- sign up */
+
+let signupOptionsLoading = null;
+
+// Asked once; a failed answer is asked again next time. `force` re-reads
+// it (the terms changed during a sign-up).
+function loadSignupOptions(force) {
+  if (st.signupOptions && !force) return Promise.resolve(st.signupOptions);
+  if (!signupOptionsLoading) {
+    signupOptionsLoading = api("GET", "/api/owner/signup-options")
+      .then((o) => { st.signupOptions = o; return o; })
+      .catch(() => st.signupOptions)
+      .finally(() => { signupOptionsLoading = null; });
+  }
+  return signupOptionsLoading;
+}
+
+function signupAvailable() {
+  const o = st.signupOptions;
+  return Boolean(o && o.open && o.terms);
+}
+
+function updateSignupLink() {
+  $("login-signup").hidden = !signupAvailable();
+}
+
+function applySignupTerms() {
+  const terms = st.signupOptions && st.signupOptions.terms;
+  $("signup-terms-link").textContent = terms && terms.title ? terms.title : "terms of service";
+}
+
+function showSignup() {
+  show("screen-signup");
+  notice("signup-notice", signupAvailable() ? "" : "Sign-up is not open right now. Please contact us for an account.");
+  applySignupTerms();
+  $("signup-name").focus();
+}
+
+function hideSignupTerms() {
+  $("signup-terms-box").hidden = true;
+  $("signup-read-terms").textContent = "Read the terms";
+}
+
+// The terms the person reads here are the ones they accept: if they are
+// newer than what the sign-up options said, the tick is cleared.
+async function loadSignupTerms() {
+  const box = clear($("signup-terms-box"));
+  box.appendChild(el("div", "loading", "Loading…"));
+  let terms;
+  try {
+    terms = await api("GET", "/api/terms");
+  } catch (err) {
+    clear(box).appendChild(el("div", "error-box", err.status === 404 ? "No terms are published yet." :
+      "Could not load the terms: " + err.message));
+    return;
+  }
+  const known = st.signupOptions && st.signupOptions.terms;
+  if (st.signupOptions && (!known || known.version !== terms.version)) {
+    st.signupOptions.terms = { version: terms.version, title: terms.title };
+    $("signup-accept").checked = false;
+    applySignupTerms();
+  }
+  clear(box);
+  box.appendChild(el("p", "muted small", termsMeta(terms)));
+  renderTerms(box, terms.body);
+  box.scrollTop = 0;
+}
+
+$("open-signup").addEventListener("click", showSignup);
+$("signup-back").addEventListener("click", () => showLogin());
+
+$("signup-read-terms").addEventListener("click", () => {
+  const box = $("signup-terms-box");
+  if (!box.hidden) { hideSignupTerms(); return; }
+  box.hidden = false;
+  $("signup-read-terms").textContent = "Hide the terms";
+  loadSignupTerms();
+});
+
+$("signup-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const password = $("signup-password").value;
+  if (!signupAvailable()) {
+    notice("signup-notice", "Sign-up is not open right now. Please contact us for an account.");
+    return;
+  }
+  if (password.length < MIN_PASSWORD) { notice("signup-notice", `Password: at least ${MIN_PASSWORD} characters, please.`); return; }
+  if (password !== $("signup-repeat").value) { notice("signup-notice", "The two passwords are not the same."); return; }
+  if (!$("signup-accept").checked) { notice("signup-notice", "Please tick the box to accept the terms."); return; }
+  const button = ev.target.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    await api("POST", "/api/owner/signup", {
+      email: $("signup-email").value.trim(),
+      password,
+      display_name: $("signup-name").value.trim(),
+      company: $("signup-company").value.trim(),
+      phone: $("signup-phone").value.trim(),
+      terms_version: st.signupOptions.terms.version,
+      accept_terms: true,
+    });
+    for (const id of ["signup-password", "signup-repeat"]) $(id).value = "";
+    $("signup-accept").checked = false;
+    notice("signup-notice", "");
+    await boot();
+  } catch (err) {
+    notice("signup-notice", err.detail || err.message);
+    if (err.status === 403 && st.signupOptions) st.signupOptions.open = false;
+    if (err.status === 409) {
+      // Either the e-mail is taken or the terms changed: re-read the terms to tell.
+      const before = st.signupOptions && st.signupOptions.terms ? st.signupOptions.terms.version : null;
+      const o = await loadSignupOptions(true);
+      const after = o && o.terms ? o.terms.version : null;
+      if (after !== before) {
+        $("signup-accept").checked = false;
+        applySignupTerms();
+        if (!$("signup-terms-box").hidden) loadSignupTerms();
+      }
+    }
+  } finally {
+    button.disabled = false;
+  }
+});
+
+/* --------------------------------------------------- approval and terms */
+
+$("pending-refresh").addEventListener("click", withBusy($("pending-refresh"), async () => {
+  let account;
+  try {
+    account = await api("GET", "/api/owner/account");
+  } catch (err) {
+    if (!authProblem(err)) notice("pending-notice", "Could not check: " + err.message);
+    return;
+  }
+  if (account.gate === PENDING_APPROVAL) {
+    showPending(account, "Still waiting for approval. Please check again later.");
+    return;
+  }
+  await boot();
+}));
+
+async function showTerms(message) {
+  let data;
+  try {
+    data = await api("GET", "/api/owner/terms");
+  } catch (err) {
+    if (!authProblem(err)) showLogin("Could not load the terms of service: " + err.message);
+    return;
+  }
+  show("screen-terms");
+  const t = data.terms;
+  st.terms = t;
+  $("terms-accept-check").checked = false;
+  $("terms-accept").disabled = true;
+  $("terms-accept-check").disabled = !t;
+  notice("terms-notice", message || "", "info");
+  const box = clear($("terms-body"));
+  if (!t) {
+    $("terms-title").textContent = "Terms of service";
+    $("terms-intro").textContent = "";
+    $("terms-meta").textContent = "";
+    $("terms-change").hidden = true;
+    box.appendChild(el("div", "empty", "No terms are published yet."));
+    return;
+  }
+  $("terms-title").textContent = t.title || "Terms of service";
+  $("terms-intro").textContent = data.accepted
+    ? "Our terms of service changed. Please read the new version and accept it to keep using the dashboard."
+    : "Please read our terms of service and accept them to use the dashboard.";
+  $("terms-meta").textContent = termsMeta(t);
+  const note = (t.change_note || "").trim();
+  $("terms-change").textContent = note ? "What changed: " + note : "";
+  $("terms-change").hidden = !note;
+  renderTerms(box, t.body);
+  box.scrollTop = 0;
+}
+
+$("terms-accept-check").addEventListener("change", () => {
+  $("terms-accept").disabled = !$("terms-accept-check").checked;
+});
+
+$("terms-accept").addEventListener("click", async () => {
+  const button = $("terms-accept");
+  if (!st.terms || !$("terms-accept-check").checked || button.disabled) return;
+  button.disabled = true;
+  try {
+    await api("POST", "/api/owner/terms/accept", { version: st.terms.version });
+    toast("Thank you. The terms are accepted.", "info");
+    await boot();
+  } catch (err) {
+    if (err.status === 409) await showTerms(err.detail || "The terms changed in the meantime. Please read the new version.");
+    else if (!authProblem(err)) {
+      notice("terms-notice", err.message);
+      button.disabled = !$("terms-accept-check").checked;
+    }
+  }
+});
 
 /* ---------------------------------------------------------------- login */
 
@@ -222,6 +505,7 @@ async function logout() {
 }
 
 $("change-logout").addEventListener("click", logout);
+for (const id of ["pending-logout", "rejected-logout", "terms-logout"]) $(id).addEventListener("click", logout);
 $("logout").addEventListener("click", logout);
 
 /* ------------------------------------------------------------ dashboard */

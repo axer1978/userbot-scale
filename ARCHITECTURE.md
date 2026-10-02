@@ -52,7 +52,7 @@ The public tokens (`tenants.calendar_token`, `bookings.customer_token`) are 244 
 
 ## Data model (Postgres)
 
-Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `0003_bookings.sql` (bookings), `0004_safety.sql` (safety and control), `0005_client_facing.sql` (client logins, unanswered queue, review, digest), `0006_whatsapp.sql` (WhatsApp).
+Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `0003_bookings.sql` (bookings), `0004_safety.sql` (safety and control), `0005_client_facing.sql` (client logins, unanswered queue, review, digest), `0006_whatsapp.sql` (WhatsApp), `0007_accounts.sql` (client sign-up, terms of service, manager logins).
 
 | Table | Key columns | Notes |
 |---|---|---|
@@ -80,6 +80,9 @@ Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `
 | `worker_heartbeats`, `panel_sessions`, `schema_migrations` | | Operational, not tenant data |
 
 | `owners`, `owner_tenants`, `owner_sessions` | owner: username, scrypt password hash, encrypted TOTP; links to tenants; sessions by token hash | Client master logins (phase 4). Every owner route is scoped to the owner's linked tenants |
+| `owners` (0007 columns) | status (pending/active/rejected), email, company, phone, reviewed_by/at, review_reason | A self sign-up is `pending` until approved; admin-created logins are `active` |
+| `terms_versions`, `terms_acceptances` | version, title, body, change_note, requires_acceptance; owner_id, username, version, ip, user_agent | Both append-only (trigger `append_only()`). Acceptances have no foreign key, so they outlive a deleted login |
+| `managers`, `manager_sessions` | like `owners`/`owner_sessions`, no tenant links | Moderator logins (manager_auth.py) |
 | `unanswered_queue` | tenant_id, chat_id, message_id, reason, status (open/reviewed/added_to_template) | Customer messages that got no reply, decided in code |
 | `review_batches`, `review_items` | tenant, date range; item context, reply, decision, edited_text | Review for the trainer; JSONL export |
 | `digest_log` | tenant_id, week_start | At most one weekly digest per tenant and week |
@@ -93,6 +96,23 @@ Not built yet (later phases): `customer_flags`, `conversations.language`.
 - **Staging** (`staging.enabled`): `on_incoming` answers only `staging.test_chats`, after escalation and soft-off.
 - **Digest** (`digest.py`) runs in the scheduler's platform round next to health and billing.
 - **Public exposure**: Caddy (TLS, HSTS) → panel, which adds CSP and the other headers itself (`panel.SECURITY_HEADERS`). Postgres and Valkey are never published.
+
+## Accounts: sign-up, terms, managers
+
+Three logins, three cookies, none valid for another's routes (`test_security_audit.py` sweeps every route with each):
+
+| Login | Cookie | Routes | Module |
+|---|---|---|---|
+| admin | `admin_token` | `/api/*` except below | panel.py |
+| client (owner) | `owner_token` | `/api/owner/*`, page `/owner/` | owner_auth.py, owner_api.py |
+| manager | `manager_token` | `/api/manager/*`, page `/manager/` | manager_auth.py, manager_api.py |
+
+Public without any login: `/api/terms` (page `/terms/`), `/api/owner/signup-options`, `/api/owner/signup`, and the three login/logout pairs.
+
+- **Sign-up** (`POST /api/owner/signup`) is closed until the admin opens it (`platform_settings.signup`, Terms overlay), and can't be opened before a terms version is published. It creates a `pending` login linked to no business, records the accepted terms version, raises one platform alert (`signup_pending`) and signs the person in. Limits: 3 per address and hour, at most 50 waiting at once. The admin (`/api/owners/{id}/approve|reject`) or a manager approves or rejects; only the admin links businesses. With SMTP set, the applicant gets an e-mail either way.
+- **The gate** (`owner_auth.gate`), checked by every owner route in this order: temporary password → `change_password`; pending → `pending_approval`; rejected → `rejected`; not accepted the newest version with `requires_acceptance` → `accept_terms`. `/api/owner/account` and `/api/owner/terms(/accept)` answer whatever the gate says, so the page can show the right screen.
+- **Terms** (`terms.py`): a version can't be edited or deleted; publishing is the only change. A version published without `requires_acceptance` (a correction) asks nobody to accept again. A body still containing `[[FILL IN` is refused, which is how the starter text (`terms.STARTER_BODY`) marks the parts only the platform owner can write. Format: `## ` heading, `- ` bullet, blank line = paragraph; rendered with textContent only.
+- **Managers** are created by the admin (`/api/managers`) with a temporary password; at first sign-in they choose their own and must set up an authenticator before any manager route opens. What they may do is a fixed list in `manager_api.py` (see its docstring): see every client, pause a bot, lift a manual or anomaly hold, read conversations, pause one chat, acknowledge alerts, approve/reject sign-ups, disable/enable client logins. Every action needs a reason and is audited as `manager:<username>`. They cannot change configs or prompts, touch billing or other holds, send messages, use the global stop or hard-off, link businesses, reset passwords, or manage managers or terms.
 
 ## Configuration: three layers
 

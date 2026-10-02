@@ -38,6 +38,7 @@ import asyncpg
 from fastapi import HTTPException, Request
 
 import crypto
+import terms
 import totp
 
 COOKIE = "owner_token"
@@ -61,6 +62,14 @@ WRONG_CREDENTIALS = "Wrong username or password"
 CHANGE_PASSWORD = "change_password"
 # The detail of the 401 when the password was right and a code is needed.
 CODE_REQUIRED = "code_required"
+# The details of the 403 every owner route answers for a login that signed
+# itself up and is not approved yet, was turned down, or has not accepted
+# the current terms of service. The page shows the matching screen.
+PENDING_APPROVAL = "pending_approval"
+REJECTED = "rejected"
+ACCEPT_TERMS = "accept_terms"
+
+PENDING, ACTIVE, REJECTED_STATUS = "pending", "active", "rejected"
 
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
@@ -281,9 +290,11 @@ async def session_owner(pool: asyncpg.Pool, token: Optional[str]) -> Optional[di
         return None
     row = await pool.fetchrow(
         """
-        SELECT o.id, o.username, o.display_name, o.must_change_password,
+        SELECT o.id, o.username, o.display_name, o.must_change_password, o.status, o.review_reason,
                o.totp_secret_enc IS NOT NULL AS totp,
-               array(SELECT tenant_id FROM owner_tenants WHERE owner_id = o.id ORDER BY tenant_id) AS tenant_ids
+               array(SELECT tenant_id FROM owner_tenants WHERE owner_id = o.id ORDER BY tenant_id) AS tenant_ids,
+               (SELECT max(version) FROM terms_versions WHERE requires_acceptance) AS terms_required,
+               (SELECT max(version) FROM terms_acceptances WHERE owner_id = o.id) AS terms_accepted
           FROM owner_sessions s JOIN owners o ON o.id = s.owner_id
          WHERE s.token_hash = $1 AND s.expires_at > now() AND NOT o.disabled
         """,
@@ -294,7 +305,10 @@ async def session_owner(pool: asyncpg.Pool, token: Optional[str]) -> Optional[di
     return {
         "id": row["id"], "username": row["username"], "display_name": row["display_name"],
         "must_change_password": row["must_change_password"], "totp": row["totp"],
+        "status": row["status"], "review_reason": row["review_reason"],
         "tenant_ids": list(row["tenant_ids"]),
+        "terms": {"required": row["terms_required"], "accepted": row["terms_accepted"],
+                  "ok": terms.is_current(row["terms_required"], row["terms_accepted"])},
     }
 
 
@@ -343,13 +357,30 @@ async def any_owner(request: Request) -> dict[str, Any]:
     return owner
 
 
+def gate(owner: dict[str, Any]) -> Optional[str]:
+    """Why this owner may not use the dashboard yet, in the order the page
+    walks them through it; None when nothing stands in the way."""
+    if owner["must_change_password"]:
+        return CHANGE_PASSWORD
+    if owner["status"] == PENDING:
+        return PENDING_APPROVAL
+    if owner["status"] == REJECTED_STATUS:
+        return REJECTED
+    if not owner["terms"]["ok"]:
+        return ACCEPT_TERMS
+    return None
+
+
 async def current_owner(request: Request) -> dict[str, Any]:
     """{id, username, display_name, tenant_ids, ...} of the logged-in owner,
     401 without a valid owner cookie (the admin cookie counts for nothing
-    here), 403 "change_password" while a temporary password is in use."""
+    here), 403 with gate()'s reason while a temporary password is in use,
+    the login waits for approval or was turned down, or the current terms
+    of service are not accepted yet."""
     owner = await any_owner(request)
-    if owner["must_change_password"]:
-        raise HTTPException(status_code=403, detail=CHANGE_PASSWORD)
+    reason = gate(owner)
+    if reason:
+        raise HTTPException(status_code=403, detail=reason)
     return owner
 
 
