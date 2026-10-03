@@ -289,8 +289,9 @@ ROUTES: dict[RouteKey, Resolver] = {
     ("POST", "/api/manager/clients/{owner_id}/reject"): "clients.approve",
     ("POST", "/api/manager/clients/{owner_id}/disabled"): "clients.disable",
 }
-# Never open to a manager, whatever the role: staff and roles themselves.
-ADMIN_ONLY_PREFIXES = ("/api/managers", "/api/staff/")
+# Never open to a manager, whatever the role: staff and roles themselves,
+# and finetuning (it rewrites a whole industry's prompt).
+ADMIN_ONLY_PREFIXES = ("/api/managers", "/api/staff/", "/api/finetune/")
 
 # A pause from the moderator panel's /pause and resume of a manual hold.
 _MANAGER_PROTECTIVE = {("POST", "/api/manager/tenants/{tenant_id}/pause")}
