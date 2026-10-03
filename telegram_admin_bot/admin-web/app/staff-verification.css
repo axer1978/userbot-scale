@@ -1,0 +1,101 @@
+/* Staff (components/pages/Staff.tsx) and Verification
+   (components/pages/Verification.tsx), carried over from the .sr-* and .vf-*
+   rules of static/css/panel.css. Kept apart from globals.css so these two
+   pages can move without touching the shared sheet. */
+
+/* Both pages were 1080px wide. PageShell has no such width, so the page is
+   wrapped in a box that takes no space of its own and widens the shell. */
+.sv-w1080 { display: contents; }
+.sv-w1080 > .page > .pf-shell { max-width: 1080px; }
+
+/* Shared with the client-logins cards (verification facts and reasons). */
+.ow-reason { color: #ff9a9d; margin: 6px 0 4px; white-space: pre-wrap; word-break: break-word; }
+.ow-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 16px;
+  font-size: 13px; margin: 8px 0 4px; }
+.ow-facts > div { display: flex; gap: 8px; min-width: 0; }
+.ow-facts > div > span:last-child { overflow-wrap: anywhere; }
+
+/* ---------- staff ---------- */
+.sr-meta { margin: 4px 0 8px; }
+.sr-change .sr-sent { max-height: 40vh; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.sr-route { color: var(--muted); font-size: 11.5px; font-family: ui-monospace, Consolas, monospace;
+  margin-top: 4px; word-break: break-all; }
+.sr-request.sr-decided { opacity: .8; }
+.sr-result .pf-errors { white-space: pre-wrap; word-break: break-word; }
+.sr-ok { color: var(--ok); font-size: 13px; margin-top: 10px; }
+.sr-table th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 6px 8px;
+  border-bottom: 1px solid var(--border); }
+.sr-table td.sr-when { white-space: nowrap; }
+.sr-table td.sr-note { font-size: 12.5px; max-width: 280px; word-break: break-word; }
+.sr-details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.sr-details .sr-change { margin-top: 4px; min-width: 260px; }
+.sr-roles { display: flex; gap: 16px; align-items: flex-start; }
+.sr-role-list { width: 220px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
+.sr-role { display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: 1px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 10px; font-size: 12.5px; }
+.sr-role:hover { border-color: var(--accent); }
+.sr-role.on { background: var(--accent-dim); border-color: var(--accent); }
+.sr-role-name { font-weight: 600; font-size: 13.5px; }
+.sr-role-list .btn { align-self: flex-start; margin-top: 4px; }
+.sr-editor { flex: 1; min-width: 0; }
+.sr-editor .pf-section .title { flex-wrap: wrap; margin-bottom: 10px; }
+.sr-hint { margin: 6px 0 0; font-size: 12.5px; }
+.sr-quick { margin-left: auto; display: inline-flex; gap: 6px; flex-wrap: wrap; font-weight: normal; }
+.sr-action { display: flex; gap: 12px; align-items: center; padding: 7px 0; border-top: 1px dashed var(--border);
+  flex-wrap: wrap; }
+.sr-action-text { flex: 1; min-width: 220px; font-size: 13px; }
+.sr-action-key { color: var(--muted); font-size: 11px; font-family: ui-monospace, Consolas, monospace; }
+.sr-protective { color: #e0b84a; font-size: 11.5px; }
+.sr-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+.sr-level { background: var(--bg); color: var(--muted); border: 0; border-left: 1px solid var(--border);
+  padding: 5px 10px; font-size: 12px; }
+.sr-level:first-child { border-left: 0; }
+.sr-level:hover { color: var(--text); }
+.sr-level.on { color: #fff; font-weight: 600; }
+.sr-level.sr-off.on { background: #3a414d; }
+.sr-level.sr-allow.on { background: var(--ok); }
+.sr-level.sr-approve.on { background: var(--pending-border); }
+.sr-save { margin-bottom: 8px; }
+
+/* ---------- verification ---------- */
+.vf-showall { margin-bottom: 12px; }
+.vf-done { opacity: .75; }
+.vf-small { font-size: 12px; }
+.vf-video-row { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; margin-top: 10px;
+  align-items: start; }
+.vf-video video { width: 100%; max-height: 60vh; background: #000; border-radius: 8px; display: block; }
+.vf-missing { color: var(--muted); font-size: 13px; padding: 18px 12px; text-align: center;
+  border: 1px dashed var(--border); border-radius: 8px; background: var(--bg); }
+.vf-challenge { border: 1px solid var(--accent); border-radius: 8px; padding: 10px 14px; background: var(--bg); }
+.vf-must-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.vf-code { font-family: ui-monospace, Consolas, monospace; font-size: 34px; font-weight: 700; letter-spacing: 3px;
+  margin: 4px 0; user-select: all; }
+.vf-gesture { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+.vf-checklist { margin-top: 10px; font-size: 12.5px; color: #e0b84a; }
+.vf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; align-items: start; }
+.vf-grid .pf-section { margin-bottom: 0; }
+.vf-media img, .vf-media video { width: 100%; max-height: 320px; object-fit: contain; background: #000;
+  border-radius: 8px; display: block; }
+.vf-photo-title { margin-top: 8px; flex-wrap: wrap; }
+.vf-replaces { margin: 6px 0; }
+.vf-replaces .vf-media img { max-height: 120px; width: auto; max-width: 100%; }
+.vf-desc { margin: 8px 0 0; }
+.vf-photo .pf-actions { margin-top: 8px; }
+.vf-photo .pf-actions input { min-width: 0; }
+.vf-tenant .title { flex-wrap: wrap; }
+.vf-owner { padding: 4px 0; border-bottom: 1px dashed var(--border); }
+.vf-owner-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
+.vf-reason { margin-top: 6px; }
+.vf-reason[hidden], .ow-verify[hidden] { display: none; }
+.vf-industries .title { margin-bottom: 6px; }
+.vf-industry { margin-bottom: 6px; flex-wrap: wrap; }
+
+@media (max-width: 760px) {
+  .vf-video-row { grid-template-columns: 1fr; }
+  .vf-code { font-size: 28px; }
+  .sr-roles { flex-direction: column; align-items: stretch; }
+  .sr-role-list { width: auto; flex-direction: row; flex-wrap: wrap; }
+  .sr-level { padding: 8px 10px; }
+  .sr-table { display: block; overflow-x: auto; }
+}

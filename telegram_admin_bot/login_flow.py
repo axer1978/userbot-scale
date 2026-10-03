@@ -178,7 +178,7 @@ class LoginFlow:
             phone = "+" + phone
 
         # Sign in as the same device the runtime will later present with this
-        # auth key (session_runtime._resolve_identity falls back to the same
+        # auth key (telegram_transport's _resolve_identity falls back to the same
         # deterministic derive()), not Telethon's default "PC 64bit".
         identity = device_profiles.derive(session_id)
         try:
@@ -230,7 +230,9 @@ class LoginFlow:
         # The code is on its way — only now do we create/refresh the row, so
         # a rejected phone number or bad api_id/api_hash never creates one.
         try:
-            await self._registry.create(session_id, label=label, api_id=api_id, api_hash=api_hash)
+            await self._registry.create(
+                session_id, label=label, api_id=api_id, api_hash=api_hash, channel="telegram"
+            )
             await self._registry.set_proxy(session_id, proxy_url or None)
         except Exception as exc:
             await client.disconnect()

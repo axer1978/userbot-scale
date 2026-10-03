@@ -10,6 +10,11 @@ What an owner can do is deliberately small: read their numbers, bookings
 and unanswered messages, mark an unanswered message reviewed, and manage
 their own password and authenticator. Nothing here changes a bot's config,
 pauses it, or reaches the kill switches; those stay behind the admin login.
+
+Sign-up: when the admin has opened it and published terms, anyone can
+create a login here. It starts 'pending', is linked to no business and
+opens nothing (owner_auth.gate) until the admin or a manager approves it.
+A sign-up raises a platform alert, so the operator hears about it.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
@@ -31,7 +37,10 @@ import controls
 import health
 import owner_auth
 import stats
+import alerts
+import owner_admin_api
 import tenant_config
+import terms
 import totp
 import unanswered
 
@@ -44,6 +53,14 @@ EVENT_LOGIN = "owner_login"
 EVENT_PASSWORD = "owner_password_changed"
 EVENT_TOTP = "owner_totp_changed"
 EVENT_REVIEWED = "unanswered_reviewed"
+EVENT_SIGNUP = "owner_signup"
+
+# Sign-up limits: per address, and how many may wait for approval at once
+# (beyond that, sign-up answers "try later" instead of filling the table).
+SIGNUP_MAX_PER_IP = 3
+SIGNUP_WINDOW_SECONDS = 60 * 60
+MAX_PENDING_SIGNUPS = 50
+ALERT_SIGNUP = owner_admin_api.ALERT_SIGNUP
 
 # Booking columns an owner never needs: the customer's secret page token,
 # the pseudonymous ref, and plumbing between this system and Telegram/Google.
@@ -59,6 +76,8 @@ _get_pool: Callable[[], Any] = lambda: None  # noqa: E731
 _get_bus: Callable[[], Any] = lambda: None  # noqa: E731
 # owner id -> (secret, issued at on time.monotonic()), until confirmed with a code.
 _pending_totp: dict[int, tuple[str, float]] = {}
+# client IP -> times of its recent sign-ups (time.monotonic()).
+_signups: dict[str, list[float]] = {}
 
 
 def bind(*, get_pool: Callable[[], Any], get_bus: Callable[[], Any]) -> None:
@@ -173,6 +192,157 @@ async def api_password(body: PasswordBody, request: Request,
     return {"ok": True}
 
 
+# ----------------------------------------------------- sign-up and terms
+
+
+def _public_terms(version: dict[str, Any]) -> dict[str, Any]:
+    return {key: version[key] for key in ("version", "title", "body", "change_note", "published_at")}
+
+
+@router.get("/api/terms")
+async def api_terms() -> dict[str, Any]:
+    """The current terms of service, for anyone (the /terms/ page)."""
+    current = await terms.latest(_get_pool())
+    if current is None:
+        raise HTTPException(status_code=404, detail="No terms of service are published yet.")
+    return _public_terms(current)
+
+
+@router.get("/api/owner/signup-options")
+async def api_signup_options() -> dict[str, Any]:
+    pool = _get_pool()
+    current = await terms.latest(pool)
+    return {"open": await terms.signup_open(pool),
+            "terms": {"version": current["version"], "title": current["title"]} if current else None}
+
+
+class SignupBody(BaseModel):
+    email: str = Field("", max_length=200)
+    password: str = Field("", max_length=1000)
+    display_name: str = Field("", max_length=200)
+    company: str = Field("", max_length=200)
+    phone: str = Field("", max_length=50)
+    # The version the person read and ticked, so a change in between is caught.
+    terms_version: int = 0
+    accept_terms: bool = False
+
+
+def _check_signup_rate(ip: str) -> None:
+    now = time.monotonic()
+    recent = [t for t in _signups.get(ip, ()) if t > now - SIGNUP_WINDOW_SECONDS]
+    if recent:
+        _signups[ip] = recent
+    else:
+        _signups.pop(ip, None)
+    if len(recent) >= SIGNUP_MAX_PER_IP:
+        raise HTTPException(status_code=429, detail="Too many sign-ups from your address. Try again later.",
+                            headers={"Retry-After": str(int(recent[0] + SIGNUP_WINDOW_SECONDS - now) + 1)})
+
+
+@router.post("/api/owner/signup")
+async def api_signup(body: SignupBody, request: Request) -> JSONResponse:
+    """Creates a pending login, records the terms it accepted, and signs it
+    in (the page then shows "waiting for approval")."""
+    pool = _get_pool()
+    if not await terms.signup_open(pool):
+        raise HTTPException(status_code=403, detail="Sign-up is closed. Please contact us for an account.")
+    ip = owner_auth.client_ip(request)
+    email = body.email.strip().lower()
+    if not owner_admin_api.EMAIL_RE.match(email) or not owner_admin_api.USERNAME_RE.match(email):
+        raise HTTPException(status_code=400, detail="Enter a valid e-mail address (at most 64 characters).")
+    name, company, phone = body.display_name.strip(), body.company.strip(), body.phone.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Enter your name.")
+    if not company:
+        raise HTTPException(status_code=400, detail="Enter your business name.")
+    try:
+        owner_auth.check_new_password(body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    if not body.accept_terms:
+        raise HTTPException(status_code=400, detail="You have to accept the terms of service to sign up.")
+    current = await terms.latest(pool)
+    if current is None or body.terms_version != current["version"]:
+        raise HTTPException(status_code=409, detail="The terms of service changed while you were signing up. "
+                                                    "Please read the new version and accept it.")
+    _check_signup_rate(ip)
+    if await pool.fetchval("SELECT count(*) FROM owners WHERE status = 'pending'") >= MAX_PENDING_SIGNUPS:
+        log.warning("Sign-up refused: %d logins already wait for approval.", MAX_PENDING_SIGNUPS)
+        raise HTTPException(status_code=503, detail="We can't take new sign-ups right now. Please try again later.")
+    actor = f"signup:{email}"
+    try:
+        async with pool.acquire() as con, con.transaction():
+            owner_id = await con.fetchval(
+                "INSERT INTO owners (username, email, display_name, company, phone, password_hash, "
+                "must_change_password, status, created_by) VALUES ($1, $1, $2, $3, $4, $5, false, 'pending', $6) "
+                "RETURNING id",
+                email, name, company, phone, owner_auth.hash_password(body.password), actor,
+            )
+            await terms.accept(con, owner_id=owner_id, username=email, version=current["version"], ip=ip,
+                               user_agent=request.headers.get("user-agent", ""))
+            await audit.record(con, tenant_id=None, actor=actor, event=EVENT_SIGNUP,
+                               reason="signed up on the dashboard, waiting for approval",
+                               payload={"owner_id": owner_id, "username": email, "company": company, "ip": ip,
+                                        "terms_version": current["version"]})
+    except asyncpg.exceptions.UniqueViolationError:
+        raise HTTPException(status_code=409,
+                            detail="An account with this e-mail already exists. Sign in instead.") from None
+    _signups.setdefault(ip, []).append(time.monotonic())
+    await alerts.raise_alert(pool, tenant_id=None, kind=ALERT_SIGNUP, severity=alerts.INFO,
+                             message=f"New client sign-up waiting for approval: {email} ({company})",
+                             payload={"owner_id": owner_id})
+    token = await owner_auth.create_session(pool, owner_id, ip)
+    response = JSONResponse({"ok": True, "status": owner_auth.PENDING})
+    owner_auth.set_cookie(response, token)
+    return response
+
+
+@router.get("/api/owner/account")
+async def api_account(owner: dict = Depends(owner_auth.any_owner)) -> dict[str, Any]:
+    """Who is signed in and what (if anything) still stands between them
+    and the dashboard. Answers whatever the gate says, unlike /me."""
+    return {
+        "username": owner["username"], "display_name": owner["display_name"], "status": owner["status"],
+        "review_reason": owner["review_reason"] if owner["status"] == owner_auth.REJECTED_STATUS else "",
+        "must_change_password": owner["must_change_password"], "terms": owner["terms"],
+        "verification": owner["verification"], "gate": owner_auth.gate(owner),
+    }
+
+
+@router.get("/api/owner/terms")
+async def api_owner_terms(owner: dict = Depends(owner_auth.any_owner)) -> dict[str, Any]:
+    current = await terms.latest(_get_pool())
+    return {"terms": _public_terms(current) if current else None, "accepted": owner["terms"]["accepted"],
+            "ok": owner["terms"]["ok"]}
+
+
+class AcceptBody(BaseModel):
+    version: int
+
+
+@router.post("/api/owner/terms/accept")
+async def api_accept_terms(body: AcceptBody, request: Request,
+                           owner: dict = Depends(owner_auth.any_owner)) -> dict[str, Any]:
+    """Accepts the newest version, and only that one: an older version
+    number means the page showed outdated text."""
+    pool = _get_pool()
+    current = await terms.latest(pool)
+    if current is None:
+        raise HTTPException(status_code=404, detail="No terms of service are published yet.")
+    if body.version != current["version"]:
+        raise HTTPException(status_code=409, detail="The terms changed in the meantime. Please read the new version.")
+    if owner["terms"]["accepted"] != current["version"]:
+        ip = owner_auth.client_ip(request)
+        async with pool.acquire() as con, con.transaction():
+            await terms.accept(con, owner_id=owner["id"], username=owner["username"], version=current["version"],
+                               ip=ip, user_agent=request.headers.get("user-agent", ""))
+            for tenant_id in owner["tenant_ids"] or [None]:
+                await audit.record(con, tenant_id=tenant_id, actor=owner_auth.actor(owner),
+                                   event=terms.EVENT_ACCEPTED, reason=f"accepted terms version {current['version']}",
+                                   payload={"owner_id": owner["id"], "version": current["version"], "ip": ip})
+    return {"ok": True, "accepted": current["version"]}
+
+
 # -------------------------------------------------------------------- TOTP
 
 
@@ -240,7 +410,7 @@ async def _tenants(owner: dict[str, Any]) -> list[dict[str, Any]]:
     pool = _get_pool()
     rows = await pool.fetch(
         """
-        SELECT t.id, t.name, t.session_id, t.config_json, i.default_config,
+        SELECT t.id, t.name, t.session_id, t.config_json, i.default_config, i.requires_review,
                h.status AS health, h.last_seen_at
           FROM tenants t
           JOIN industries i ON i.id = t.industry_id
@@ -263,6 +433,8 @@ async def _tenants(owner: dict[str, Any]) -> list[dict[str, Any]]:
         off = await controls.off_reason(pool, row["id"])
         out.append({
             "id": row["id"], "name": row["name"], "session_id": row["session_id"], "timezone": zone,
+            # Photos for this business are added through review (owner_review_api.py).
+            "requires_review": row["requires_review"],
             "bot": {"sending": not off, "off_reason": off},
             "health": {"status": row["health"] or health.UNKNOWN,
                        "last_seen_at": row["last_seen_at"].isoformat(timespec="seconds")

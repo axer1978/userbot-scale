@@ -633,8 +633,10 @@ def legacy_prompt(legacy: dict[str, Any]) -> dict[str, Any]:
         "sign_off": persona.get("signature_style", ""),
         "writing_samples": legacy["finetune"].get("writing_samples", ""),
     }
+    # The persona's boundaries come on top of the industry's, never instead.
     overrides = {
-        key: {"mode": "override", "text": text[: prompt_layers.MAX_SECTION_CHARS]}
+        key: {"mode": "append" if key in prompt_layers.APPEND_ONLY_SECTIONS else "override",
+              "text": text[: prompt_layers.MAX_SECTION_CHARS]}
         for key, text in mapping.items() if text.strip()
     }
     _, note = legacy_language(persona.get("languages", ""))
@@ -712,12 +714,13 @@ async def backfill(pool: asyncpg.Pool) -> dict[str, Any]:
 
     refs = 0
     missing = await pool.fetch(
-        "SELECT tenant_id, session_id, chat_id FROM conversations WHERE customer_ref IS NULL"
+        "SELECT c.tenant_id, c.session_id, c.chat_id, t.channel FROM conversations c "
+        "JOIN tenants t ON t.id = c.tenant_id WHERE c.customer_ref IS NULL"
     )
     for row in missing:
         await pool.execute(
             "UPDATE conversations SET customer_ref = $3 WHERE tenant_id = $1 AND chat_id = $2",
-            row["tenant_id"], row["chat_id"], crypto.customer_ref(row["tenant_id"], "telegram", row["chat_id"]),
+            row["tenant_id"], row["chat_id"], crypto.customer_ref(row["tenant_id"], row["channel"], row["chat_id"]),
         )
         refs += 1
     return {"imported": imported, "customer_refs": refs}

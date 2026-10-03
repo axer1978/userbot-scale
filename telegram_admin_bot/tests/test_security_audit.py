@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from contextlib import asynccontextmanager
 
 import httpx
@@ -35,16 +36,25 @@ TEMP = "temporary-pass-1"
 MINE = "my-own-password-2"
 
 # The only /api/* routes anyone may call without a login.
-PUBLIC_API = {"/api/login", "/api/login-options", "/api/logout", "/api/owner/login", "/api/owner/logout"}
+PUBLIC_API = {"/api/login", "/api/login-options", "/api/logout", "/api/owner/login", "/api/owner/logout",
+              "/api/owner/signup", "/api/owner/signup-options", "/api/terms",
+              "/api/manager/login", "/api/manager/logout"}
+# Routes behind their own login rather than the admin's.
+OWN_LOGIN = ("/api/owner/", "/api/manager/")
 
 
 @pytest.fixture(autouse=True)
 def fresh_owner_state(monkeypatch):
+    import manager_api
+    import manager_auth
     import owner_api
 
     monkeypatch.setattr(owner_auth, "_failures", {})
     monkeypatch.setattr(owner_auth, "_last_totp_step", {})
     monkeypatch.setattr(owner_api, "_pending_totp", {})
+    monkeypatch.setattr(owner_api, "_signups", {})
+    monkeypatch.setattr(manager_auth, "_last_totp_step", {})
+    monkeypatch.setattr(manager_api, "_pending_totp", {})
 
 
 def client(ip: str = "10.0.0.9", **kwargs) -> httpx.AsyncClient:
@@ -119,15 +129,52 @@ async def test_a_client_login_opens_no_admin_route(panel_client, pg_pool):
             assert r.status_code == 401, (method, path, r.status_code)
 
 
-async def test_the_admin_login_opens_no_client_route(panel_client):
+async def test_the_admin_login_opens_no_client_or_manager_route(panel_client):
     admin_only = httpx.AsyncClient(transport=panel_client._transport, base_url="http://test",
                                    cookies={"admin_token": panel_client.cookies.get("admin_token")})
     async with admin_only:
         assert (await admin_only.get("/api/sessions")).status_code == 200
         for method, path in api_routes():
-            if path in PUBLIC_API or not path.startswith("/api/owner/"):
+            if path in PUBLIC_API or not path.startswith(OWN_LOGIN):
                 continue
             r = await admin_only.request(method, concrete(path), json={})
+            assert r.status_code == 401, (method, path, r.status_code)
+
+
+async def manager_session(panel_client, username: str = "mia") -> httpx.AsyncClient:
+    """A manager past the password change and the authenticator setup."""
+    r = await panel_client.post("/api/managers", json={"username": username, "password": TEMP})
+    assert r.status_code == 200, r.text
+    c = client()
+    assert (await c.post("/api/manager/login", json={"username": username, "password": TEMP})).status_code == 200
+    assert (await c.post("/api/manager/password", json={"current": TEMP, "new": MINE})).status_code == 200
+    setup = (await c.post("/api/manager/totp", json={})).json()
+    r = await c.post("/api/manager/totp", json={"code": totp.code_at(setup["secret"], int(time.time()) // 30)})
+    assert r.status_code == 200, r.text
+    return c
+
+
+async def test_a_manager_login_opens_no_admin_or_client_route(panel_client, pg_pool):
+    tenant = await seed_session(pg_pool, "acct_a")
+    manager = await manager_session(panel_client)
+    try:
+        assert (await manager.get("/api/manager/overview")).status_code == 200  # the cookie is live
+        for method, path in api_routes():
+            if path in PUBLIC_API or path.startswith("/api/manager/"):
+                continue
+            r = await manager.request(method, concrete(path).replace("/1", f"/{tenant}", 1), json={})
+            assert r.status_code == 401, (method, path, r.status_code)
+    finally:
+        await manager.aclose()
+
+
+async def test_a_client_login_opens_no_manager_route(panel_client, pg_pool):
+    tenant = await seed_session(pg_pool, "acct_a")
+    async with owner_session(panel_client, [tenant]) as owner:
+        for method, path in api_routes():
+            if path in PUBLIC_API or not path.startswith("/api/manager/"):
+                continue
+            r = await owner.request(method, concrete(path), json={})
             assert r.status_code == 401, (method, path, r.status_code)
 
 

@@ -77,12 +77,25 @@ class MediaLibrary:
         self.dir = Path(directory)
         self._items: dict[int, dict[str, Any]] = {}
         self._next_id = 1
+        # The index file's mtime when this object last read or wrote it.
+        # Another process (the panel) may change the index; refresh() reads
+        # it again first, or it would add that process's new file a second
+        # time with a blank description and save over its entry.
+        self._index_mtime: Optional[int] = None
         self._load()
         self.refresh()
 
     # ------------------------------------------------------------- disk
 
+    def _stat_index(self) -> Optional[int]:
+        try:
+            return (self.dir / INDEX_NAME).stat().st_mtime_ns
+        except OSError:
+            return None
+
     def _load(self) -> None:
+        self._items = {}
+        self._index_mtime = self._stat_index()
         try:
             raw = json.loads((self.dir / INDEX_NAME).read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
@@ -120,6 +133,7 @@ class MediaLibrary:
                 json.dump(payload, fh, indent=2, ensure_ascii=False)
                 fh.write("\n")
             os.replace(tmp, self.dir / INDEX_NAME)
+            self._index_mtime = self._stat_index()
         except BaseException:
             if os.path.exists(tmp):
                 os.unlink(tmp)
@@ -128,6 +142,8 @@ class MediaLibrary:
     def refresh(self) -> bool:
         """Reconcile the index with the folder. Returns True if anything changed."""
         self.dir.mkdir(parents=True, exist_ok=True)
+        if self._stat_index() != self._index_mtime:
+            self._load()
         on_disk = {
             entry.name
             for entry in self.dir.iterdir()

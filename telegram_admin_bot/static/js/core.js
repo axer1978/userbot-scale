@@ -19,9 +19,35 @@ const state = {
   linkOptions: null,
   // The media library, as the server lists it; refreshed over the socket.
   media: [],
+  // Who is signed in (GET /api/me): {admin: true} or a staff member with
+  // their role's permissions. null until known, and after signing out.
+  me: null,
 };
 
 const $ = (id) => document.getElementById(id);
+
+/* ------------------------------------------------------------ the role */
+// The admin may do everything. A staff member only what their role lists:
+// "allow" (done at once) or "approve" (it waits for the admin, but looks
+// done). Views are only ever "allow". The server checks all of this again.
+
+function isAdmin() {
+  return !!(state.me && state.me.admin);
+}
+
+function can(key) {
+  if (!state.me) return false;
+  if (state.me.admin) return true;
+  const level = (state.me.permissions || {})[key];
+  return level === "allow" || level === "approve";
+}
+
+// Done at once, not put up for the admin's approval. For changes the page
+// makes on its own (marking a chat read), which must not fill the queue.
+function canNow(key) {
+  if (!state.me) return false;
+  return state.me.admin || (state.me.permissions || {})[key] === "allow";
+}
 
 /* ------------------------------------------------------------------ utils */
 
@@ -30,6 +56,18 @@ function el(tag, className, text) {
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;   // textContent: never inject HTML
   return node;
+}
+
+// The network the open account is on ("telegram" or "whatsapp"): from its
+// live status once the socket said hello, else from the session list.
+function currentChannel() {
+  if (state.status && state.status.channel) return state.status.channel;
+  const s = state.sessions.find((x) => x.session_id === state.sessionId);
+  return (s && s.channel) || "telegram";
+}
+
+function channelName(channel) {
+  return channel === "whatsapp" ? "WhatsApp" : "Telegram";
 }
 
 function fmtTime(iso) {

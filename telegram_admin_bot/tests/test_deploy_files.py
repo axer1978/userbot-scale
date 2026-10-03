@@ -15,8 +15,10 @@ import fnmatch
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -104,13 +106,13 @@ def test_restart_policies():
 
 
 def test_app_services_wait_for_a_healthy_database_and_a_finished_migration():
-    for name in APP_SERVICES - {"migrate"}:
+    for name in (APP_SERVICES | {"wa-gateway"}) - {"migrate"}:
         deps = SERVICES[name]["depends_on"]
         assert deps["postgres"]["condition"] == "service_healthy", name
         assert deps["valkey"]["condition"] == "service_healthy", name
         assert deps["migrate"]["condition"] == "service_completed_successfully", name
     assert SERVICES["migrate"]["depends_on"] == {"postgres": {"condition": "service_healthy"}}
-    for name in ("postgres", "valkey", "panel"):
+    for name in ("postgres", "valkey", "panel", "wa-gateway"):
         assert SERVICES[name].get("healthcheck", {}).get("test"), f"{name} has no healthcheck"
 
 
@@ -145,6 +147,15 @@ def test_app_services_get_env_file_except_the_public_booking_pages():
     for name in APP_SERVICES - {"booking-pages"}:
         assert SERVICES[name]["env_file"] == [{"path": ".env", "required": False}], name
     assert SERVICES["booking-pages"]["env_file"] == []
+
+
+def test_wa_gateway_gets_only_the_variables_it_reads():
+    # The gateway parses hostile network input (Baileys); it must not hold the
+    # admin password, TOTP secret, SMTP/vision/DeepSeek keys it never reads.
+    # USERBOT_MASTER_KEY still arrives: compose interpolates it from .env.
+    gw = SERVICES["wa-gateway"]
+    assert "env_file" not in gw
+    assert set(gw["environment"]) == {"DATABASE_URL", "REDIS_URL", "USERBOT_MASTER_KEY", "WA_GATEWAY_LOG_LEVEL"}
 
 
 def test_each_app_service_gets_what_it_reads_at_boot():
@@ -182,6 +193,194 @@ def test_caddyfiles_proxy_to_the_compose_services():
     assert f"reverse_proxy booking-pages:{port}" in booking
 
 
+# --- wa-gateway ------------------------------------------------------------------
+
+WA_DIR = APP_DIR / "wa_gateway"
+
+
+class _FakeValkey(threading.Thread):
+    """Just enough RESP to answer the gateway's healthcheck: PUBSUB NUMSUB
+    gets `numsub` for any channel, everything else +OK."""
+
+    def __init__(self, numsub: int):
+        super().__init__(daemon=True)
+        self.numsub = numsub
+        self.commands: list[list[str]] = []
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(4)
+        self.sock.settimeout(0.2)
+        self.port = self.sock.getsockname()[1]
+        self.stop = threading.Event()
+
+    def run(self):
+        while not self.stop.is_set():
+            try:
+                conn, _ = self.sock.accept()
+            except socket.timeout:
+                continue
+            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+        self.sock.close()
+
+    @staticmethod
+    def _parse(buf: bytes):
+        if not buf.startswith(b"*"):
+            return None, buf
+        head, sep, rest = buf.partition(b"\r\n")
+        if not sep:
+            return None, buf
+        parts = []
+        for _ in range(int(head[1:])):
+            size, sep, rest = rest.partition(b"\r\n")
+            if not sep or not size.startswith(b"$"):
+                return None, buf
+            n = int(size[1:])
+            if len(rest) < n + 2:
+                return None, buf
+            parts.append(rest[:n].decode())
+            rest = rest[n + 2:]
+        return parts, rest
+
+    def _serve(self, conn):
+        buf = b""
+        with conn:
+            while True:
+                try:
+                    data = conn.recv(4096)
+                except OSError:
+                    return
+                if not data:
+                    return
+                buf += data
+                while True:
+                    cmd, buf = self._parse(buf)
+                    if cmd is None:
+                        break
+                    self.commands.append(cmd)
+                    if [c.upper() for c in cmd[:2]] == ["PUBSUB", "NUMSUB"]:
+                        channel = cmd[2].encode()
+                        conn.sendall(b"*2\r\n$%d\r\n%s\r\n:%d\r\n" % (len(channel), channel, self.numsub))
+                    else:
+                        conn.sendall(b"+OK\r\n")
+
+
+def _gateway_healthcheck() -> list[str]:
+    check = SERVICES["wa-gateway"]["healthcheck"]
+    assert check["test"][:3] == ["CMD", "node", "-e"] and len(check["test"]) == 4
+    assert check["start_period"] and check["retries"] >= 2
+    return check["test"][1:]
+
+
+def test_wa_gateway_healthcheck_asks_valkey_for_the_gateways_own_subscription():
+    """The gateway has no HTTP, so its healthcheck asks Valkey whether the
+    command channel has a subscriber (the gateway is the only one). Run the
+    exact command from the compose file against a fake Valkey."""
+    node = _tool("NODE_BIN", "node")
+    if not node or not (WA_DIR / "node_modules" / "ioredis").is_dir():
+        pytest.skip("node or wa_gateway/node_modules not available")
+    # Same channel the gateway serves: cmd:<GATEWAY_ADDRESS> (config.ts).
+    config = (WA_DIR / "src" / "config.ts").read_text(encoding="utf-8")
+    address = re.search(r"GATEWAY_ADDRESS = '([^']+)'", config).group(1)
+    assert "commandChannel: `cmd:${GATEWAY_ADDRESS}`" in config
+    script = _gateway_healthcheck()[-1]
+    assert f"'cmd:{address}'" in script
+
+    def run(server: _FakeValkey | None) -> subprocess.CompletedProcess:
+        port = server.port if server else 1
+        env = dict(os.environ, REDIS_URL=f"redis://127.0.0.1:{port}/0")
+        return subprocess.run([node, "-e", script], cwd=WA_DIR, env=env, capture_output=True, text=True, timeout=30)
+
+    for numsub, expected in ((1, 0), (0, 1)):
+        server = _FakeValkey(numsub)
+        server.start()
+        try:
+            result = run(server)
+        finally:
+            server.stop.set()
+            server.join(timeout=2)
+        assert result.returncode == expected, (numsub, result.stdout, result.stderr)
+        assert ["PUBSUB", "NUMSUB", f"cmd:{address}"] in [[c.upper() for c in cmd[:2]] + cmd[2:] for cmd in server.commands]
+    assert run(None).returncode == 1  # Valkey unreachable: unhealthy, and quickly
+
+
+def test_wa_gateway_runs_unprivileged_and_keeps_nothing_on_disk():
+    """The WhatsApp login state lives in Postgres (wa_auth_state), so the
+    gateway needs no volume and no writable directory: the image drops to
+    the `node` user and the sources never write a file (crypto.ts and the
+    CLI tool only read the master-key file)."""
+    dockerfile = (WA_DIR / "Dockerfile").read_text(encoding="utf-8")
+    assert re.search(r"^USER node\s*$", dockerfile, re.M)
+    assert dockerfile.index("USER node") < dockerfile.index("CMD [")
+    assert "VOLUME" not in dockerfile
+    assert "volumes" not in SERVICES["wa-gateway"]
+    assert "ports" not in SERVICES["wa-gateway"]
+    writers = re.compile(r"\b(?:writeFile|appendFile|createWriteStream|mkdir|mkdtemp|tmpdir|unlink|rename|rm)(?:Sync)?\(|\bfs\.")
+    for path in sorted((WA_DIR / "src").glob("*.ts")):
+        text = path.read_text(encoding="utf-8")
+        assert not writers.search(text), f"{path.name} touches the filesystem"
+        for imp in re.findall(r"import \{([^}]+)\} from '(?:node:)?fs(?:/promises)?'", text):
+            assert {n.strip() for n in imp.split(",")} <= {"readFileSync"}, path.name
+    # The data of record stays on Postgres's named volume across down/up/rebuild.
+    assert "pgdata:/var/lib/postgresql/data" in SERVICES["postgres"]["volumes"]
+    assert re.match(r"^postgres:16", SERVICES["postgres"]["image"])  # 17+ moves the data directory
+
+
+# --- Environment variables ---------------------------------------------------------
+
+# Read by the code but set by the compose file / the image / a test harness,
+# never by the operator in .env.
+INTERNAL_ENV = {
+    "ADMIN_HOST": "Dockerfile ENV (0.0.0.0 inside the container)",
+    "ADMIN_PORT": "fixed at 8787: compose publishes that port and Caddy proxies to it",
+    "DATABASE_URL": "composed from POSTGRES_* by docker-compose.yml",
+    "REDIS_URL": "the valkey service, fixed in docker-compose.yml",
+    "DATA_DIR": "/app/data, fixed in docker-compose.yml",
+    "PUBLIC_BIND": "booking-pages service, fixed in docker-compose.yml",
+    "PUBLIC_PORT": "booking-pages service, fixed in docker-compose.yml",
+    "PUBLIC_HOST": "booking-pages service, derived from BOOKING_DOMAIN",
+    "SESSION_ID": "handed to a worker by manager.py",
+    "USERBOT_MASTER_KEY_FILE": "an orchestrator secret file; this compose file requires USERBOT_MASTER_KEY",
+    "PG_TEST_DSN": "tests only",
+    "NODE_BIN": "tests only",
+}
+
+
+def _env_vars_read_by_the_code() -> dict[str, set[str]]:
+    found: dict[str, set[str]] = {}
+    python = re.compile(r"(?:os\.environ(?:\.get)?|os\.getenv|\benv(?:\.get)?)\s*[\(\[]\s*[\"']([A-Z][A-Z0-9_]+)[\"']")
+    constants = re.compile(r"^_?ENV_[A-Z_]* = [\"']([A-Z][A-Z0-9_]+)[\"']", re.M)
+    typescript = re.compile(r"\benv\.([A-Z][A-Z0-9_]+)\b")
+    for path in [*APP_DIR.glob("*.py"), *(WA_DIR / "src").glob("*.ts")]:
+        text = path.read_text(encoding="utf-8")
+        names = set(python.findall(text)) | set(constants.findall(text)) | set(typescript.findall(text))
+        for name in names:
+            found.setdefault(name, set()).add(path.name)
+    return found
+
+
+def test_every_variable_the_code_reads_is_documented_for_the_operator():
+    found = _env_vars_read_by_the_code()
+    assert {"ADMIN_PASSWORD", "USERBOT_MASTER_KEY", "SMTP_HOST", "WA_GATEWAY_LOG_LEVEL", "LOG_LEVEL"} <= set(found)
+    documented = {}
+    for line in ENV_EXAMPLE.splitlines():
+        match = re.match(r"^#?\s*([A-Z][A-Z0-9_]+)=", line)
+        if match:
+            documented[match.group(1)] = line
+    undocumented = {name: files for name, files in found.items() if name not in documented and name not in INTERNAL_ENV}
+    assert undocumented == {}, f"read by the code, not in .env.example: {undocumented}"
+    assert set(INTERNAL_ENV) & set(documented) == set()
+    # Everything .env.example lists is read by something (or by compose).
+    compose_text = (APP_DIR / "docker-compose.yml").read_text(encoding="utf-8")
+    compose_vars = set(re.findall(r"(?<!\$)\$\{([A-Z0-9_]+)", compose_text)) | {"COMPOSE_PROFILES"}
+    stale = set(documented) - set(found) - compose_vars
+    assert stale == set(), f"in .env.example but read by nothing: {stale}"
+    # Each documented variable has an explanation right above it (or sits in
+    # a commented group under one).
+    lines = ENV_EXAMPLE.splitlines()
+    for name, line in documented.items():
+        assert lines[lines.index(line) - 1].startswith("#"), f"{name} has no comment above it"
+
+
 # --- Caddy and shell scripts, with the real tools when available ----------------
 
 
@@ -212,9 +411,13 @@ def test_shell_scripts_pass_shellcheck():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+LF_PATTERNS = ("*.sh", "Caddyfile*", "*.sql", "Dockerfile", ".dockerignore", "*.yml", "*.py", "*.ts", "*.json",
+               ".env.example")
+
+
 def test_files_used_on_linux_are_forced_to_lf():
     attributes = (REPO_DIR / ".gitattributes").read_text(encoding="utf-8")
-    for pattern in ("*.sh", "Caddyfile*", "*.sql"):
+    for pattern in LF_PATTERNS:
         assert re.search(rf"^{re.escape(pattern)}\s+text\s+eol=lf", attributes, re.M), pattern
     for path in [*(APP_DIR / "deploy").glob("*.sh"), *APP_DIR.glob("Caddyfile*")]:
         data = path.read_bytes()
@@ -222,6 +425,35 @@ def test_files_used_on_linux_are_forced_to_lf():
         if path.suffix == ".sh":
             assert data.startswith(b"#!/usr/bin/env bash\n")
             assert b"set -euo pipefail" in data
+
+
+def test_git_checks_the_linux_files_out_with_lf():
+    """What a clone on the server gets: git's own view (index content and
+    the attribute it applies on checkout), not this checkout's bytes, which
+    core.autocrlf may have rewritten on Windows."""
+    git = shutil.which("git")
+    if not git:
+        pytest.skip("git not found")
+    run = lambda *args, **kw: subprocess.run([git, *args], cwd=REPO_DIR, capture_output=True, text=True, check=True, **kw)
+    if run("rev-parse", "--is-inside-work-tree").stdout.strip() != "true":
+        pytest.skip("not a git checkout")
+    linux = [
+        "telegram_admin_bot/Dockerfile", "telegram_admin_bot/.dockerignore", "telegram_admin_bot/docker-compose.yml",
+        "telegram_admin_bot/.env.example", "telegram_admin_bot/panel.py", "telegram_admin_bot/migrate_entrypoint.py",
+        "telegram_admin_bot/migrations/0001_init.sql", "telegram_admin_bot/deploy/bootstrap_ubuntu24.sh",
+        "telegram_admin_bot/Caddyfile.both", "telegram_admin_bot/wa_gateway/Dockerfile",
+        "telegram_admin_bot/wa_gateway/.dockerignore", "telegram_admin_bot/wa_gateway/package.json",
+        "telegram_admin_bot/wa_gateway/package-lock.json", "telegram_admin_bot/wa_gateway/tsconfig.json",
+        "telegram_admin_bot/wa_gateway/src/main.ts",
+    ]
+    attrs = run("check-attr", "eol", "--", *linux).stdout
+    for rel in linux:
+        assert f"{rel}: eol: lf" in attrs, rel
+    # And what is committed is LF already (a CRLF index would survive the
+    # attribute until the file is next touched).
+    eol = run("ls-files", "--eol", "--", *linux).stdout
+    for line in eol.splitlines():
+        assert line.startswith("i/lf"), line
 
 
 # --- .dockerignore -------------------------------------------------------------
@@ -316,6 +548,13 @@ def test_deploy_doc_defaults_to_sslip_and_covers_the_whole_path():
     assert "git clone -c core.sshCommand=" in doc  # private repo: pulls keep working
     assert "docker compose up -d --build" in doc
     assert "RUNBOOK.md" in doc
+    # The WhatsApp branch deploys its own guide: clones from it, and the
+    # first-start checklist knows the gateway service exists.
+    assert "-b platform/phase-1" not in doc
+    assert doc.count("-b platform/whatsapp") == 2  # public and deploy-key clone
+    start = doc[doc.index("## 5. Start"):doc.index("## 6.")]
+    assert "`wa-gateway`" in start and "(healthy)" in start and "node:24-slim" in start
+    assert "docker compose logs --tail 50 panel caddy migrate wa-gateway" in doc
     # The AWS server runs the older stack, which has no `scheduler` service:
     # naming one there would make `docker compose stop` fail and stop nothing.
     aws = next(line for line in doc.splitlines() if "56.228.9.106" in line)

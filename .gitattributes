@@ -1,3 +1,17 @@
+# Files that run or are parsed on the Linux server must be LF whatever the
+# developer's machine does (core.autocrlf on Windows would otherwise commit
+# or check out CRLF: bash refuses a CRLF shebang, Docker's parser and
+# Caddy's adapter choke on stray \r, psql keeps it in SQL strings).
 *.sh text eol=lf
 Caddyfile* text eol=lf
 *.sql text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.py text eol=lf
+*.ts text eol=lf
+*.json text eol=lf
+.env.example text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf

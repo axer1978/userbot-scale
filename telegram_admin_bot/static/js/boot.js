@@ -16,14 +16,13 @@ $("menu-toggle").addEventListener("click", () => {
 $("hdr-actions").addEventListener("click", (ev) => {
   if (ev.target.closest("button")) document.body.classList.remove("menu-open");
 });
-$("off-chip").addEventListener("click", () => openSafety("client", state.status && state.status.tenant_id));
+$("off-chip").addEventListener("click", () => {
+  if (can("view.safety")) openSafety("client", state.status && state.status.tenant_id);
+});
 
 (async function boot() {
   try {
-    const sessions = await fetchSessions();
-    hideGate();
-    await afterAuth(sessions);
-    sfPoll();
+    await startPanel();
   } catch (err) {
     if (err && err.status === 401) {
       showGate();

@@ -402,7 +402,9 @@ function tenantPromptTab(box) {
     const card = el("div", "pf-section" + (section.override ? " overridden" : ""));
     const title = el("div", "title", section.heading);
     const mode = el("select");
-    for (const [value, label] of [["inherit", "Inherit from industry"], ["override", "Override"], ["append", "Append"]]) {
+    const modes = [["inherit", "Inherit from industry"], ["override", "Override"], ["append", "Append"]]
+      .filter(([value]) => !(section.append_only && value === "override"));
+    for (const [value, label] of modes) {
       const o = el("option", null, label);
       o.value = value;
       o.selected = (section.override ? section.override.mode : "inherit") === value;

@@ -311,6 +311,49 @@ services:
       WORKER_COUNT: ${WORKER_COUNT:-2}
       SESSIONS_PER_WORKER: ${SESSIONS_PER_WORKER:-25}
 
+  # The WhatsApp transport (wa_gateway/, Node + Baileys): holds the WhatsApp
+  # sockets the same way a manager worker holds Telethon clients, but takes
+  # its orders from Python over the valkey command bus (cmd:@wa-gateway)
+  # and keeps the Baileys auth state encrypted in Postgres (wa_auth_state).
+  # Transport only: no pacing, drafting or approval happens here. A
+  # singleton (Postgres advisory lock): a second copy exits and is restarted.
+  # See wa_gateway/README.md for the wire format.
+  wa-gateway:
+    build: ./wa_gateway
+    container_name: userbot-wa-gateway
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # No env_file: the gateway is the one service that parses hostile network
+    # input, so it gets only what it reads (compose fills these from .env),
+    # never the admin password, TOTP secret or the SMTP/vision/DeepSeek keys.
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-userbot}:${POSTGRES_PASSWORD:-changeme-in-prod}@postgres:5432/${POSTGRES_DB:-userbot}
+      REDIS_URL: redis://valkey:6379/0
+      USERBOT_MASTER_KEY: ${USERBOT_MASTER_KEY:?USERBOT_MASTER_KEY must be set — see comment above}
+      WA_GATEWAY_LOG_LEVEL: ${WA_GATEWAY_LOG_LEVEL:-info}
+    # No ports: it only dials out (Postgres, Valkey, WhatsApp).
+    # "healthy" once the gateway is subscribed to its command channel on
+    # Valkey (cmd:@wa-gateway; it is that channel's only subscriber), which
+    # it only is after the master key, the singleton lock and the bus are
+    # all in hand. The gateway has no HTTP, so this asks Valkey instead, with
+    # the ioredis the image already ships. A gateway that never got that far
+    # or lost its Valkey subscription shows "unhealthy" in `docker compose
+    # ps` within ~1.5 minutes (a blocked event loop keeps its subscription,
+    # so that one is for the logs and the manager's command timeouts).
+    healthcheck:
+      test: ["CMD", "node", "-e", "const R=require('ioredis');const c=new R(process.env.REDIS_URL,{lazyConnect:true,connectTimeout:4000,maxRetriesPerRequest:0,enableReadyCheck:false,enableOfflineQueue:false});c.connect().then(()=>c.pubsub('NUMSUB','cmd:@wa-gateway')).then(r=>process.exit(Number(r[1])>0?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *logging
+
 volumes:
   # Postgres's data directory. Named (not bind-mounted) so its ownership/
   # permissions are managed by Docker instead of the host filesystem.

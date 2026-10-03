@@ -1,0 +1,31 @@
+# Adds the Next.js admin panel next to the existing stack. From
+# telegram_admin_bot/:
+#
+#   docker compose -f docker-compose.yml -f admin-web/docker-compose.admin-web.yml up -d --build
+#
+# Then, over an SSH tunnel:
+#   ssh -N -L 3000:127.0.0.1:3000 you@your-server   →   http://127.0.0.1:3000
+#
+# Like the panel, it is published on the host's loopback only. For the
+# public HTTPS address, see admin-web/README.md (Caddy routes /api, /ws and
+# /owner to the panel and the rest here).
+
+services:
+  admin-web:
+    build: ./admin-web
+    container_name: userbot-admin-web
+    restart: unless-stopped
+    environment:
+      PANEL_URL: http://panel:8787
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    depends_on:
+      panel:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

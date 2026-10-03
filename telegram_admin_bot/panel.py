@@ -47,6 +47,7 @@ failed logins are rate-limited per client IP and tokens expire after
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import re
@@ -61,6 +62,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSock
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from redis.exceptions import RedisError
 from starlette.datastructures import Headers as StarletteHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -73,15 +75,31 @@ import context_link
 import controls
 import media
 import pg
+import finetune_api
 import platform_api
+import manager_admin_api
+import manager_api
+import manager_auth
+import owner_auth
 import owner_admin_api
 import owner_api
+import owner_review_api
+import review_admin_api
 import review_api
 import safety_api
+import staff
+import staff_api
+import tenant_config
 import tenants
+import terms_admin_api
 import unanswered_api
 import totp
+import wa_device_profiles
+import wa_pairing
+import wa_store
 from database import (
+    CHANNEL_TELEGRAM,
+    CHANNEL_WHATSAPP,
     OUT_CANCELLED,
     OUT_SENT,
     STATUS_PENDING,
@@ -173,7 +191,13 @@ _HOST_RE = re.compile(r"^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$")
 # it is buffered, so an anonymous POST to /api/login can't eat the memory.
 MAX_BODY_BYTES = 2 * 1024 * 1024
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
-_UPLOAD_PATH_RE = re.compile(r"^/api/sessions/[^/]+/media/upload$")
+# The routes that take a file as the body; each enforces its own, lower
+# limit while reading (review.py: photos 15 MB, verification videos 80 MB).
+_UPLOAD_PATH_RE = re.compile(
+    r"^/api/sessions/[^/]+/media/upload$|^/api/owner/tenants/\d+/photos$|^/api/owner/verification/video$"
+)
+# Finetune screenshots arrive base64 in one JSON body (finetune.py caps them).
+MAX_FINETUNE_BYTES = 100 * 1024 * 1024
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # The body types a page on another site can send without a CORS preflight
 # (an HTML form or a "simple" fetch). No API route takes any of them.
@@ -244,7 +268,12 @@ class RequestGuard:
             if path.startswith("/api/") and content_type in _FORM_TYPES:
                 await self._refuse(scope, receive, send, 415, "Send JSON (Content-Type: application/json).")
                 return
-        limit = MAX_UPLOAD_BYTES if _UPLOAD_PATH_RE.match(path) else MAX_BODY_BYTES
+        if _UPLOAD_PATH_RE.match(path):
+            limit = MAX_UPLOAD_BYTES
+        elif path == finetune_api.RUN_PATH:
+            limit = MAX_FINETUNE_BYTES
+        else:
+            limit = MAX_BODY_BYTES
         length = headers.get("content-length")
         if length is not None and (not length.isdigit() or int(length) > limit):
             await self._refuse(scope, receive, send, 413, "The request is too large.")
@@ -364,6 +393,9 @@ async def publish(session_id: str, payload: dict[str, Any]) -> None:
 class LoginBody(BaseModel):
     password: str = ""
     code: str = ""  # authenticator code; only checked when ADMIN_TOTP_SECRET is set
+    # Empty = the admin. A manager's username = a staff sign-in (staff.py):
+    # their own password and authenticator, and their role decides the rest.
+    username: str = Field("", max_length=200)
 
 
 def _now() -> float:
@@ -426,9 +458,40 @@ def admin_token_from(cookies: Any) -> Optional[str]:
     return cookies.get(admin_cookie_name())
 
 
-def require_auth(request: Request) -> None:
-    if not _token_is_valid(admin_token_from(request.cookies)):
+async def staff_from(cookies: Any) -> Optional[dict[str, Any]]:
+    """The manager behind a manager cookie, with their role, when that role
+    may use the admin panel and the login is fully set up; else None."""
+    manager = await manager_auth.session_manager(pool, cookies.get(manager_auth.cookie_name()))
+    if manager is None or manager_auth.gate(manager):
+        return None
+    member = await staff.manager_with_role(pool, manager["id"])
+    return member if member and member["admin_panel"] else None
+
+
+async def require_auth(request: Request) -> None:
+    """The admin's token opens everything. A manager whose role includes
+    the admin panel gets through only what the role allows (staff.gate),
+    and a change the role puts up for approval is queued instead."""
+    if _token_is_valid(admin_token_from(request.cookies)):
+        return
+    member = await staff_from(request.cookies)
+    if member is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    request.state.staff = member
+    if request.url.path == "/api/me":
+        return
+    await staff.gate(request, member)
+
+
+def issue_internal_admin_token() -> str:
+    """A short-lived admin token for staff.run_approved() only."""
+    token = secrets.token_urlsafe(32)
+    _valid_tokens[token] = _now() + 120
+    return token
+
+
+def revoke_admin_token(token: str) -> None:
+    _valid_tokens.pop(token, None)
 
 
 def _credentials_ok(body: LoginBody) -> bool:
@@ -453,8 +516,58 @@ async def api_login_options() -> dict[str, Any]:
     return {"totp": bool(ADMIN_TOTP_SECRET)}
 
 
+async def _staff_login(body: LoginBody, request: Request) -> JSONResponse:
+    """A manager signing in to the admin panel. Same checks as /manager/
+    (owner_auth's failure limit, the manager's authenticator), plus: the
+    login must be fully set up and its role must include the admin panel."""
+    ip = _client_ip(request)
+    key = manager_auth.limit_key(body.username)
+    owner_auth.check_rate_limit(ip, key)
+    try:
+        row = await manager_auth.authenticate(pool, body.username, body.password, body.code)
+    except owner_auth.LoginFailed:
+        owner_auth.note_failure(ip, key)
+        log.warning("Failed staff login to the admin panel from %s.", ip)
+        raise HTTPException(status_code=401, detail="Wrong username, password or code") from None
+    except owner_auth.CodeRequired as exc:
+        if exc.wrong:
+            owner_auth.note_failure(ip, key)
+        raise HTTPException(status_code=401, detail="Wrong username, password or code") from None
+    owner_auth.clear_failures(ip, key)
+    token = await manager_auth.create_session(pool, row["id"], ip)
+    manager = await manager_auth.session_manager(pool, token)
+    member = await staff.manager_with_role(pool, row["id"])
+    problem = None
+    if manager_auth.gate(manager):
+        problem = "Finish setting up your login at /manager/ first (new password and authenticator app)."
+    elif not member or not member["admin_panel"]:
+        problem = "Your role does not include the admin panel. Sign in at /manager/ instead."
+    if problem:
+        await manager_auth.delete_session(pool, token)
+        raise HTTPException(status_code=403, detail=problem)
+    await pool.execute("UPDATE managers SET last_login_at = now() WHERE id = $1", row["id"])
+    await audit.record(pool, tenant_id=None, actor=f"manager:{row['username']}", event="staff_login",
+                       reason="admin panel login", payload={"ip": ip, "role": member["role_name"]})
+    response = JSONResponse({"ok": True, "staff": True})
+    manager_auth.set_cookie(response, token)
+    return response
+
+
+@app.get("/api/me", dependencies=[Depends(require_auth)])
+async def api_me(request: Request) -> dict[str, Any]:
+    """Who is signed in to the admin panel: the admin (everything), or a
+    manager and what their role lets them do, so the page can hide the rest."""
+    member = getattr(request.state, "staff", None)
+    if member is None:
+        return {"admin": True, "username": "admin"}
+    return {"admin": False, "username": member["username"], "display_name": member["display_name"],
+            "role": member["role_name"], "permissions": member["permissions"], "catalogue": staff.catalogue()}
+
+
 @app.post("/api/login")
 async def api_login(body: LoginBody, request: Request) -> JSONResponse:
+    if body.username.strip():
+        return await _staff_login(body, request)
     ip = _client_ip(request)
     now = _now()
     failures = _recent_failures(ip, now)
@@ -506,7 +619,11 @@ async def api_logout(request: Request) -> JSONResponse:
     admin_token = admin_token_from(request.cookies)
     if admin_token:
         _valid_tokens.pop(admin_token, None)
+    staff_token = manager_auth.token_from(request)
+    if staff_token:
+        await manager_auth.delete_session(pool, staff_token)
     response = JSONResponse({"ok": True})
+    manager_auth.clear_cookie(response)
     response.delete_cookie(admin_cookie_name(), path="/", httponly=True, samesite="strict",
                            secure=_cookie_secure())
     return response
@@ -534,6 +651,7 @@ async def api_sessions() -> list[dict[str, Any]]:
         live = _lease_is_live(row)
         out.append({
             **row,
+            "channel": row.get("channel") or CHANNEL_TELEGRAM,
             # Field names kept from the earlier version for the frontend's
             # sake: "running_here" now means "running somewhere in the
             # fleet" (this process holds no runtimes to be "here" about),
@@ -697,6 +815,212 @@ async def api_auth_cancel() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Adding a WhatsApp account — linked as a device of the phone, by QR code or
+# pairing code. The pairing itself runs in the wa-gateway service; this file
+# only creates the account row, asks the gateway over the bus and follows
+# the pairing's events (wa_pairing.py). Like a Telegram sign-in, a finished
+# pairing stores the DeepSeek key and marks the account active, and the
+# manager's workers pick it up on their own.
+# ---------------------------------------------------------------------------
+
+# The gateway answers `pair` as soon as it has opened the socket.
+WA_GATEWAY_TIMEOUT = 15.0
+WA_GATEWAY_DOWN = ("The WhatsApp gateway is not running, so the number can't be linked right now. "
+                   "Start the wa-gateway service and try again.")
+_WA_PHONE_CHARS = re.compile(r"^\+?[0-9 ()./-]+$")
+
+wa_pairings = wa_pairing.Pairings()
+
+
+class WaPairStartBody(BaseModel):
+    label: str = ""
+    phone: str = ""
+    deepseek_api_key: str = ""
+    method: str = "qr"  # "qr" (scan a QR code) or "code" (type an 8-character code on the phone)
+
+
+def wa_phone_digits(phone: str) -> str:
+    """The number in international form, digits only (country code first,
+    no leading 0 or 00), as WhatsApp's pairing-code request needs it."""
+    phone = phone.strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="Phone number is required.")
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    if not _WA_PHONE_CHARS.match(phone) or digits.startswith("0") or not 8 <= len(digits) <= 15:
+        raise HTTPException(
+            status_code=400,
+            detail="Enter the phone number in international format, country code first (e.g. +37120000001).",
+        )
+    return digits
+
+
+def wa_session_id_for_phone(phone: str) -> str:
+    """One row per WhatsApp number, like session_id_for_phone: pairing the
+    same number again reuses its account (history, settings, tenant)."""
+    return f"wa{wa_phone_digits(phone)}"
+
+
+async def _seed_whatsapp_defaults(session_id: str) -> None:
+    """A brand-new WhatsApp client (nothing in its client config layer yet)
+    starts on the WhatsApp safety defaults, saved the normal audited way.
+    A re-paired number keeps whatever its config says by now."""
+    store = tenants.TenantStore(pool)
+    tenant = await store.by_session(session_id)
+    if tenant is None or tenant["config_json"]:
+        return
+    try:
+        await store.save_config(
+            tenant["id"], copy.deepcopy(tenant_config.WHATSAPP_CLIENT_DEFAULTS), actor=audit.ADMIN,
+            reason="WhatsApp safety defaults", expected_revision=tenant["config_revision"],
+        )
+    except tenants.Conflict:
+        return  # a second, simultaneous start seeded it
+    except tenant_config.ConfigError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not set the WhatsApp defaults: {exc}") from exc
+    log.info("[%s] WhatsApp safety defaults saved to the client config.", session_id)
+
+
+async def _wa_browser_for(session_id: str) -> list[str]:
+    """The linked-device browser this account presents: stored once in its
+    identity (config_store), then the same on every re-pair."""
+    cfg = await config_store.load(pool, session_id)
+    browser = cfg["identity"]["wa_browser"]
+    if not browser:
+        browser = wa_device_profiles.derive(session_id)
+        await config_store.save(pool, session_id, {**cfg, "identity": {**cfg["identity"], "wa_browser": browser}})
+    return browser
+
+
+# A halted account keeps its lease after its WhatsApp session was lost (so
+# its dot stays red). To pair it again it is deactivated first; its runtime
+# then fails its next lease renewal and stops. This is how long to wait.
+WA_RELEASE_WAIT_SECONDS = 25.0
+WA_RELEASE_POLL_SECONDS = 0.5
+
+
+async def _release_lost_whatsapp(session_id: str, row: dict[str, Any]) -> bool:
+    """Let go of an account whose WhatsApp session was lost, so it can be
+    paired again: only one halted by a session loss (state needs_login or
+    revoked, no stored login left), never a healthy running one. True once
+    no worker holds it any more."""
+    if row.get("state") not in ("needs_login", "revoked"):
+        return False
+    if await wa_store.has_login(pool, session_id):
+        return False
+    log.warning("[%s] Re-pairing a WhatsApp account whose session was lost: deactivating it so its "
+                "halted runtime lets go (%s).", session_id, row.get("state_reason") or row.get("state"))
+    await registry.set_active(session_id, False)
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + WA_RELEASE_WAIT_SECONDS
+    while loop.time() < deadline:
+        current = await registry.get(session_id)
+        if current is None or not _lease_is_live(current):
+            return True
+        await asyncio.sleep(WA_RELEASE_POLL_SECONDS)
+    return False
+
+
+async def _wa_paired(pairing: wa_pairing.Pairing, event: dict[str, Any]) -> None:
+    session_id = pairing.session_id
+    if pairing.deepseek_key:
+        await registry.set_deepseek_key(session_id, pairing.deepseek_key)
+    await registry.set_active(session_id, True)
+    log.info("[%s] WhatsApp linked (%s); marked active for the manager to pick up.",
+             session_id, event.get("jid") or "?")
+
+
+@app.post("/api/wa/pair/start", dependencies=[Depends(require_auth)])
+async def api_wa_pair_start(body: WaPairStartBody) -> dict[str, Any]:
+    method = body.method.strip().lower()
+    if method not in wa_pairing.METHODS:
+        raise HTTPException(status_code=400, detail="Choose how to link: scan a QR code or type a pairing code.")
+    phone = body.phone.strip()
+    digits = wa_phone_digits(phone)
+    session_id = wa_session_id_for_phone(phone)
+    deepseek_key = body.deepseek_api_key.strip()
+
+    existing = await registry.get(session_id)
+    if existing is not None and existing.get("channel") != CHANNEL_WHATSAPP:
+        raise HTTPException(status_code=409, detail=f"{session_id} is a {existing.get('channel')} account.")
+    if existing is not None and _lease_is_live(existing) and not await _release_lost_whatsapp(session_id, existing):
+        if existing.get("state") in ("needs_login", "revoked"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{phone} lost its WhatsApp session and is being stopped; try again in half a minute.",
+            )
+        raise HTTPException(
+            status_code=409,
+            detail=f"{phone} is already running ({session_id}). Stop it before pairing it again.",
+        )
+    if not deepseek_key and not (existing and await registry.load_deepseek_key(session_id)):
+        raise HTTPException(
+            status_code=400,
+            detail="DeepSeek API key is required (from platform.deepseek.com).",
+        )
+
+    # Before pairing: the gateway keeps the linked device's keys in a table
+    # that references this row. Re-pairing keeps the row as it is; a blank
+    # name leaves the stored one alone.
+    try:
+        await registry.create(session_id, label=body.label.strip() or ("" if existing else phone),
+                              channel=CHANNEL_WHATSAPP)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await _seed_whatsapp_defaults(session_id)
+    browser = await _wa_browser_for(session_id)
+
+    try:
+        pairing = await wa_pairings.open(bus, session_id=session_id, method=method,
+                                         deepseek_key=deepseek_key, on_paired=_wa_paired)
+    except wa_pairing.TooManyPairings as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except (RedisError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="The command bus (Valkey) is unreachable.") from exc
+
+    args: dict[str, Any] = {"session_id": session_id, "pair_id": pairing.pair_id, "method": method,
+                            "browser": browser}
+    if method == "code":
+        args["phone"] = digits
+    try:
+        await bus.dispatch(wa_pairing.GATEWAY, "pair", args, timeout=WA_GATEWAY_TIMEOUT)
+    except commands.CommandTimeout as exc:
+        await wa_pairings.abandon(pairing.pair_id)
+        raise HTTPException(status_code=503, detail=WA_GATEWAY_DOWN) from exc
+    except commands.BusUnavailable as exc:
+        await wa_pairings.abandon(pairing.pair_id)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except commands.CommandError as exc:
+        await wa_pairings.abandon(pairing.pair_id)
+        if exc.kind == "busy":
+            raise HTTPException(
+                status_code=409,
+                detail=f"{phone} already has a WhatsApp connection open on the server ({exc}). "
+                       "Stop it before pairing it again.",
+            ) from exc
+        raise HTTPException(status_code=502, detail=f"The WhatsApp gateway refused: {exc}") from exc
+    log.info("[%s] WhatsApp pairing %s started (%s).", session_id, pairing.pair_id, method)
+    return pairing.public()
+
+
+@app.get("/api/wa/pair/{pair_id}", dependencies=[Depends(require_auth)])
+async def api_wa_pair_state(pair_id: str) -> dict[str, Any]:
+    pairing = wa_pairings.get(pair_id)
+    if pairing is None:
+        raise HTTPException(status_code=404, detail="Unknown pairing (it may have expired). Start again.")
+    return pairing.public()
+
+
+@app.post("/api/wa/pair/{pair_id}/cancel", dependencies=[Depends(require_auth)])
+async def api_wa_pair_cancel(pair_id: str) -> dict[str, Any]:
+    pairing = await wa_pairings.cancel(bus, pair_id)
+    if pairing is None:
+        raise HTTPException(status_code=404, detail="Unknown pairing (it may have expired).")
+    return pairing.public()
+
+
+# ---------------------------------------------------------------------------
 # Per-session routes
 # ---------------------------------------------------------------------------
 
@@ -742,6 +1066,9 @@ async def api_status(session_id: str) -> dict[str, Any]:
     live = _lease_is_live(row)
     return {
         "session_id": session_id,
+        "channel": row.get("channel") or CHANNEL_TELEGRAM,
+        # Field names kept for the frontend: they mean "the account's own
+        # network" (Telegram or WhatsApp), whichever this one is on.
         "telegram_connected": live and row.get("state") == "running",
         "telegram_error": row.get("state_reason") if row.get("state") == "error" else None,
         "state": row.get("state"),
@@ -996,8 +1323,17 @@ async def api_reject(session_id: str, draft_id: int) -> dict[str, Any]:
     return row or {}
 
 
+async def _refuse_outreach_on_whatsapp(session_id: str) -> None:
+    """Outreach writes first to people in the account's contacts. On
+    WhatsApp that is exactly what gets numbers banned, so it isn't offered."""
+    row = await registry.get(session_id)
+    if row is not None and row.get("channel") == CHANNEL_WHATSAPP:
+        raise HTTPException(status_code=400, detail="Outreach is not available for WhatsApp accounts.")
+
+
 @app.get("/api/sessions/{session_id}/contacts", dependencies=[Depends(require_auth)])
 async def api_contacts(session_id: str) -> list[dict[str, Any]]:
+    await _refuse_outreach_on_whatsapp(session_id)
     return await _dispatch_live(session_id, "list_contacts", {}, timeout=LIVE_ACTION_TIMEOUT)
 
 
@@ -1013,6 +1349,7 @@ async def api_outreach_queue(session_id: str, body: OutreachBody) -> dict[str, A
         raise HTTPException(status_code=400, detail="Say what the message should achieve")
     if not body.chat_ids:
         raise HTTPException(status_code=400, detail="Pick at least one contact")
+    await _refuse_outreach_on_whatsapp(session_id)
     bundle = await tenants.TenantStore(pool).bundle_for_session(session_id)
     if not bundle.config["outreach"]["enabled"]:
         raise HTTPException(
@@ -1189,9 +1526,13 @@ async def _dispatch_live(
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
     # The Origin check happened in RequestGuard; this is the login check.
+    # A manager in the admin panel gets live updates when their role may
+    # see conversations.
     if not _token_is_valid(admin_token_from(ws.cookies)):
-        await ws.close(code=4401)
-        return
+        member = await staff_from(ws.cookies)
+        if member is None or member["permissions"].get("view.conversations") != staff.ALLOW:
+            await ws.close(code=4401)
+            return
 
     await ws.accept()
     db = db_for(session_id)
@@ -1238,6 +1579,12 @@ async def websocket_endpoint(ws: WebSocket, session_id: str) -> None:
             await forward_task
 
 
+@app.exception_handler(staff.Queued)
+async def queued(request: Request, exc: staff.Queued) -> JSONResponse:
+    """A manager's change that waits for the admin: answered like a success."""
+    return staff.silent_answer(exc)
+
+
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception) -> JSONResponse:
     """The full error goes to the log. Only a logged-in admin sees its text
@@ -1260,14 +1607,29 @@ app.include_router(booking_api.router, dependencies=[Depends(require_auth)])
 # Kill switches, billing, alerts and health: admin only, like everything here.
 safety_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(safety_api.router, dependencies=[Depends(require_auth)])
-# Phase 4. Admin only: client logins, the unanswered queue, review batches.
-for _module in (owner_admin_api, unanswered_api, review_api):
+# Phase 4. Admin only: client logins, the unanswered queue, review batches;
+# manager logins, the terms of service and the sign-up switch; finetune runs.
+for _module in (owner_admin_api, unanswered_api, review_api, manager_admin_api, terms_admin_api, finetune_api):
     _module.bind(get_pool=lambda: pool, get_bus=lambda: bus)
     app.include_router(_module.router, dependencies=[Depends(require_auth)])
+# Verification videos and photo review: admin only (review.py).
+review_admin_api.bind(get_pool=lambda: pool, get_bus=lambda: bus, get_data_dir=lambda: DATA_DIR)
+app.include_router(review_admin_api.router, dependencies=[Depends(require_auth)])
 # The client dashboard's API has its own login (owner_auth.py), never the
 # admin's; every route there checks it.
 owner_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(owner_api.router)
+owner_review_api.bind(get_pool=lambda: pool, get_bus=lambda: bus, get_data_dir=lambda: DATA_DIR)
+app.include_router(owner_review_api.router)
+# Staff roles and the approval queue: admin only (staff.gate refuses
+# /api/staff/ to every manager, whatever the role).
+staff.bind(get_pool=lambda: pool, get_app=lambda: app, get_data_dir=lambda: DATA_DIR)
+staff_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(staff_api.router, dependencies=[Depends(require_auth)])
+# The moderator panel's API: its own login too (manager_auth.py); what a
+# manager may do there comes from their role (staff.py).
+manager_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
+app.include_router(manager_api.router)
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
@@ -1315,6 +1677,7 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     if login_flow is not None:
         await login_flow.reset()  # drop a half-finished sign-in's connection
+    await wa_pairings.close()
     if bus is not None:
         await bus.close()
     if pool is not None:
