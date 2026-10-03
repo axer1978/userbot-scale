@@ -75,6 +75,7 @@ import context_link
 import controls
 import media
 import pg
+import finetune_api
 import platform_api
 import manager_admin_api
 import manager_api
@@ -195,6 +196,8 @@ MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 _UPLOAD_PATH_RE = re.compile(
     r"^/api/sessions/[^/]+/media/upload$|^/api/owner/tenants/\d+/photos$|^/api/owner/verification/video$"
 )
+# Finetune screenshots arrive base64 in one JSON body (finetune.py caps them).
+MAX_FINETUNE_BYTES = 100 * 1024 * 1024
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # The body types a page on another site can send without a CORS preflight
 # (an HTML form or a "simple" fetch). No API route takes any of them.
@@ -265,7 +268,12 @@ class RequestGuard:
             if path.startswith("/api/") and content_type in _FORM_TYPES:
                 await self._refuse(scope, receive, send, 415, "Send JSON (Content-Type: application/json).")
                 return
-        limit = MAX_UPLOAD_BYTES if _UPLOAD_PATH_RE.match(path) else MAX_BODY_BYTES
+        if _UPLOAD_PATH_RE.match(path):
+            limit = MAX_UPLOAD_BYTES
+        elif path == finetune_api.RUN_PATH:
+            limit = MAX_FINETUNE_BYTES
+        else:
+            limit = MAX_BODY_BYTES
         length = headers.get("content-length")
         if length is not None and (not length.isdigit() or int(length) > limit):
             await self._refuse(scope, receive, send, 413, "The request is too large.")
@@ -1600,8 +1608,8 @@ app.include_router(booking_api.router, dependencies=[Depends(require_auth)])
 safety_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(safety_api.router, dependencies=[Depends(require_auth)])
 # Phase 4. Admin only: client logins, the unanswered queue, review batches;
-# and manager logins, the terms of service and the sign-up switch.
-for _module in (owner_admin_api, unanswered_api, review_api, manager_admin_api, terms_admin_api):
+# manager logins, the terms of service and the sign-up switch; finetune runs.
+for _module in (owner_admin_api, unanswered_api, review_api, manager_admin_api, terms_admin_api, finetune_api):
     _module.bind(get_pool=lambda: pool, get_bus=lambda: bus)
     app.include_router(_module.router, dependencies=[Depends(require_auth)])
 # Verification videos and photo review: admin only (review.py).

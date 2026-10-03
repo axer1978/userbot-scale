@@ -119,7 +119,7 @@ function TenantPrompt({ v, id, setView }: TenantProps) {
               <select value={ed.mode} onChange={(ev) => setEditors((list) => list.map((e, n) =>
                 n === i ? { ...e, mode: ev.target.value as typeof e.mode } : e))}>
                 <option value="inherit">Inherit from industry</option>
-                <option value="override">Override</option>
+                {!section.append_only && <option value="override">Override</option>}
                 <option value="append">Append</option>
               </select>
             </div>
