@@ -1,11 +1,12 @@
 "use client";
 
-// Finetune from chat screenshots (finetune_api.py). Pick a client, add
-// screenshots of its real chats (marked good or bad if you like), and the
-// vision model proposes the client's prompt layer and an updated industry
-// standard from the industry's finetune template. Nothing changes until a
-// run is applied; applying saves ordinary prompt versions, which the
-// Clients page can roll back. The screenshots are never stored.
+// Finetune from a client's real chats (finetune_api.py). Pick a client,
+// add screenshots of its chats (read by the vision model) or paste them as
+// text (read by DeepSeek), marked good or bad if you like, and the model
+// proposes the client's prompt layer and an updated industry standard from
+// the industry's finetune template. Nothing changes until a run is applied;
+// applying saves ordinary prompt versions, which the Clients page can roll
+// back. The chats are never stored.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDialogs, useToast } from "@/components/feedback";
@@ -19,14 +20,22 @@ import "@/app/finetune.css";
 type Tab = "new" | "runs" | "template";
 type Mark = "" | "good" | "bad";
 type Shot = { file: File; base: string; ext: string; mark: Mark };
+type Chat = { id: number; name: string; mark: Mark; text: string };
+type Source = "screenshots" | "text";
 type Mode = "inherit" | "override" | "append";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGES = 40;
 const STATUS: Record<FinetuneRun["status"], string> = {
-  running: "reading the screenshots…", done: "ready to review", failed: "failed", applied: "applied", discarded: "discarded",
+  running: "reading the chats…", done: "ready to review", failed: "failed", applied: "applied", discarded: "discarded",
 };
 const POLL_MS = 3000;
+const MAX_TRANSCRIPT_CHARS = 100_000;
+
+function sourceCount(run: FinetuneRun): string {
+  const n = run.files.length;
+  return run.source === "text" ? `${n} typed conversation${n === 1 ? "" : "s"}` : `${n} screenshot${n === 1 ? "" : "s"}`;
+}
 
 /** "03a-good.png" → base "03a", mark "good", ext ".png". */
 function splitName(name: string): Omit<Shot, "file"> {
@@ -59,9 +68,43 @@ function readBase64(file: File): Promise<string> {
 
 /* ---------------------------------------------------------------- new run */
 
-function NewRun({ tenantId, info, onStarted }: {
-  tenantId: number; info: FinetuneIndustry; onStarted: (run: FinetuneRun) => void;
-}) {
+type RunProps = { tenantId: number; info: FinetuneIndustry; onStarted: (run: FinetuneRun) => void };
+
+function NewRun(props: RunProps) {
+  const { info } = props;
+  // Screenshots when the vision model is set up, typed chats otherwise.
+  const [source, setSource] = useState<Source>(info.screenshots_ready || !info.transcripts_ready ? "screenshots" : "text");
+
+  if (!info.template.trim()) {
+    return (
+      <div className="empty">Write the finetune template for {info.industry.name} first (Template tab)
+        {info.default_template ? ", or load the default there and save it" : ""}.</div>
+    );
+  }
+  return (
+    <>
+      <div className="ft-source" role="radiogroup" aria-label="What the chats are">
+        <label className="check"><input type="radio" name="ft-source" checked={source === "screenshots"}
+                                        onChange={() => setSource("screenshots")} /> Screenshots</label>
+        <label className="check"><input type="radio" name="ft-source" checked={source === "text"}
+                                        onChange={() => setSource("text")} /> Typed chats</label>
+      </div>
+      {source === "screenshots" && !info.screenshots_ready && (
+        <div className="pf-errors">No vision model yet: set VISION_API_URL and VISION_API_KEY in the server&apos;s .env,
+          or use typed chats.</div>
+      )}
+      {source === "text" && !info.transcripts_ready && (
+        <div className="pf-errors">Typed chats need DEEPSEEK_PLATFORM_KEY in the server&apos;s .env.</div>
+      )}
+      <p className="pf-note">The {info.industry.name} standard is built from {info.businesses_so_far} business
+        {info.businesses_so_far === 1 ? "" : "es"} so far{info.has_standard ? "" : " (none yet: this run writes the first)"}.
+        The chats are sent to the model and not stored.</p>
+      {source === "screenshots" ? <ScreenshotRun {...props} /> : <TranscriptRun {...props} />}
+    </>
+  );
+}
+
+function ScreenshotRun({ tenantId, onStarted }: RunProps) {
   const toast = useToast();
   const [shots, setShots] = useState<Shot[]>([]);
   const [busy, setBusy] = useState(false);
@@ -96,20 +139,12 @@ function NewRun({ tenantId, info, onStarted }: {
     } catch (err) { toast(errorText(err)); } finally { setBusy(false); }
   };
 
-  if (!info.template.trim()) {
-    return (
-      <div className="empty">Write the finetune template for {info.industry.name} first (Template tab)
-        {info.default_template ? ", or load the default there and save it" : ""}.</div>
-    );
-  }
   return (
     <>
       <p className="pf-note">
         Screenshots of one business&apos;s real chats. Name them so they sort in order: the same number is one
         conversation (03a, 03b, 03c). Mark a screenshot <b>good</b> (handled the way the business wants) or <b>bad</b> (a
-        reply not to repeat); the mark is added to its file name for the model. The screenshots are sent to the vision
-        model and not stored. The {info.industry.name} standard is built from {info.businesses_so_far} business
-        {info.businesses_so_far === 1 ? "" : "es"} so far{info.has_standard ? "" : " (none yet: this run writes the first)"}.
+        reply not to repeat); the mark is added to its file name for the model.
       </p>
       <label className={cx("ft-drop", dragging && "on")}
              onDragOver={(ev) => { ev.preventDefault(); setDragging(true); }}
@@ -141,6 +176,82 @@ function NewRun({ tenantId, info, onStarted }: {
         <span className="muted grow">{shots.length} screenshot{shots.length === 1 ? "" : "s"}</span>
         <button type="button" className="btn" disabled={!shots.length || busy} onClick={() => setShots([])}>Clear</button>
         <button type="button" className="btn primary" disabled={!shots.length || busy} onClick={start}>
+          {busy ? "Sending…" : "Start the run"}</button>
+      </div>
+    </>
+  );
+}
+
+function nextChatName(chats: Chat[]): string {
+  const numbers = chats.map((c) => parseInt(c.name, 10)).filter((n) => !Number.isNaN(n));
+  return String((numbers.length ? Math.max(...numbers) : 0) + 1).padStart(2, "0");
+}
+
+let chatSeq = 0;
+const newChat = (name: string): Chat => ({ id: ++chatSeq, name, mark: "", text: "" });
+
+function TranscriptRun({ tenantId, onStarted }: RunProps) {
+  const toast = useToast();
+  const [chats, setChats] = useState<Chat[]>(() => [newChat("01")]);
+  const [busy, setBusy] = useState(false);
+  const total = chats.reduce((n, c) => n + c.text.trim().length, 0);
+  const filled = chats.filter((c) => c.text.trim());
+
+  const edit = (id: number, patch: Partial<Chat>) =>
+    setChats((list) => list.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  const fullName = (c: Chat) => `${c.name.trim()}${c.mark ? "-" + c.mark : ""}`;
+
+  const start = async () => {
+    if (!filled.length) { toast("Type at least one conversation."); return; }
+    if (filled.some((c) => !c.name.trim())) { toast("Every conversation needs a name, e.g. 03."); return; }
+    const names = filled.map(fullName);
+    if (new Set(names).size !== names.length) { toast("Two conversations have the same name; rename one."); return; }
+    if (total > MAX_TRANSCRIPT_CHARS) { toast(`At most ${MAX_TRANSCRIPT_CHARS.toLocaleString()} characters per run.`); return; }
+    setBusy(true);
+    try {
+      const run = await api<FinetuneRun>("POST", "/api/finetune/text-runs", {
+        tenant_id: tenantId, chats: filled.map((c) => ({ name: fullName(c), text: c.text })),
+      });
+      setChats([newChat("01")]);
+      onStarted(run);
+    } catch (err) { toast(errorText(err)); } finally { setBusy(false); }
+  };
+
+  return (
+    <>
+      <p className="pf-note">
+        One box per conversation, numbered in order. Start each line with <b>Client:</b> or <b>Business:</b>, one
+        message per line; add times or [voice note] / [photo] where they matter. Replace the client&apos;s name and
+        number with [client]. Mark a conversation <b>good</b> (handled the way the business wants) or <b>bad</b>{" "}
+        (replies not to repeat).
+      </p>
+      {chats.map((c) => (
+        <div key={c.id} className={cx("pf-section ft-chat", c.mark && `mark-${c.mark}`)}>
+          <div className="title">
+            <input className="ft-chat-name" value={c.name} aria-label={`Name of conversation ${c.name}`}
+                   onChange={(ev) => edit(c.id, { name: ev.target.value })} />
+            <select value={c.mark} aria-label={`Mark conversation ${c.name}`}
+                    onChange={(ev) => edit(c.id, { mark: ev.target.value as Mark })}>
+              <option value="">no mark</option>
+              <option value="good">good</option>
+              <option value="bad">bad</option>
+            </select>
+            <button type="button" className="btn small" disabled={chats.length === 1}
+                    onClick={() => setChats((list) => list.filter((x) => x.id !== c.id))}>Remove</button>
+          </div>
+          <textarea rows={8} value={c.text} aria-label={`Conversation ${c.name}`}
+                    placeholder={"Client: Hi, are you available tonight?\nBusiness: Hi! What time were you thinking?"}
+                    onChange={(ev) => edit(c.id, { text: ev.target.value })} />
+        </div>
+      ))}
+      <div className={cx("pf-note ft-count", total > MAX_TRANSCRIPT_CHARS && "warn-note")}>
+        {filled.length} conversation{filled.length === 1 ? "" : "s"} · {total.toLocaleString()} /{" "}
+        {MAX_TRANSCRIPT_CHARS.toLocaleString()} characters</div>
+      <div className="pf-actions">
+        <button type="button" className="btn" onClick={() => setChats((list) => [...list, newChat(nextChatName(list))])}>
+          + Add conversation</button>
+        <span className="grow" />
+        <button type="button" className="btn primary" disabled={!filled.length || busy} onClick={start}>
           {busy ? "Sending…" : "Start the run"}</button>
       </div>
     </>
@@ -214,10 +325,10 @@ function RunReview({ run, onChanged }: { run: FinetuneRun; onChanged: (run: Fine
       <div className="rv-top">
         <span className={cx("bk-state", `ft-${run.status}`)}>{STATUS[run.status]}</span>
         <span>Run {run.id}</span>
-        <span className="muted">{fmtDateTime(run.created_at)} · {run.model} · {run.files.length} screenshots</span>
+        <span className="muted">{fmtDateTime(run.created_at)} · {run.model} · {sourceCount(run)}</span>
       </div>
-      <details className="ft-files"><summary className="muted">Screenshots</summary>{run.files.join(", ")}</details>
-      {run.status === "running" && <div className="empty">The model is reading the screenshots. This can take a few minutes.</div>}
+      <details className="ft-files"><summary className="muted">{run.source === "text" ? "Conversations" : "Screenshots"}</summary>{run.files.join(", ")}</details>
+      {run.status === "running" && <div className="empty">The model is reading the chats. This can take a few minutes.</div>}
       {run.error && <div className="pf-errors">{run.error}</div>}
       {run.status === "applied" && run.applied && (
         <p className="pf-note">Saved{run.applied.industry_version ? ` industry template v${run.applied.industry_version}` : ""}
@@ -319,8 +430,9 @@ function RunView({ runId, onBack, onChanged }: { runId: number; onBack: () => vo
   useEffect(() => {
     if (!running) return;
     const timer = setInterval(() => { void reload(); }, POLL_MS);
-    return () => clearInterval(timer);
-  }, [running, reload]);
+    // When it stops running, the list behind "All runs" needs the new status.
+    return () => { clearInterval(timer); onChanged(); };
+  }, [running, reload, onChanged]);
 
   return (
     <>
@@ -345,7 +457,7 @@ function RunList({ runs, onOpen }: { runs: FinetuneRun[]; onOpen: (id: number) =
             <span className={cx("bk-state", `ft-${r.status}`)}>{STATUS[r.status]}</span>
             <span className="bk-time">{fmtDateTime(r.created_at)}</span>
             <span>Run {r.id}</span>
-            <span className="muted">{r.files.length} screenshots · {r.model}</span>
+            <span className="muted">{sourceCount(r)} · {r.model}</span>
           </div>
         </div>
       ))}
@@ -370,7 +482,7 @@ function TemplateEditor({ info, onSaved }: { info: FinetuneIndustry; onSaved: (i
 
   return (
     <>
-      <p className="pf-note">The instructions sent with the screenshots, for every client in {info.industry.name}. These
+      <p className="pf-note">The instructions sent with the chats, for every client in {info.industry.name}. These
         are filled in for each run: {info.placeholders.map((p) => <code key={p}>{p} </code>)}— the business name, how
         many businesses the standard is built from, and the current industry standard (&quot;none&quot; when there is
         none). The answer must be the three blocks === BUSINESS LAYER ===, === INDUSTRY STANDARD === and === NOTES FOR
@@ -421,13 +533,15 @@ export function Finetune() {
   const fetchRuns = useCallback(async () => (tenant
     ? api<FinetuneRun[]>("GET", `/api/finetune/runs?tenant_id=${tenant.id}`) : []), [tenant]);
   const { data: runs, error: runsError, reload: reloadRuns } = useLoader(fetchRuns);
+  // Stable, so RunView can call it when a run stops running.
+  const refresh = useCallback(() => { void reloadRuns(); void reloadInfo(); }, [reloadRuns, reloadInfo]);
 
   const tabs: [Tab, string][] = [["new", "New run"], ["runs", `Runs${runs?.length ? ` (${runs.length})` : ""}`],
     ["template", `Template${industryName ? ` — ${industryName}` : ""}`]];
   const error = treeError || infoError || runsError;
 
   return (
-    <PageShell title="Finetune" crumb="a client's prompt from screenshots of its chats" width="w-980">
+    <PageShell title="Finetune" crumb="a client's prompt from its real chats" width="w-980">
       <div className="bk-scroll">
         {error && <div className="pf-errors">{error}</div>}
         {tree && !tree.tenants.length && <div className="empty">No clients yet.</div>}
@@ -450,7 +564,7 @@ export function Finetune() {
           )}
           {tab === "runs" && (openRun !== null
             ? <RunView runId={openRun} onBack={() => setOpenRun(null)}
-                       onChanged={() => { void reloadRuns(); void reloadInfo(); }} />
+                       onChanged={refresh} />
             : <RunList runs={runs ?? []} onOpen={setOpenRun} />)}
           {info && tab === "template" && (
             <TemplateEditor key={`${info.industry.id}-${info.template.length}`} info={info}

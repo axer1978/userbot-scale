@@ -247,3 +247,87 @@ async def test_a_failed_model_call_fails_the_run(panel_client, tenant, model, mo
     assert failed["status"] == "failed" and failed["error"] == "Vision API timed out."
     discarded = await panel_client.post(f"/api/finetune/runs/{run['id']}/discard")
     assert discarded.json()["status"] == "discarded"
+
+
+# ------------------------------------------------------------- transcripts
+
+
+def test_typed_chats_are_ordered_and_checked():
+    chats = finetune.check_chats([("10", "Client: a"), ("02-good", "Client: b"), ("03", "  "), ("01", "Client: c")])
+    assert [n for n, _ in chats] == ["01", "02-good", "10"]  # the empty one is left out
+    for bad in ([], [("01", " ")], [("01", "x"), ("01", "y")], [("", "x")],
+                [("01", "x" * (finetune.MAX_TRANSCRIPT_CHARS + 1))]):
+        with pytest.raises(finetune.FinetuneError):
+            finetune.check_chats(bad)
+
+
+def test_typed_chats_follow_the_template_with_a_note_on_how_to_read_them():
+    [message] = finetune.build_text_messages("TEMPLATE", [("01-good", "Client: hi\nBusiness: hello")])
+    text = message["content"]
+    assert text.startswith("TEMPLATE\n\n" + finetune.TRANSCRIPT_NOTE)
+    assert text.endswith("### 01-good\nClient: hi\nBusiness: hello")
+
+
+@pytest.mark.asyncio
+async def test_typed_chats_go_to_deepseek(monkeypatch):
+    import httpx
+
+    import ai_responder
+
+    seen = {}
+
+    def handler(request):
+        seen.update(url=str(request.url), body=json.loads(request.content), auth=request.headers["authorization"])
+        return httpx.Response(200, json={"choices": [{"message": {"content": answer()}}]})
+
+    monkeypatch.setenv("FINETUNE_TEXT_MAX_TOKENS", "7000")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        raw = await finetune.complete_text("T", [("01", "Client: hi")], api_key="pk", model="deepseek-chat",
+                                           client=client)
+    assert raw == answer().strip()
+    assert seen["url"] == ai_responder.API_URL and seen["auth"] == "Bearer pk"
+    assert seen["body"]["model"] == "deepseek-chat" and seen["body"]["max_tokens"] == 7000
+    assert isinstance(seen["body"]["messages"][0]["content"], str)
+
+
+@pytest.mark.asyncio
+async def test_without_the_platform_key_typed_chats_cannot_run():
+    import vision
+
+    with pytest.raises(vision.VisionError, match="DEEPSEEK_PLATFORM_KEY"):
+        await finetune.complete_text("T", [("01", "x")], api_key="", model="deepseek-chat")
+
+
+@pytest.mark.requires_pg
+@pytest.mark.asyncio
+async def test_a_run_from_typed_chats(panel_client, tenant, monkeypatch):
+    monkeypatch.delenv("VISION_API_URL", raising=False)
+    monkeypatch.delenv("VISION_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_PLATFORM_KEY", raising=False)
+    seen = {}
+
+    async def fake_complete_text(prompt, chats, **kwargs):
+        seen.update(prompt=prompt, chats=list(chats), model=kwargs["model"])
+        return answer()
+
+    monkeypatch.setattr(finetune, "complete_text", fake_complete_text)
+    info = await write_template(panel_client)
+    assert (info["screenshots_ready"], info["transcripts_ready"]) == (False, False)
+
+    body = {"tenant_id": tenant, "chats": [{"name": "02-bad", "text": "Client: discount?\nBusiness: ok"},
+                                           {"name": "01", "text": "Client: hi"}]}
+    refused = await panel_client.post("/api/finetune/text-runs", json=body)
+    assert refused.status_code == 400 and "DEEPSEEK_PLATFORM_KEY" in refused.json()["detail"]
+
+    monkeypatch.setenv("DEEPSEEK_PLATFORM_KEY", "pk")
+    assert (await panel_client.get("/api/finetune/industries/1")).json()["transcripts_ready"] is True
+    started = await panel_client.post("/api/finetune/text-runs", json=body)
+    await asyncio.gather(*finetune_api._tasks)
+    assert started.status_code == 200, started.text
+    assert [n for n, _ in seen["chats"]] == ["01", "02-bad"] and seen["model"] == "deepseek-chat"
+    assert "Business Mia, 0 so far" in seen["prompt"]
+
+    run = (await panel_client.get(f"/api/finetune/runs/{started.json()['id']}")).json()
+    assert run["source"] == "text" and run["files"] == ["01", "02-bad"]
+    assert run["status"] == "done" and run["result"]["errors"] == []
+    assert "discount" not in json.dumps(run)  # the chats themselves are not stored

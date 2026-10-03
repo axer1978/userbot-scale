@@ -592,6 +592,8 @@ export type FinetuneIndustry = {
   placeholders: string[];
   businesses_so_far: number;
   has_standard: boolean;
+  screenshots_ready: boolean;
+  transcripts_ready: boolean;
 };
 
 export type FinetuneRun = {
@@ -600,6 +602,8 @@ export type FinetuneRun = {
   industry_id: number;
   status: "running" | "done" | "failed" | "applied" | "discarded";
   model: string;
+  // screenshots: the vision model read images; text: transcribed chats.
+  source: "screenshots" | "text";
   files: string[];
   industry_version: number;
   error: string;

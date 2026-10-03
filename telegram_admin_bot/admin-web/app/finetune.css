@@ -22,3 +22,11 @@
 .bk-state.ft-applied { background: rgba(46,160,67,.25); }
 .bk-state.ft-failed { background: rgba(242,86,90,.3); }
 .ft-row-discarded { opacity: .6; }
+
+.ft-source { display: flex; gap: 18px; margin: 4px 0 12px; }
+.ft-chat .title { margin-bottom: 8px; }
+.ft-chat .title select { margin-left: auto; }
+.ft-chat-name { width: 110px; }
+.ft-count { margin: 4px 0 0; }
+.ft-chat.mark-good { border-color: var(--ok); }
+.ft-chat.mark-bad { border-color: var(--danger); }

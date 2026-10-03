@@ -1,0 +1,26 @@
+# The public HTTPS front door when the Next.js admin panel (admin-web/) runs:
+# the same site as ./Caddyfile, but only the API, the websocket and the
+# client dashboard go to panel.py; every page goes to admin-web. Mounted
+# over ./Caddyfile by admin-web/docker-compose.admin-web.yml, so
+# Caddyfile.both (BOOKING_DOMAIN) imports this one instead.
+#
+# Caddy keeps Host as is, so panel.py's Origin check still passes, and sets
+# X-Forwarded-For to the visitor's address, which the login rate limit uses.
+
+{$PANEL_DOMAIN} {
+	encode zstd gzip
+
+	tls {
+		protocols tls1.2 tls1.3
+	}
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		-Server
+		-Via
+	}
+
+	@panel path /api /api/* /ws/* /owner /owner/*
+	reverse_proxy @panel panel:8787
+	reverse_proxy admin-web:3000
+}

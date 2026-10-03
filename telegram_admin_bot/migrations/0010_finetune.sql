@@ -16,6 +16,10 @@ CREATE TABLE finetune_runs (
   status           TEXT        NOT NULL DEFAULT 'running'
                    CHECK (status IN ('running', 'done', 'failed', 'applied', 'discarded')),
   model            TEXT        NOT NULL,
+  -- screenshots: read by the vision model; text: chats the operator
+  -- transcribed, read by the text model. Like the screenshots, transcripts
+  -- are never stored; `files` keeps the conversation names.
+  source           TEXT        NOT NULL DEFAULT 'screenshots' CHECK (source IN ('screenshots', 'text')),
   files            JSONB       NOT NULL DEFAULT '[]',
   -- The industry template version the run compared against. Applying is
   -- refused once the industry has moved on, so a run never overwrites

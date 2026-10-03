@@ -1,12 +1,13 @@
-"""Admin API for finetuning from chat screenshots (finetune.py).
+"""Admin API for finetuning from chats: screenshots or transcripts (finetune.py).
 
 Mounted by panel.py behind the admin login.
 
 - One finetune template per industry, in platform_settings under
   'finetune_template:<industry id>'.
-- A run is started with the screenshots and works in the background; the
-  page polls it. The screenshots stay in memory for the run only and are
-  never written anywhere.
+- A run is started with the screenshots (read by the vision model) or with
+  chats the admin transcribed (read by DeepSeek on the platform key), and
+  works in the background; the page polls it. The chats stay in memory for
+  the run only and are never written anywhere.
 - Applying a run saves ordinary prompt versions through tenants.py, the
   industry standard first, then the business layer, and reloads the
   accounts affected, as platform_api does. Either part can be left out,
@@ -21,7 +22,7 @@ import binascii
 import json
 import logging
 import os
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -48,6 +49,7 @@ FINETUNE_DISCARDED = "finetune_discarded"
 # A run still "running" after this was cut off by a restart: its task is gone.
 STALE_MINUTES = 20
 RUN_PATH = "/api/finetune/runs"
+TEXT_RUN_PATH = "/api/finetune/text-runs"
 
 _get_pool: Callable[[], Any] = lambda: None  # noqa: E731
 _get_bus: Callable[[], Any] = lambda: None  # noqa: E731
@@ -88,7 +90,8 @@ async def _live_sections(industry: dict[str, Any]) -> dict[str, str]:
 def _run(row: Any, *, full: bool = True) -> dict[str, Any]:
     run = {
         "id": row["id"], "tenant_id": row["tenant_id"], "industry_id": row["industry_id"],
-        "status": row["status"], "model": row["model"], "files": tenants._json(row["files"]),
+        "status": row["status"], "model": row["model"], "source": row["source"],
+        "files": tenants._json(row["files"]),
         "industry_version": row["industry_version"], "error": row["error"],
         "applied": tenants._json(row["applied"]), "created_by": row["created_by"],
         "created_at": row["created_at"], "finished_at": row["finished_at"], "applied_at": row["applied_at"],
@@ -134,6 +137,9 @@ async def api_industry(industry_id: int) -> dict[str, Any]:
         "placeholders": list(finetune.PLACEHOLDERS),
         "businesses_so_far": await businesses_so_far(industry_id),
         "has_standard": bool(await _live_sections(industry)),
+        # Which kinds of run the server can do now: the page offers those.
+        "screenshots_ready": all(vision.endpoint_from_env()),
+        "transcripts_ready": bool(platform_api.platform_key()),
     }
 
 
@@ -246,24 +252,73 @@ async def api_start(body: RunBody) -> dict[str, Any]:
     except finetune.FinetuneError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    return await _launch(
+        body.tenant_id, industry, model=model, source="screenshots", files=[name for name, _ in images],
+        call=lambda meter: finetune.complete(prompt, images, api_url=api_url, api_key=api_key, model=model,
+                                             usage_sink=meter),
+    )
+
+
+class Chat(BaseModel):
+    # e.g. "03" or "03-good"
+    name: str = Field(..., min_length=1, max_length=200)
+    text: str = Field(..., max_length=finetune.MAX_TRANSCRIPT_CHARS)
+
+
+class TextRunBody(BaseModel):
+    tenant_id: int
+    chats: list[Chat] = Field(..., min_length=1, max_length=finetune.MAX_CHATS)
+
+
+@router.post(TEXT_RUN_PATH)
+async def api_start_text(body: TextRunBody) -> dict[str, Any]:
+    """A run from chats the admin transcribed, read by the text model
+    (DeepSeek, on the platform key) instead of the vision model."""
+    s = platform_api.store()
+    bundle = await platform_api.guarded(s.bundle(body.tenant_id))
+    industry = bundle.industry
+    template = await load_template(industry["id"])
+    if not template:
+        raise HTTPException(status_code=400, detail=f"Write the finetune template for {industry['name']} first.")
+    api_key = platform_api.platform_key()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="DEEPSEEK_PLATFORM_KEY must be set in .env to read transcripts.")
+    try:
+        chats = finetune.check_chats([(c.name, c.text) for c in body.chats])
+        prompt = finetune.fill_template(
+            template, business_name=bundle.tenant["name"],
+            businesses_so_far=await businesses_so_far(industry["id"]),
+            industry_sections=await _live_sections(industry),
+        )
+    except finetune.FinetuneError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    model = finetune.text_model()
+    return await _launch(
+        body.tenant_id, industry, model=model, source="text", files=[name for name, _ in chats],
+        call=lambda meter: finetune.complete_text(prompt, chats, api_key=api_key, model=model, usage_sink=meter),
+    )
+
+
+async def _launch(tenant_id: int, industry: dict[str, Any], *, model: str, source: str, files: list[str],
+                  call: Callable[[Any], Awaitable[str]]) -> dict[str, Any]:
+    """Record the run and start it in the background. `call(meter)` is the
+    model call; only names are recorded, never the chats themselves."""
     pool = _get_pool()
-    files = [name for name, _ in images]
     async with pool.acquire() as con, con.transaction():
         run_id = await con.fetchval(
-            "INSERT INTO finetune_runs (tenant_id, industry_id, model, files, industry_version, created_by) "
-            "VALUES ($1, $2, $3, $4::jsonb, $5, $6) RETURNING id",
-            body.tenant_id, industry["id"], model, json.dumps(files), industry["template_version"], ACTOR,
+            "INSERT INTO finetune_runs (tenant_id, industry_id, model, source, files, industry_version, created_by) "
+            "VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) RETURNING id",
+            tenant_id, industry["id"], model, source, json.dumps(files), industry["template_version"], ACTOR,
         )
-        await audit.record(con, tenant_id=body.tenant_id, actor=ACTOR, event=FINETUNE_STARTED,
-                           payload={"run_id": run_id, "model": model, "files": files})
-    task = asyncio.create_task(_execute(run_id, prompt, images, api_url=api_url, api_key=api_key, model=model))
+        await audit.record(con, tenant_id=tenant_id, actor=ACTOR, event=FINETUNE_STARTED,
+                           payload={"run_id": run_id, "model": model, "source": source, "files": files})
+    task = asyncio.create_task(_execute(run_id, call))
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
     return await _get_run(run_id)
 
 
-async def _execute(run_id: int, prompt: str, images: list[tuple[str, bytes]], *,
-                   api_url: str, api_key: str, model: str) -> None:
+async def _execute(run_id: int, call: Callable[[Any], Awaitable[str]]) -> None:
     pool = _get_pool()
 
     async def meter(used_model: str, usage: dict[str, int]) -> None:
@@ -271,8 +326,7 @@ async def _execute(run_id: int, prompt: str, images: list[tuple[str, bytes]], *,
         await llm_usage.record(pool, tenant_id=None, purpose="finetune", model=used_model, usage=usage)
 
     try:
-        raw = await finetune.complete(prompt, images, api_url=api_url, api_key=api_key, model=model,
-                                      usage_sink=meter)
+        raw = await call(meter)
     except vision.VisionError as exc:
         await _finish(run_id, status="failed", error=str(exc))
         return
