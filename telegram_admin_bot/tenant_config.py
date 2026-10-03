@@ -202,8 +202,13 @@ class Booking(_Strict):
     # How long a freed slot is held for the first person on the waitlist
     # before it is offered to the next one.
     waitlist_offer_hours: int = Field(12, ge=1, le=168)
-    # Sent word for word, once, when the customer has arrived.
+    # Sent word for word, once, when the customer has arrived. Media items
+    # marked "send on arrival" go out right after it.
     arrival_instructions: str = Field("", max_length=20_000)
+    # Delete the arrival instructions and those photos from the chat, for
+    # both sides, this many minutes after they were sent (door codes, the
+    # flat number). 0 = keep them.
+    arrival_cleanup_minutes: int = Field(0, ge=0, le=24 * 60)
     # Compare a photo the customer sends on arrival with the entrance
     # photos in the media library (marked as entrance reference). Needs
     # vision.enabled.

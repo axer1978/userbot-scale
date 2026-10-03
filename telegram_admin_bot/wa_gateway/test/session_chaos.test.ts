@@ -276,6 +276,57 @@ test('offline redelivery ("append") is accepted, anything else on messages.upser
   await gw.handle(cmd('close', { session_id: 'wa1', epoch: 4 }));
 });
 
+test('delete revokes each of our own messages with one sendMessage, and maps socket errors like send_text', async () => {
+  const { gw, pool, last } = await setup();
+  await gw.handle(cmd('open', { session_id: 'wa1', epoch: 4, browser }));
+  const sock = last();
+  open(sock);
+  const sent: Array<[string, unknown]> = [];
+  let failOn: { id: string; error: unknown } | null = null;
+  (sock as unknown as { sendMessage: unknown }).sendMessage = async (jid: string, content: { delete?: { id?: string } }) => {
+    sent.push([jid, content]);
+    if (failOn && content.delete?.id === failOn.id) throw failOn.error;
+    return { key: { id: `REV${sent.length}`, remoteJid: jid, fromMe: true }, message: { protocolMessage: { type: 0 } }, messageTimestamp: 1 };
+  };
+  const s = { session_id: 'wa1', epoch: 4 };
+  const jid = '34611111111@s.whatsapp.net';
+
+  assert.deepEqual(await gw.handle(cmd('delete', { ...s, jid, message_ids: ['M1', 'M2', 'M3'] })), { ok: true });
+  assert.deepEqual(sent, ['M1', 'M2', 'M3'].map((id) => [jid, { delete: { remoteJid: jid, fromMe: true, id } }]));
+
+  // Our own revoke echoes back as a protocolMessage: never an inbox row.
+  sock.ev.emit('messages.upsert', { type: 'notify', messages: [{ key: { remoteJid: jid, fromMe: true, id: 'REV1' }, message: { protocolMessage: { type: 0, key: { id: 'M1' } } }, messageTimestamp: 1 }] });
+  await tick();
+  assert.deepEqual(pool.inserted, []);
+
+  // Errors go through failure(): the same kinds send_text would give.
+  const cases: Array<[unknown, string]> = [
+    [new Boom('rate-overlimit', { data: 429 }), 'rate_limited'],
+    [new Boom('not-authorized', { data: 403 }), 'blocked'],
+    [new Boom('Connection Closed', { statusCode: 428 }), 'not_connected'],
+    [new Boom('Not authenticated'), 'session_lost'],
+    [new Error('boom'), 'other'],
+  ];
+  for (const [error, kind] of cases) {
+    sent.length = 0;
+    failOn = { id: 'B', error };
+    assert.equal(await kindOf(gw.handle(cmd('delete', { ...s, jid, message_ids: ['A', 'B', 'C'] }))), kind);
+    // One at a time: stops at the failing id (A already went out).
+    assert.deepEqual(sent.map(([, c]) => (c as { delete: { id: string } }).delete.id), ['A', 'B']);
+  }
+  // A send_text failing the same way gives the same kind.
+  failOn = null;
+  (sock as unknown as { sendMessage: unknown }).sendMessage = async () => {
+    throw new Boom('rate-overlimit', { data: 429 });
+  };
+  assert.equal(await kindOf(gw.handle(cmd('send_text', { ...s, jid, text: 'x' }))), 'rate_limited');
+
+  // A dropped socket refuses before anything is sent.
+  close(sock, boom(DisconnectReason.connectionLost));
+  assert.equal(await kindOf(gw.handle(cmd('delete', { ...s, jid, message_ids: ['A'] }))), 'not_connected');
+  await gw.handle(cmd('close', { session_id: 'wa1', epoch: 4 }));
+});
+
 test('a corrupt or unregistered creds row refuses that one open cleanly; other accounts still open', async () => {
   const { gw, last, made } = await setup({
     creds: {

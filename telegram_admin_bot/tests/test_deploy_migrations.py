@@ -223,7 +223,10 @@ async def test_upgrading_a_populated_0005_database_keeps_the_data_and_adds_the_r
 
     after = await table_rows(pool, tables)
     # tenants.channel has been there since 0002; 0006 only has to leave it alone.
-    new_cols = {"telegram_sessions": {"channel"}, "messages": {"wa_message_id"}, "bookings": {"provider_wa_message_id"}}
+    new_cols = {"telegram_sessions": {"channel"}, "messages": {"wa_message_id"},
+                "bookings": {"provider_wa_message_id",
+                             # 0011: arrival cleanup
+                             "instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at"}}
     for table, rows in before.items():
         added = new_cols.get(table, set())
         assert [{k: v for k, v in r.items() if k not in added} for r in after[table]] == rows, table

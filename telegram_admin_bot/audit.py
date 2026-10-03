@@ -26,6 +26,7 @@ MIGRATION = "migration"
 
 # Events
 MESSAGE_SENT = "message_sent"
+MESSAGES_DELETED = "messages_deleted"
 POLICY_HOLD = "policy_hold"
 TENANT_CREATED = "tenant_created"
 TENANT_UPDATED = "tenant_updated"

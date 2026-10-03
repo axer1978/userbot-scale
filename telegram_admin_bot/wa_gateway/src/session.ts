@@ -343,6 +343,19 @@ export class SessionSocket {
     }
   }
 
+  /** "Delete for everyone", one message at a time (WhatsApp has no batch). */
+  async deleteMessages(jid: string, messageIds: string[]): Promise<void> {
+    const sock = this.openSock();
+    try {
+      for (const id of messageIds) {
+        await sock.sendMessage(jid, { delete: { remoteJid: jid, fromMe: true, id } });
+      }
+      this.log.info({ jid, count: messageIds.length }, 'deleted messages');
+    } catch (error) {
+      this.failure(error);
+    }
+  }
+
   async presence(state: WAPresence, jid?: string): Promise<void> {
     const sock = this.openSock();
     try {
