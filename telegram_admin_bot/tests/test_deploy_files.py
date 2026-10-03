@@ -388,7 +388,7 @@ def _tool(env_var: str, name: str) -> str | None:
     return os.environ.get(env_var) or shutil.which(name)
 
 
-@pytest.mark.parametrize("config", ["Caddyfile", "Caddyfile.booking", "Caddyfile.both"])
+@pytest.mark.parametrize("config", ["Caddyfile", "Caddyfile.booking", "Caddyfile.both", "Caddyfile.admin-web"])
 def test_caddy_validates_each_config(config, tmp_path):
     caddy = _tool("CADDY_BIN", "caddy")
     if not caddy:

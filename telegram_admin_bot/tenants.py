@@ -633,8 +633,10 @@ def legacy_prompt(legacy: dict[str, Any]) -> dict[str, Any]:
         "sign_off": persona.get("signature_style", ""),
         "writing_samples": legacy["finetune"].get("writing_samples", ""),
     }
+    # The persona's boundaries come on top of the industry's, never instead.
     overrides = {
-        key: {"mode": "override", "text": text[: prompt_layers.MAX_SECTION_CHARS]}
+        key: {"mode": "append" if key in prompt_layers.APPEND_ONLY_SECTIONS else "override",
+              "text": text[: prompt_layers.MAX_SECTION_CHARS]}
         for key, text in mapping.items() if text.strip()
     }
     _, note = legacy_language(persona.get("languages", ""))

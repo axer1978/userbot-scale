@@ -204,6 +204,8 @@ export function Header() {
           {can("view.config") && nav("/clients", "Clients", "All clients, industries and the platform rules")}
           {can("view.config") && nav("/onboarding", "New client", "Set up a new client step by step, or continue one")}
           {can("view.training") && nav("/review", "Review", "Review the bot's replies and export them for training")}
+          {isAdmin && nav("/finetune", "Finetune",
+            "Build a client's prompt and the industry standard from its real chats")}
           {can("view.clients") && nav("/owners", "Client logins", "Logins for business owners to their own dashboard (/owner/)")}
           {can("view.verification") && nav("/verification",
             <>Verification <span className="count-badge">{verifyCount ? String(verifyCount) : ""}</span></>,

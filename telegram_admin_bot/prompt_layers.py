@@ -39,6 +39,9 @@ SECTIONS: tuple[tuple[str, str], ...] = (
 SECTION_KEYS = tuple(key for key, _ in SECTIONS)
 
 MODES = ("override", "append")
+# Sections a client can only add to, never replace: the industry's text for
+# them stays in force for every client, and the client's text comes after it.
+APPEND_ONLY_SECTIONS = frozenset({"boundaries"})
 MAX_SECTION_CHARS = 20_000
 MAX_ADDENDUM_CHARS = 1500
 MAX_BASE_CHARS = 20_000
@@ -94,7 +97,10 @@ def validate_industry(content: Any) -> dict[str, Any]:
     return {"sections": clean}
 
 
-def validate_client(content: Any) -> dict[str, Any]:
+def validate_client(content: Any, *, strict: bool = True) -> dict[str, Any]:
+    """strict=False is for rendering versions already stored: an override of
+    an append-only section saved before that rule existed is read as an
+    append instead of refused, so the bot keeps running."""
     if not isinstance(content, dict) or set(content) - {"overrides", "addendum"}:
         raise PromptError('client content must be {"overrides": {...}, "addendum": "..."}')
     overrides = content.get("overrides") or {}
@@ -111,11 +117,19 @@ def validate_client(content: Any) -> dict[str, Any]:
             raise PromptError(f'override {key!r} must be {{"mode": ..., "text": ...}}')
         if value["mode"] not in MODES:
             raise PromptError(f"override {key!r}: mode must be one of {', '.join(MODES)}")
+        mode = value["mode"]
+        if mode == "override" and key in APPEND_ONLY_SECTIONS:
+            if strict:
+                raise PromptError(
+                    f"{key!r} can only be appended to, not overridden: the industry's "
+                    f"{key} always apply. Put only this client's extra rules in it."
+                )
+            mode = "append"
         text = _text(value["text"], f"override {key!r}", MAX_SECTION_CHARS)
         # An empty override would silently blank the industry's section.
         if not text:
             raise PromptError(f"override {key!r} is empty; remove it to inherit instead")
-        clean[key] = {"mode": value["mode"], "text": text}
+        clean[key] = {"mode": mode, "text": text}
     addendum = _text(content.get("addendum", ""), "addendum", MAX_ADDENDUM_CHARS)
     return {"overrides": clean, "addendum": addendum}
 
@@ -146,7 +160,7 @@ def effective_sections(industry: dict[str, Any], client: dict[str, Any]) -> dict
         override = overrides.get(key)
         if override is None:
             text, source = inherited, "industry" if inherited else ""
-        elif override["mode"] == "override":
+        elif override["mode"] == "override" and key not in APPEND_ONLY_SECTIONS:
             text, source = override["text"], "client"
         else:
             text = f"{inherited}\n{override['text']}".strip()
@@ -177,7 +191,7 @@ def render(
     """versions = (base_version, industry_id, industry_version, client_version)."""
     base = validate_base(base)
     industry = validate_industry(industry)
-    client = validate_client(client or {"overrides": {}, "addendum": ""})
+    client = validate_client(client or {"overrides": {}, "addendum": ""}, strict=False)
 
     parts = [BASE_HEADER, base["rules"], f"BUSINESS: {business_name.strip() or 'this business'}"]
     business_parts = []

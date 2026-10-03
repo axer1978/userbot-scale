@@ -217,6 +217,8 @@ export type PromptSection = {
   heading: string;
   inherited?: string;
   override?: { mode: "override" | "append"; text: string } | null;
+  // The client can only add to this section (e.g. boundaries), never replace it.
+  append_only?: boolean;
 };
 
 export type TenantView = {
@@ -574,3 +576,55 @@ export type ReviewPhoto = {
 };
 
 export type ReviewIndustry = { id: number; name: string; requires_review: boolean; tenants: number };
+
+/* ---------------------------------------------------------------- finetune */
+
+export type BusinessLayer = {
+  overrides: Record<string, { mode: "override" | "append"; text: string }>;
+  addendum: string;
+};
+
+export type FinetuneIndustry = {
+  industry: { id: number; name: string; template_version: number };
+  template: string;
+  // The shipped starting point for this industry ("" if none).
+  default_template: string;
+  placeholders: string[];
+  businesses_so_far: number;
+  has_standard: boolean;
+  screenshots_ready: boolean;
+  transcripts_ready: boolean;
+};
+
+export type FinetuneRun = {
+  id: number;
+  tenant_id: number;
+  industry_id: number;
+  status: "running" | "done" | "failed" | "applied" | "discarded";
+  model: string;
+  // screenshots: the vision model read images; text: transcribed chats.
+  source: "screenshots" | "text";
+  files: string[];
+  industry_version: number;
+  error: string;
+  applied: { industry_version?: number; client_version?: number } | null;
+  created_at: string;
+  finished_at?: string | null;
+  applied_at?: string | null;
+  // Only on a single run (GET /api/finetune/runs/{id}):
+  result?: {
+    business_layer: BusinessLayer | null;
+    industry_sections: Record<string, string> | null;
+    notes: string;
+    errors: string[];
+  } | null;
+  raw_output?: string;
+  stale?: string;
+  current?: {
+    industry_version: number;
+    industry_sections: Record<string, string>;
+    business_layer: BusinessLayer;
+  };
+  sections?: { key: string; heading: string; append_only: boolean }[];
+  addendum_limit?: number;
+};
