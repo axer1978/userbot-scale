@@ -44,6 +44,9 @@ from transport import (
 
 log = logging.getLogger("session_runtime")
 
+# ttl_seconds that Telegram reads as "view once" rather than a timer.
+VIEW_ONCE_TTL = 0x7FFFFFFF
+
 def describe_sender(sender: Any, fallback_id: int) -> tuple[str, Optional[str], bool, Optional[int]]:
     """(display_name, username, is_bot, access_hash) for a private-chat peer."""
     username = getattr(sender, "username", None)
@@ -353,13 +356,19 @@ class TelegramTransport(Transport):
 
         return await self.client.send_message(peer, text)
 
-    async def send_file(self, peer: Any, chat_id: int, path: Path, is_video: bool, show_upload: bool) -> Any:
+    can_delete = True
+
+    async def send_file(self, peer: Any, chat_id: int, path: Path, is_video: bool, show_upload: bool,
+                        view_once: bool = False) -> Any:
+        # Telegram's "view once": the self-destruct timer set to its maximum.
+        # Photos and videos only, as files (not albums or documents).
+        ttl = VIEW_ONCE_TTL if view_once else None
         if not show_upload:
-            return await self.client.send_file(peer, str(path), supports_streaming=is_video)
+            return await self.client.send_file(peer, str(path), supports_streaming=is_video, ttl=ttl)
         try:
             async with self.client.action(chat_id, "video" if is_video else "photo") as progress:
                 return await self.client.send_file(
-                    peer, str(path), supports_streaming=is_video, progress_callback=progress.progress,
+                    peer, str(path), supports_streaming=is_video, progress_callback=progress.progress, ttl=ttl,
                 )
         except asyncio.CancelledError:
             raise
@@ -368,7 +377,12 @@ class TelegramTransport(Transport):
                 raise
             log.warning("[%s] Upload indicator unavailable (%s); sending anyway.", self.rt.session_id,
                         type(exc).__name__)
-        return await self.client.send_file(peer, str(path), supports_streaming=is_video)
+        return await self.client.send_file(peer, str(path), supports_streaming=is_video, ttl=ttl)
+
+    async def delete_messages(self, peer: Any, chat_id: int, message_ids: list[Any]) -> None:
+        # revoke=True: gone for the customer too. In a private chat Telegram
+        # allows that for one's own messages at any age.
+        await self.client.delete_messages(peer, [int(i) for i in message_ids], revoke=True)
 
     def message_id(self, sent: Any) -> Any:
         return getattr(sent, "id", None)

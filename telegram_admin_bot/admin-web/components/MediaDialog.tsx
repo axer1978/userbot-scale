@@ -1,7 +1,9 @@
 "use client";
 
 // The media library: files the assistant may send, each with the short
-// description it picks them by, and the entrance photo for arrival checks.
+// description it picks them by, the entrance photo for arrival checks, and
+// two switches: view once, and send on arrival (with the arrival
+// instructions, never by the AI).
 
 import { useEffect, useState } from "react";
 import { useDialogs, useToast } from "@/components/feedback";
@@ -19,6 +21,31 @@ export function MediaPreview({ item, sessionId, small }: { item: MediaItem; sess
   // A plain <img>: the file is behind the admin cookie on panel.py, not something to optimise.
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt={item.description || item.file} loading="lazy" className={small ? "preview" : undefined} />;
+}
+
+type Flag = "view_once" | "send_on_arrival";
+
+/** A tick box for one of the item's switches, shown ticked at once and set
+ * back if the panel refuses. */
+function FlagBox({ item, flag, children, title }: {
+  item: MediaItem; flag: Flag; children: React.ReactNode; title: string;
+}) {
+  const { sApi } = usePanel();
+  const toast = useToast();
+  const [pending, setPending] = useState<boolean | null>(null);
+  const [seen, setSeen] = useState(!!item[flag]);
+  if (seen !== !!item[flag]) { setSeen(!!item[flag]); setPending(null); }
+  return (
+    <label className="entrance" title={title}>
+      <input type="checkbox" checked={pending ?? !!item[flag]} onChange={async (ev) => {
+        const on = ev.target.checked;
+        setPending(on);
+        try { await sApi("PATCH", `/media/${item.id}/flags`, { [flag]: on }); }
+        catch (err) { setPending(null); toast(errorText(err)); }
+      }} />
+      <span>{children}</span>
+    </label>
+  );
 }
 
 function MediaCard({ item }: { item: MediaItem }) {
@@ -52,6 +79,12 @@ function MediaCard({ item }: { item: MediaItem }) {
           <span>Entrance (for the arrival photo check)</span>
         </label>
       )}
+      <FlagBox item={item} flag="view_once"
+               title="Telegram: the client can open it once, then it disappears. Not on WhatsApp.">
+        View once</FlagBox>
+      <FlagBox item={item} flag="send_on_arrival"
+               title="Sent right after the arrival instructions and deleted with them. The AI never sends it.">
+        Send on arrival (with the instructions; deleted with them)</FlagBox>
       <div className="actions">
         <button type="button" className="btn small primary" disabled={busy === "save"} onClick={async () => {
           setBusy("save");

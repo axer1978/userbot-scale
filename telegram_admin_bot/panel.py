@@ -1462,6 +1462,27 @@ async def api_media_role(session_id: str, item_id: int, body: MediaRoleBody) -> 
     return item
 
 
+class MediaFlagsBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    view_once: Optional[bool] = None
+    send_on_arrival: Optional[bool] = None
+
+
+@app.patch("/api/sessions/{session_id}/media/{item_id}/flags", dependencies=[Depends(require_auth)])
+async def api_media_flags(session_id: str, item_id: int, body: MediaFlagsBody) -> dict[str, Any]:
+    """View once (Telegram shows it once), and send on arrival (goes out
+    with the arrival instructions, never sent by the AI)."""
+    library = await media_library_for(session_id)
+    flags = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not flags:
+        raise HTTPException(status_code=400, detail="Nothing to change.")
+    item = library.set_flags(item_id, **flags)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Unknown media item")
+    await publish(session_id, {"type": "media", "media": library.all()})
+    return item
+
+
 @app.delete("/api/sessions/{session_id}/media/{item_id}", dependencies=[Depends(require_auth)])
 async def api_media_delete(session_id: str, item_id: int) -> dict[str, Any]:
     library = await media_library_for(session_id)

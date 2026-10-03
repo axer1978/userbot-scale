@@ -168,6 +168,7 @@ ROUTES: dict[RouteKey, Resolver] = {
     ("PUT", "/api/sessions/{session_id}/media/upload"): "media.manage",
     ("PATCH", "/api/sessions/{session_id}/media/{item_id}"): "media.manage",
     ("PATCH", "/api/sessions/{session_id}/media/{item_id}/role"): "media.manage",
+    ("PATCH", "/api/sessions/{session_id}/media/{item_id}/flags"): "media.manage",
     ("DELETE", "/api/sessions/{session_id}/media/{item_id}"): "media.manage",
     ("POST", "/api/sessions/{session_id}/global-pause"): "tenant.pause",
     ("GET", "/api/sessions/{session_id}/config"): "view.config",

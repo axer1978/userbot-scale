@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import pino from 'pino';
 import { replyFor } from '../src/bus.ts';
-import { Gateway } from '../src/gateway.ts';
+import { Gateway, MAX_DELETE_IDS } from '../src/gateway.ts';
 import type { Pool } from '../src/db.ts';
 
 type Row = { channel: string; is_active: boolean; lease_epoch: number; live: boolean; lease_expires_at_ms: number | null };
@@ -97,6 +97,7 @@ function stubSocket(over: Partial<{ epoch: number; state: string; lost: string |
     calls,
     sendText: async (jid: string, text: string) => (calls.push(['send', jid, text]), { message_id: 'MID', ts: 1 }),
     read: async (jid: string, ids: string[]) => void calls.push(['read', jid, ids]),
+    deleteMessages: async (jid: string, ids: string[]) => void calls.push(['delete', jid, ids]),
     presence: async (state: string, jid?: string) => void calls.push(['presence', state, jid]),
     logout: async () => (calls.push(['logout']), true),
     close: async () => void calls.push(['close']),
@@ -152,6 +153,70 @@ test('send_text / read / presence are fenced: exact epoch, open state, valid arg
   inject(gw, stubSocket({ state: 'closed', lost: 'loggedOut' }));
   assert.equal(await kindOf(gw.handle(cmd('send_text', { ...s, jid: '1@s.whatsapp.net', text: 'x' }))), 'session_lost');
   assert.equal(await kindOf(gw.handle(cmd('presence', { ...s, state: 'available' }))), 'session_lost');
+});
+
+test('delete is fenced like read: no socket, stale epoch, not open, lost', async () => {
+  const gw = new Gateway(fakePool({}, new Set()), async () => true, quiet);
+  const s = { session_id: 'wa1', epoch: 4 };
+  const args = { jid: '1@s.whatsapp.net', message_ids: ['a'] };
+  // No socket at all -> not_connected, the same as read.
+  assert.equal(await kindOf(gw.handle(cmd('read', { ...s, ...args }))), 'not_connected');
+  assert.equal(await kindOf(gw.handle(cmd('delete', { ...s, ...args }))), 'not_connected');
+
+  const stub = stubSocket();
+  inject(gw, stub);
+  // Epoch fencing: lower AND higher are stale, for read and delete alike.
+  for (const epoch of [3, 5]) {
+    assert.equal(await kindOf(gw.handle(cmd('read', { session_id: 'wa1', epoch, ...args }))), 'stale_epoch');
+    assert.equal(await kindOf(gw.handle(cmd('delete', { session_id: 'wa1', epoch, ...args }))), 'stale_epoch');
+  }
+  assert.equal(await kindOf(gw.handle(cmd('delete', { session_id: 'wa1', epoch: '4', ...args }))), 'bad_request');
+  assert.equal(await kindOf(gw.handle(cmd('delete', { epoch: 4, ...args }))), 'bad_request');
+  assert.deepEqual(stub.calls, [], 'nothing reached the socket');
+
+  inject(gw, stubSocket({ state: 'connecting' }));
+  assert.equal(await kindOf(gw.handle(cmd('delete', { ...s, ...args }))), 'not_connected');
+  inject(gw, stubSocket({ state: 'closed', lost: 'loggedOut' }));
+  assert.equal(await kindOf(gw.handle(cmd('delete', { ...s, ...args }))), 'session_lost');
+});
+
+test('delete validates jid and message_ids, then hands every id to the socket', async () => {
+  const gw = new Gateway(fakePool({}, new Set()), async () => true, quiet);
+  const s = { session_id: 'wa1', epoch: 4 };
+  const stub = stubSocket();
+  inject(gw, stub);
+  const del = (args: Record<string, unknown>) => gw.handle(cmd('delete', { ...s, ...args }));
+
+  assert.deepEqual(await del({ jid: '1@lid', message_ids: ['a', 'b'] }), { ok: true });
+  const max = Array.from({ length: MAX_DELETE_IDS }, (_, i) => `ID${i}`);
+  assert.deepEqual(await del({ jid: '1@s.whatsapp.net', message_ids: max }), { ok: true });
+  assert.deepEqual(await del({ jid: '1@s.whatsapp.net', message_ids: ['x'.repeat(128)] }), { ok: true });
+  assert.deepEqual(stub.calls, [
+    ['delete', '1@lid', ['a', 'b']],
+    ['delete', '1@s.whatsapp.net', max],
+    ['delete', '1@s.whatsapp.net', ['x'.repeat(128)]],
+  ]);
+  stub.calls.length = 0;
+
+  const jid = '1@s.whatsapp.net';
+  for (const message_ids of [
+    [],
+    'a',
+    undefined,
+    null,
+    { 0: 'a' },
+    ['a', 1],
+    ['a', null],
+    [''],
+    ['x'.repeat(129)],
+    [...max, 'one-too-many'],
+  ]) {
+    assert.equal(await kindOf(del({ jid, message_ids })), 'bad_request', `message_ids=${JSON.stringify(message_ids)}`);
+  }
+  for (const badJid of ['123@g.us', 'status@broadcast', '', undefined, 'a b@s.whatsapp.net']) {
+    assert.equal(await kindOf(del({ jid: badJid, message_ids: ['a'] })), 'bad_request', `jid=${String(badJid)}`);
+  }
+  assert.deepEqual(stub.calls, [], 'a refused call never reaches the socket');
 });
 
 test('logout: with a socket it logs out, wipes and drops; without one it is fenced like open', async () => {

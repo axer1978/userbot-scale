@@ -139,7 +139,9 @@ async def test_upgrading_a_database_with_telegram_data_keeps_it_all(pg_pool, tmp
         for table, rows in before.items():
             after = [dict(r) for r in await con.fetch(f"SELECT * FROM {table} ORDER BY 1, 2")]
             new_cols = {"wa_message_id", "provider_wa_message_id"}
-            assert [{k: v for k, v in r.items() if k not in new_cols} for r in after] == rows, table
+            # Added by later migrations (0011), with their own defaults.
+            later = {"instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at"}
+            assert [{k: v for k, v in r.items() if k not in new_cols | later} for r in after] == rows, table
             assert all(r.get(c) is None for r in after for c in new_cols)
         # The account still runs as it did.
         row = await con.fetchrow("SELECT label, is_active, state FROM telegram_sessions WHERE session_id = 'tg1'")

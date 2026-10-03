@@ -165,7 +165,17 @@ class Transport:
         when it is not None. Returns what message_id() reads."""
         raise NotImplementedError
 
-    async def send_file(self, peer: Any, chat_id: int, path: Path, is_video: bool, show_upload: bool) -> Any:
+    async def send_file(self, peer: Any, chat_id: int, path: Path, is_video: bool, show_upload: bool,
+                        view_once: bool = False) -> Any:
+        """Send a photo or video. `view_once`: the recipient can open it
+        once, where the network supports that."""
+        raise NotImplementedError
+
+    # Whether sent messages can be deleted for both sides.
+    can_delete = False
+
+    async def delete_messages(self, peer: Any, chat_id: int, message_ids: list[Any]) -> None:
+        """Delete these sent messages (network ids) for everyone in the chat."""
         raise NotImplementedError
 
     def message_id(self, sent: Any) -> Any:

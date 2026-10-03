@@ -115,6 +115,10 @@ export type MediaItem = {
   file: string;
   description: string;
   role?: string | null;
+  // Telegram shows it once, then it is gone.
+  view_once?: boolean;
+  // Sent with the arrival instructions (and deleted with them); never by the AI.
+  send_on_arrival?: boolean;
 };
 
 export type OutreachItem = {
