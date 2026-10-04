@@ -24,6 +24,7 @@ import media
 import session_runtime
 import tenants
 import vision
+from transport import Inbound, PeerInfo
 
 pytestmark = [pytest.mark.requires_pg, pytest.mark.asyncio]
 
@@ -188,6 +189,39 @@ async def test_no_address_for_a_time_that_is_not_free(world):
     await customer(w, "tomorrow at 15?", book())
     await customer(w, "tomorrow at 15?", book(), chat=CUSTOMER + 1)
     assert "Brivibas iela 1, Riga" not in w.sent.get(CUSTOMER + 1, [])
+
+
+async def test_the_account_itself_as_owner_answers_in_saved_messages(world):
+    w = world
+    w.app.me_info = {"id": OWNER, "name": "Me", "username": None}
+    await customer(w, "tomorrow at 15?", book())
+    assert "Booking request #1" in w.sent[OWNER][0]
+
+    async def me():
+        return PeerInfo("Me")
+
+    # Typed by hand in Saved Messages: an outgoing message, not an incoming one.
+    await w.app.handle_own_echo(Inbound(chat_id=OWNER, text="YES 1", external_id=next(_ids),
+                                        load_peer=me, from_me=True))
+    await settle(w.app)
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1].startswith("#1 confirmed")
+    assert w.app.takeover_until(await w.db.get_conversation(OWNER)) is None
+
+
+async def test_a_hand_written_line_to_another_owner_is_not_a_command(world):
+    w = world
+    w.app.me_info = {"id": 1, "name": "Me", "username": None}
+    await customer(w, "tomorrow at 15?", book())
+
+    async def owner_peer():
+        return PeerInfo("Owner")
+
+    # The owner is someone else: what this account types to them is just chat.
+    await w.app.handle_own_echo(Inbound(chat_id=OWNER, text="YES 1", external_id=next(_ids),
+                                        load_peer=owner_peer, from_me=True))
+    await settle(w.app)
+    assert (await only_booking(w))["state"] == bs.PENDING
 
 
 async def test_nothing_is_confirmed_without_the_owner(world):

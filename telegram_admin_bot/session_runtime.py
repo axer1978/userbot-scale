@@ -2177,11 +2177,18 @@ class SessionRuntime:
         if row is None:
             return  # already stored: one of this runtime's own sends
         await self.push_message(row)
+        provider = await self.flow.provider_chat_id()
+        if chat_id == provider:
+            # booking.provider is this account itself: the requests land in
+            # Saved Messages, and a YES n / NO n typed there is the answer.
+            if (self.flow.enabled() and text and provider == self.me_info.get("id")
+                    and await self.flow.on_owner_message(chat_id, text, message.reply_to)):
+                log.info("[%s]   booking command in Saved Messages — handled.", self.session_id)
+            return
         # Written by hand on the account's own phone or app: a person has
-        # taken this chat over. Not the owner's booking chat or Saved Messages.
-        if chat_id != await self.flow.provider_chat_id():
-            await self.start_takeover(chat_id, how=f"Someone wrote here by hand in {self.transport.network}",
-                                      actor=audit.OWNER)
+        # taken this chat over.
+        await self.start_takeover(chat_id, how=f"Someone wrote here by hand in {self.transport.network}",
+                                  actor=audit.OWNER)
 
     # ------------------------------------------------------------------
     # Runners
