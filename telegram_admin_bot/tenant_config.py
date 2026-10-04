@@ -204,6 +204,10 @@ class Booking(_Strict):
     waitlist_offer_hours: int = Field(12, ge=1, le=168)
     # Sent word for word, once, when the customer has arrived. Media items
     # marked "send on arrival" go out right after it.
+    # Sent word for word right after the reply to a customer who names a
+    # free time, before the owner has confirmed it. Keep door codes and the
+    # way in for arrival_instructions.
+    address: str = Field("", max_length=2000)
     arrival_instructions: str = Field("", max_length=20_000)
     # Delete the arrival instructions and those photos from the chat, for
     # both sides, this many minutes after they were sent (door codes, the

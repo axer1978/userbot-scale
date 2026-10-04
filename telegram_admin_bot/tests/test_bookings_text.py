@@ -138,3 +138,9 @@ def test_the_reminder_line_asks_for_1_or_2_and_uses_the_instruction():
     line = bookings.reminder_line(_b(state=bs.CONFIRMED), "Mention parking is free.", now, "https://x/b/tok")
     assert "Mention parking is free." in line and "reply 1" in line and "https://x/b/tok" in line
     assert "in about 24 hours" in line
+
+
+def test_the_reply_is_always_told_only_the_owner_confirms():
+    # Even with nothing booked yet, the reply may not say "booked".
+    text = bookings.context_for_reply([])
+    assert text.startswith("APPOINTMENTS:") and bookings.ONLY_OWNER_CONFIRMS_RULE in text

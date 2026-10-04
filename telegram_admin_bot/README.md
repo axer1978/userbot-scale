@@ -647,6 +647,10 @@ the opening hours, the calendar link and AI usage.
   told. A cancelled or moved booking frees its time for the first person on
   the waitlist whose wish covers it; they have `waitlist_offer_hours` to take
   it before the next one is asked.
+- **Address**: when the customer names a time that is free, `address` is
+  sent word for word right after the reply that says it is being checked —
+  before the owner confirms. A taken time gets no address. Keep the door
+  code and the way in for `arrival_instructions`.
 - **Arrival**: when the customer says they are there, `arrival_instructions`
   (address, door code) are sent word for word, once. With
   `arrival_photo_check` (needs `vision`), a photo they send is compared with

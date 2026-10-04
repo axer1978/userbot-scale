@@ -166,6 +166,30 @@ async def test_a_request_goes_to_the_owner_and_yes_confirms_it(world):
     assert (await only_booking(w))["customer_notice"] is None
 
 
+async def test_the_address_follows_the_reply_when_a_free_time_is_named(world):
+    w = world
+    w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
+    w.script["reply"] = "checking, one moment"
+    await customer(w, "tomorrow at 15?", book())
+
+    # Reply first, then the address word for word; not yet confirmed.
+    assert w.sent[CUSTOMER][-2:] == ["checking, one moment", "Brivibas iela 1, Riga"]
+    assert "address is sent to them automatically" in w.script["notes"][-1]
+    assert (await only_booking(w))["state"] == bs.PENDING
+
+    # Sent once per request, not again on the next message.
+    await customer(w, "great")
+    assert w.sent[CUSTOMER].count("Brivibas iela 1, Riga") == 1
+
+
+async def test_no_address_for_a_time_that_is_not_free(world):
+    w = world
+    w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "tomorrow at 15?", book(), chat=CUSTOMER + 1)
+    assert "Brivibas iela 1, Riga" not in w.sent.get(CUSTOMER + 1, [])
+
+
 async def test_nothing_is_confirmed_without_the_owner(world):
     w = world
     await customer(w, "tomorrow at 15?", book())

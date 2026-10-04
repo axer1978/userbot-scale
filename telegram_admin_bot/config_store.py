@@ -136,6 +136,9 @@ DEFAULTS: dict[str, Any] = {
         # This long before a confirmed appointment the client is asked whether
         # they are still coming. 0 turns the check-in off.
         "reminder_minutes_before": 120,
+        # Sent word for word right after the reply to a client who names a
+        # free time (before it is confirmed). Blank = nothing is sent.
+        "address": "",
         # Sent word for word — address, floor, door code, how to get in — the
         # moment the client says they have arrived. Blank = nothing is sent.
         "arrival_instructions": "",
@@ -437,6 +440,7 @@ def normalize(raw: Any) -> dict[str, Any]:
     booking["reminder_minutes_before"] = _as_int(
         booking.get("reminder_minutes_before"), bd["reminder_minutes_before"], 0, 7 * 24 * 60
     )
+    booking["address"] = _as_sample_text(booking.get("address"))
     booking["arrival_instructions"] = _as_sample_text(booking.get("arrival_instructions"))
 
     md = DEFAULTS["media"]
