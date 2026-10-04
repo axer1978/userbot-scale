@@ -73,6 +73,40 @@ def test_a_runaway_burst_is_capped_not_flooded():
     assert parts[-1] == "d e f"
 
 
+RATES = "30min 100\n1 time\n\nIncall 200\nOutcall 200+🚕"
+
+
+def test_a_block_is_one_message_with_its_line_breaks():
+    """A price list in six bubbles reads as a bot."""
+    parts = ai_responder.split_burst(f"sure love\n[block]\n{RATES}\n[/block]\nwhat time?")
+    assert parts == ["sure love", RATES, "what time?"]
+
+
+def test_block_markers_are_tolerant_and_never_sent():
+    assert ai_responder.split_burst(f"[ BLOCK ]{RATES}[/ Block ]") == [RATES]
+    # No close: the block runs to the end.
+    assert ai_responder.split_burst(f"hi\n[block]\n{RATES}") == ["hi", RATES]
+    # A stray close, a separator inside, extra blank lines.
+    assert ai_responder.split_burst("[/block]hey") == ["hey"]
+    assert ai_responder.split_burst("[block]a\n|||\nb\n\n\n\nc[/block]") == ["a\nb\n\nc"]
+    assert ai_responder.split_burst("[block] \n [/block]ok") == ["ok"]
+
+
+def test_keep_together_off_splits_a_block_like_any_text():
+    parts = ai_responder.split_burst(f"[block]\n{RATES}\n[/block]", keep_together=False)
+    assert parts == ["30min 100", "1 time", "Incall 200", "Outcall 200+🚕"]
+
+
+def test_overflow_keeps_a_blocks_line_breaks():
+    parts = ai_responder.split_burst(f"a|||b|||c|||[block]{RATES}[/block]|||d")
+    assert parts[:3] == ["a", "b", "c"] and parts[3] == RATES + "\nd"
+
+
+def test_the_block_note_follows_the_setting():
+    assert ai_responder.BLOCK_OPEN in ai_responder.burst_note(4, True)
+    assert ai_responder.BLOCK_OPEN not in ai_responder.burst_note(4, False)
+
+
 # ------------------------------------------------------------ the prompt
 
 @pytest.mark.asyncio

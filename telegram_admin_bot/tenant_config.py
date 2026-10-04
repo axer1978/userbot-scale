@@ -80,6 +80,11 @@ class Burst(_Strict):
     """A reply may go out as several short messages in a row."""
     max_messages: int = Field(4, ge=1, le=10)
     gap_ms: GapMs = Field(default_factory=GapMs)
+    # Price lists and the like arrive as one message with their line breaks.
+    keep_together: bool = Field(True, description=(
+        "Send price lists, rates and other multi-line text as ONE message instead of "
+        "one message per line. The bot marks them with [block]...[/block]; off splits "
+        "them like any other reply."))
 
 
 class QuietHours(_Strict):
