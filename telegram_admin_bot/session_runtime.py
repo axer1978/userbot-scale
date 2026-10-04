@@ -506,7 +506,8 @@ class SessionRuntime:
             attachments = [
                 i for i in (draft.get("attachments") or []) if self.media_library.get(i) is not None
             ]
-            parts = ai_responder.split_burst(text, self.config["burst"]["max_messages"])
+            parts = ai_responder.split_burst(
+                text, self.config["burst"]["max_messages"], self.config["burst"].get("keep_together", True))
             if not parts and not attachments:
                 raise ValueError("Message is empty")
             sent = await self.send_burst(
@@ -1596,6 +1597,7 @@ class SessionRuntime:
                     system_prompt=self.transport.adapt_prompt(prompt.text) if prompt else None,
                     language_locked=self.config["language_policy"] != "mirror",
                     burst_max=self.config["burst"]["max_messages"],
+                    burst_keep_together=self.config["burst"].get("keep_together", True),
                     usage_sink=self.usage_sink("reply"),
                     no_reply_instruction=no_reply,
                 )
@@ -1610,7 +1612,8 @@ class SessionRuntime:
                            if (item := self.media_library.get(i)) is not None and not item.get("send_on_arrival")]
             if not media_note:
                 attachments = []
-            parts = ai_responder.split_burst(text, self.config["burst"]["max_messages"])
+            parts = ai_responder.split_burst(
+                text, self.config["burst"]["max_messages"], self.config["burst"].get("keep_together", True))
             if not parts and not attachments:
                 raise ai_responder.AIResponderError("The reply came back empty.")
             if attachments:

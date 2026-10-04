@@ -176,7 +176,7 @@ def test_the_whatsapp_defaults_are_a_valid_client_layer():
     assert config["daily_message_cap"] == 60 and config["hourly_message_cap"] == 15
     assert config["safety"]["daily_peer_cap"] == 15
     assert config["reply_delay"] == {"min_s": 45, "max_s": 180, "distribution": "lognormal"}
-    assert config["burst"] == {"max_messages": 3, "gap_ms": {"min": 1200, "max": 3500}}
+    assert config["burst"] == {"max_messages": 3, "gap_ms": {"min": 1200, "max": 3500}, "keep_together": True}
     assert config["quiet_hours"] == {"enabled": True, "start": "21:00", "end": "09:00"}
     assert config["auto_send"] is False and config["outreach"]["enabled"] is False
 

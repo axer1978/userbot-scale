@@ -8,6 +8,7 @@
 // applying saves ordinary prompt versions, which the Clients page can roll
 // back. The chats are never stored.
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDialogs, useToast } from "@/components/feedback";
 import { PageShell, Tabs } from "@/components/ui";
@@ -333,7 +334,9 @@ function RunReview({ run, onChanged }: { run: FinetuneRun; onChanged: (run: Fine
       {run.status === "applied" && run.applied && (
         <p className="pf-note">Saved{run.applied.industry_version ? ` industry template v${run.applied.industry_version}` : ""}
           {run.applied.industry_version && run.applied.client_version ? " and" : ""}
-          {run.applied.client_version ? ` client version ${run.applied.client_version}` : ""}, {fmtDateTime(run.applied_at)}.</p>
+          {run.applied.client_version ? ` client version ${run.applied.client_version}` : ""}, {fmtDateTime(run.applied_at)}.{" "}
+          <Link href={`/clients?node=tenant-${run.tenant_id}&tab=prompt`}>Edit prices and other sections by hand</Link>
+          {" "}(no rerun needed; saves a new client version).</p>
       )}
       {run.stale && run.status === "done" && <div className="pf-errors">{run.stale}</div>}
 
