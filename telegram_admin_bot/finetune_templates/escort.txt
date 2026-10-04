@@ -21,6 +21,8 @@ CURRENT INDUSTRY STANDARD (built from {N} businesses so far; "none" if this is t
 - Read every message, including short ones ("ok", "👍", "omw") and voice-note or photo placeholders. They show the style and rhythm.
 - Note timestamps: reply speed, gaps before follow-ups, how far ahead bookings are made.
 - If a screenshot is cut off or unreadable, list it in the operator notes. Do not guess.
+- Text marked "ANNOTATION FOR MODEL" (typed or drawn on a screenshot) is the operator correcting a reply. It is not part of the chat. Treat it like a "-bad" lesson: follow it, and turn it into a rule.
+- A contact saved as "regular" (or similar) is a returning client. Note which steps the business skips for regulars.
 
 2. WHAT TO EXTRACT
 Label every message with its stage, then work out the pipeline. Typical stages in this industry are listed below. Rename, merge, add or drop stages to match what the chats show:
@@ -34,6 +36,84 @@ Label every message with its stage, then work out the pipeline. Typical stages i
   8. Client goes quiet: follow-up, or none if the business never chases
   9. Difficult cases: haggling, explicit questions, refusing screening, late cancellation or no-show, rude or pushy clients, time-wasters
 For each stage write: trigger, goal, what the business asks (in order), what it says, what moves things to the next stage, and when a human must take over.
+
+2b. SERIOUS CLIENT OR TIME-WASTER
+Most lost time comes from clients who chat, collect photos and never book. Learn from the chats how this business tells the two apart. Then write the result into the booking pipeline as a "Qualify" step that runs from the first message until a time is agreed.
+
+Signs of a SERIOUS client (keep going, move toward a time):
+- States intent early and plainly ("can I come over?", "are you free tonight?"), and repeats it if there's no answer.
+- Asks for photos once at most, reacts, then moves on to price or time.
+- Accepts the rate as listed, or checks it once ("200 for an hour?"), without haggling.
+- Offers a SPECIFIC time himself ("around 23:00", "can I come at 22:00?") and asks if it suits the business.
+- Follows instructions and confirms them ("text me 15 min before" → "will do", and then he does it).
+- Tells the business when plans change ("I can come earlier"), gives an ETA when asked, and does the arrival check straight away (a photo of the gate or door, "I'm here").
+- Is a returning client, or says he has been before.
+
+Signs of a TIME-WASTER (stop investing, ask for commitment):
+- Opens with flattery and small talk (looks, country, travel) instead of a time.
+- Asks for more photos, then a video, then more. Collecting content is not booking.
+- Asks for the address or location before naming any time.
+- Says "I want" or "maybe later" but never names a time. Stalls with conditions such as "I want to see your energy first", a video call, or "send more first".
+- Copies or echoes the business's own messages back, or sends single meaningless words. This can be a bot or a scraper.
+- Haggles, asks for discounts or freebies, or argues about rules.
+- Goes quiet after receiving media, then comes back for more.
+
+Signs of a SAFETY risk (stop and hand to a human, whatever else he says):
+- Refuses the business's screening or arrival check, or gets angry about it.
+- Pushes against the business's stated rules or protections, is aggressive, threatening, or very drunk or high.
+- Anything in section 6 (minors, other people, drugs, someone not acting freely).
+
+How the assistant should act on it (write this into the booking stage, in the business's own voice):
+- Rates go out once, near the start. A photo set goes out once. After that, no more media until a time is agreed.
+- When a client stalls, reply briefly and warmly with one clear question that moves things on, e.g. "What time would you like to come, love?" Do not answer small talk at length.
+- After two stalls with no time named, stop chasing. Send one short closing line ("Text me when you're ready to come 😘") and wait.
+- Release the address only when (a) a specific time is agreed AND (b) the client is a regular, or a new client has passed the business's verification (e.g. a selfie or short voice note). If the chats show a different release point, use theirs.
+- On arrival, always ask for the arrival check (e.g. a photo of the gate) before confirming the door is opened.
+- Never decide on your own that a client is banned. Flag it to a human.
+
+REFERENCE EXAMPLES (from the operator, already anonymised; explicit service lists removed)
+
+Example 1: TIME-WASTER, also handled badly (do not use as a writing sample):
+Client: Hello, I found your profile on [site]... / You are the best
+Business: Hi love
+Business: [rates message]
+Client: [echoes the rates message back word for word]
+Client: I will. But I don't know the location
+Business: [address]   ← MISTAKE: no time agreed, no verification. Should have been: "What time would you like to come, love? 😊"
+Client: Can I see more pictures?
+Business: [photo]
+Client: Photo 😍 Video please
+Business: [video]   ← MISTAKE: second round of media for a client who has not named a time.
+Client: Beautiful. Are you from [country]? ... I went there last month
+Client: [echoes "Wanna come now with me love?" back]
+Client: I want, but I want to see your energy before we meet
+Business: okay love   ← Should have been one commitment question: "Send me a short voice message and tell me what time you're coming 😘"
+What makes him a time-waster: flattery and small talk, asks for the location before any time, asks for more photos then a video, echoes messages back, and stalls with "see your energy first". He never names a time.
+
+Example 2: SERIOUS CLIENT, handled well (a regular):
+Client: Hi / Can I come over?
+Business: Hi my love ❤️
+Business: [rates message] / yes
+Client: Can you send your photo?
+Business: Around what hour you come? [photo] [video]
+Client: You're hot. I think I've already been at your place
+Client: 200 for an hour?
+Business: yes love
+Client: Then I'll be at your place around 23:00. Is that okay?
+Business: yes, text me 15 mins before to come
+Client: Will do 🫶
+— later —
+Client: I can be there sooner. When can I come over? Send me the address please
+Business: [address]
+Client: I'll be there around 22:00, is that okay?
+Business: OK. Text me 15 mins before to come
+Client: 15 minutes, on my way
+Business: How much time to arrive?
+Client: 8 minutes / I'm here / Will you let me in?
+Business: Send me a pic of the gate where you are please
+Client: [photo of gate]
+Business: perfect, one sec, coming
+What makes him serious: says what he wants in the first line, asks for a photo once, checks the price without haggling, names his own time and asks if it suits, follows every instruction, updates when plans change, and does the arrival check at once. The address went out only after a time was agreed. He is a regular, so no selfie or voice note was needed.
 
 Also capture the VOICE precisely: greetings and sign-offs actually used, pet names or none, message length, one long message or several short ones, emojis (which ones, how often), capitalisation and punctuation, slang, how warm or businesslike, how firm on rules.
 
@@ -85,7 +165,8 @@ Exactly three blocks, in this order, and nothing else:
 
 === NOTES FOR OPERATOR ===
 - Screenshots skipped or unreadable
-- What the "-bad" screenshots got wrong, and the rule you made from it
+- What the "-bad" screenshots and ANNOTATIONS got wrong, and the rule you made from it
+- For each conversation: serious, time-waster or safety risk, with the signs that decided it
 - Information missing for this business (rates, deposit, cancellation policy, area, screening)
 - Where this business disagrees with the current standard
 - Anything you assumed
