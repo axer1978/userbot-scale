@@ -1,0 +1,44 @@
+# Adds the Next.js admin panel next to the existing stack. From
+# telegram_admin_bot/:
+#
+#   docker compose -f docker-compose.yml -f admin-web/docker-compose.admin-web.yml up -d --build
+#
+# Then, over an SSH tunnel:
+#   ssh -N -L 3000:127.0.0.1:3000 you@your-server   →   http://127.0.0.1:3000
+#
+# Like the panel, it is published on the host's loopback only. With the
+# public profile, Caddy serves it at PANEL_DOMAIN: ../Caddyfile.admin-web
+# replaces ../Caddyfile, routing /api, /ws and /owner to the panel and every
+# page here.
+#
+# To make a plain `docker compose up -d` (and so `git pull && docker compose
+# up -d --build`) include this file, add to .env:
+#   COMPOSE_FILE=docker-compose.yml:admin-web/docker-compose.admin-web.yml
+
+services:
+  admin-web:
+    build: ./admin-web
+    container_name: userbot-admin-web
+    restart: unless-stopped
+    environment:
+      PANEL_URL: http://panel:8787
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    depends_on:
+      panel:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    depends_on:
+      - admin-web
+    volumes:
+      # Same target as the base file's ./Caddyfile mount, so this one wins;
+      # Caddyfile.both (BOOKING_DOMAIN) imports it the same way.
+      - ./Caddyfile.admin-web:/etc/caddy/Caddyfile:ro

@@ -70,7 +70,7 @@ function sfApplySummary(s) {
 }
 
 async function sfPoll() {
-  if ($("admin-gate").classList.contains("open")) return;
+  if ($("admin-gate").classList.contains("open") || !can("view.safety")) return;
   try { sfApplySummary(await api("GET", "/api/safety/summary")); } catch (_) {}
 }
 

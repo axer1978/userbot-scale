@@ -264,12 +264,15 @@ async def api_resume(tenant_id: int, body: ResumeBody) -> dict[str, Any]:
     if body.kind == controls.BILLING:
         raise HTTPException(status_code=400,
                             detail="A billing suspension is lifted by recording a payment or setting the status.")
+    if body.kind == controls.VERIFICATION:
+        raise HTTPException(status_code=400,
+                            detail="This lifts by itself when you approve the client's verification video (Review).")
     pool = _get_pool()
     removed = await controls.remove_hold(pool, tenant_id, body.kind, actor=ACTOR,
                                          reason=body.reason.strip() or "resumed from the panel")
     if not removed:
         raise HTTPException(status_code=404, detail="That hold is not on")
-    if body.kind in (controls.ANOMALY, controls.TELEGRAM, controls.SPEND_CAP):
+    if body.kind in (controls.ANOMALY, controls.TELEGRAM, controls.WHATSAPP, controls.SPEND_CAP):
         # The operator has looked; the alerts that led here are done.
         for row in await pool.fetch(
             "SELECT id FROM alerts WHERE tenant_id = $1 AND acknowledged_at IS NULL AND (kind = $2 OR kind LIKE $3)",

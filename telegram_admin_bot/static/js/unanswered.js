@@ -142,7 +142,7 @@ async function uaPost(path) {
 }
 
 async function uaPoll() {
-  if ($("admin-gate").classList.contains("open")) return;
+  if ($("admin-gate").classList.contains("open") || !can("view.unanswered")) return;
   try { uaApplyCount((await api("GET", "/api/unanswered/count")).open); } catch (_) {}
 }
 

@@ -53,6 +53,19 @@ async def test_resuming_an_anomaly_closes_its_alerts(panel_client, pg_pool, tena
     assert await alerts.list_alerts(pg_pool, open_only=True) == []
 
 
+async def test_resuming_a_whatsapp_halt_closes_its_alerts(panel_client, pg_pool, tenant):
+    """The WhatsApp hold is lifted from Safety like the Telegram one, and the
+    alerts that came with the halt (whatsapp and whatsapp:*) go with it."""
+    await controls.add_hold(pg_pool, tenant, controls.WHATSAPP, "session lost", actor=audit.SYSTEM)
+    await alerts.raise_alert(pg_pool, tenant_id=tenant, kind="whatsapp", message="halted", severity=alerts.CRITICAL,
+                             deliver=False)
+    await alerts.raise_alert(pg_pool, tenant_id=tenant, kind="whatsapp:peer_flood", message="463", deliver=False)
+    await alerts.raise_alert(pg_pool, tenant_id=tenant, kind="send_cap", message="unrelated", deliver=False)
+    r = await panel_client.post(f"/api/tenants/{tenant}/resume", json={"kind": "whatsapp", "reason": "paired again"})
+    assert r.status_code == 200 and r.json()["holds"] == []
+    assert [a["kind"] for a in await alerts.list_alerts(pg_pool, open_only=True)] == ["send_cap"]
+
+
 async def test_the_global_stop_needs_a_reason_and_shows_everywhere(panel_client, pg_pool, tenant):
     r = await panel_client.post("/api/safety/global-stop", json={"on": True, "reason": ""})
     assert r.status_code == 400

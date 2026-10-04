@@ -95,7 +95,9 @@ async def guarded(call):
 
 
 def _tenant_view(bundle: tenants.Bundle) -> dict[str, Any]:
-    client = bundle.layers["client"]
+    # Read the stored client layer the way render() does, so an old
+    # override of an append-only section shows as the append it now is.
+    client = prompt_layers.validate_client(bundle.layers["client"] or {}, strict=False)
     return {
         "tenant": bundle.tenant,
         "industry": {"id": bundle.industry["id"], "name": bundle.industry["name"],
@@ -109,7 +111,8 @@ def _tenant_view(bundle: tenants.Bundle) -> dict[str, Any]:
         "prompt": {
             "sections": [
                 {"key": key, "heading": heading, **section,
-                 "override": (client.get("overrides") or {}).get(key)}
+                 "override": (client.get("overrides") or {}).get(key),
+                 "append_only": key in prompt_layers.APPEND_ONLY_SECTIONS}
                 for (key, heading), section in zip(
                     prompt_layers.SECTIONS,
                     prompt_layers.effective_sections(bundle.layers["industry"], client).values(),

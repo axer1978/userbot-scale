@@ -30,6 +30,7 @@ import os
 import signal
 from contextlib import suppress
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import asyncpg
@@ -39,6 +40,7 @@ import commands
 import digest
 import health
 import pg
+import review
 
 log = logging.getLogger("scheduler")
 
@@ -141,8 +143,11 @@ async def platform_tick(pool: asyncpg.Pool, bus: commands.CommandBus) -> None:
             "'scheduler') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"
         )
 
+    data_root = Path(os.getenv("DATA_DIR") or Path(__file__).resolve().parent / "data")
     for name, step in (("heartbeat", heartbeat), ("health", lambda: health.check_all(pool)),
-                       ("billing", lambda: billing.tick(pool, bus)), ("digest", lambda: digest.tick(pool, bus))):
+                       ("billing", lambda: billing.tick(pool, bus)), ("digest", lambda: digest.tick(pool, bus)),
+                       # Verification holds and the retention of review files (review.py).
+                       ("review", lambda: review.tick(pool, bus, data_root))):
         try:
             await step()
         except Exception:

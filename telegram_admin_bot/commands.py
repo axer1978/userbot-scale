@@ -68,7 +68,13 @@ CONNECT_TIMEOUT_SECONDS = 5.0
 
 
 class CommandError(RuntimeError):
-    """The worker that handled this command reported a failure."""
+    """The worker that handled this command reported a failure. `kind` is
+    the reply's optional machine-readable `error_kind` (the wa-gateway sends
+    one, e.g. "busy"); None when the answer had none."""
+
+    def __init__(self, message: str = "", *, kind: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 class CommandTimeout(CommandError):
@@ -170,7 +176,8 @@ class CommandBus:
                 payload = json.loads(message["data"])
                 if payload.get("ok"):
                     return payload.get("result")
-                raise CommandError(payload.get("error") or "worker reported failure")
+                raise CommandError(payload.get("error") or "worker reported failure",
+                                   kind=payload.get("error_kind"))
         finally:
             await _close_pubsub(pubsub, _resp_channel(command_id))
 
@@ -268,15 +275,23 @@ class CommandBus:
             # even if nobody's panel tab happened to be open to see it live).
             log.warning("[%s] could not publish event %r", session_id, payload.get("type"))
 
+    def subscribe_events(self, session_id: str):
+        return self.subscribe_channel(_event_channel(session_id))
+
     @asynccontextmanager
-    async def subscribe_events(self, session_id: str) -> AsyncIterator[aioredis.client.PubSub]:
+    async def subscribe_channel(self, channel: str) -> AsyncIterator[aioredis.client.PubSub]:
+        """A pub/sub subscription to any one channel, for as long as the
+        block runs: the session event channels above, or another service's
+        own channel (e.g. the wa-gateway's `wa:pair:<pair_id>`). Subscribed
+        by the time the block starts, so nothing published after that is
+        missed."""
         pubsub = self._redis.pubsub()
-        await pubsub.subscribe(_event_channel(session_id))
+        await pubsub.subscribe(channel)
         try:
             yield pubsub
         finally:
             with _suppress_close_errors():
-                await pubsub.unsubscribe(_event_channel(session_id))
+                await pubsub.unsubscribe(channel)
                 await pubsub.aclose()
 
 

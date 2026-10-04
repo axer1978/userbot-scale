@@ -174,6 +174,8 @@ async def panel_client(pg_pool, tmp_path, monkeypatch):
     monkeypatch.setattr(panel, "ADMIN_TOTP_SECRET", "")  # tests that want 2FA turn it on
     monkeypatch.setattr(panel, "_last_totp_step", -1)
     monkeypatch.setattr(panel, "_pending_deepseek_key", "")
+    import wa_pairing
+    monkeypatch.setattr(panel, "wa_pairings", wa_pairing.Pairings())
 
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=panel.app), base_url="http://test")
     try:
@@ -182,4 +184,5 @@ async def panel_client(pg_pool, tmp_path, monkeypatch):
     finally:
         await client.aclose()
         await panel.login_flow.reset()
+        await panel.wa_pairings.close()
         await bus.close()

@@ -426,8 +426,12 @@ async function selectConversation(chatId) {
     state.links = data.links || [];
     renderThreadHeader();
     renderThread();
-    const conv = await sApi("POST", `/conversations/${chatId}/read`);
-    upsertConversation(conv);
+    // A staff role may not mark chats read, or only with the admin's
+    // approval: then opening a chat must not queue a request each time.
+    if (canNow("chat.manage")) {
+      const conv = await sApi("POST", `/conversations/${chatId}/read`);
+      upsertConversation(conv);
+    }
   } catch (err) { toast(err.message); }
 }
 

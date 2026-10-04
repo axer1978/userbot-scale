@@ -58,6 +58,11 @@ LINK_BLOCKED = "blocked"
 
 SESSION_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,39}$")
 
+# telegram_sessions.channel (migration 0006): the network an account is on.
+CHANNEL_TELEGRAM = "telegram"
+CHANNEL_WHATSAPP = "whatsapp"
+CHANNELS = (CHANNEL_TELEGRAM, CHANNEL_WHATSAPP)
+
 
 class InvalidSessionId(ValueError):
     pass
@@ -114,7 +119,7 @@ def _clean(text: Optional[str]) -> Optional[str]:
 # ----------------------------------------------------------------------
 
 _SESSION_COLUMNS = (
-    "session_id, label, api_id, dc_id, server_address, port, user_id, username, "
+    "session_id, channel, label, api_id, dc_id, server_address, port, user_id, username, "
     "phone_number, takeout_id, is_active, state, state_reason, "
     "lease_worker_id, lease_expires_at, lease_epoch, last_seen_at, created_at, updated_at"
 )
@@ -123,6 +128,7 @@ _SESSION_COLUMNS = (
 def _session_row(row: asyncpg.Record) -> dict[str, Any]:
     return {
         "session_id": row["session_id"],
+        "channel": row["channel"],
         "label": row["label"],
         "api_id": row["api_id"],
         "dc_id": row["dc_id"],
@@ -177,45 +183,70 @@ class SessionRegistry:
         label: str = "",
         api_id: Optional[int] = None,
         api_hash: Optional[str] = None,
+        channel: str = CHANNEL_TELEGRAM,
     ) -> dict[str, Any]:
+        """Adds the account (or refreshes the label/credentials of an
+        existing one) and, the first time, the tenant that owns it. An
+        account never changes network: creating an existing session_id with
+        another channel raises ValueError and changes nothing."""
         session_id = validate_session_id(session_id)
+        if channel not in CHANNELS:
+            raise ValueError(f"channel must be one of {', '.join(CHANNELS)}, not {channel!r}")
         api_hash_enc = (
             crypto.encrypt_text(api_hash, aad=crypto.aad_for(session_id, "api_hash"))
             if api_hash
             else None
         )
         async with self._pool.acquire() as con, con.transaction():
-            await con.execute(
+            # The WHERE leaves an existing row on another channel untouched
+            # (no row comes back), so a Telegram account can never quietly
+            # turn into a WhatsApp one or the other way round.
+            stored = await con.fetchval(
                 """
-                INSERT INTO telegram_sessions (session_id, label, api_id, api_hash_enc)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO telegram_sessions (session_id, label, api_id, api_hash_enc, channel)
+                VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (session_id) DO UPDATE SET
                     label        = COALESCE(NULLIF(EXCLUDED.label, ''), telegram_sessions.label),
                     api_id       = COALESCE(EXCLUDED.api_id, telegram_sessions.api_id),
                     api_hash_enc = COALESCE(EXCLUDED.api_hash_enc, telegram_sessions.api_hash_enc),
                     updated_at   = now()
+                 WHERE telegram_sessions.channel = EXCLUDED.channel
+                RETURNING channel
                 """,
                 session_id,
                 label,
                 api_id,
                 api_hash_enc,
+                channel,
             )
+            if stored is None:
+                existing = await con.fetchval(
+                    "SELECT channel FROM telegram_sessions WHERE session_id = $1", session_id
+                )
+                raise ValueError(
+                    f"session {session_id} is a {existing} account; it cannot be added again as {channel}"
+                )
             # Every account belongs to a tenant; a new account becomes a new
-            # tenant in the default (lowest-id) industry.
+            # tenant in the default (lowest-id) industry. Its channel is the
+            # account's (the tenants trigger in migration 0006 copies it).
             tenant_id = await con.fetchval(
                 """
-                INSERT INTO tenants (name, industry_id, session_id, legacy_imported_at)
-                SELECT $2, (SELECT min(id) FROM industries), $1, now()
+                INSERT INTO tenants (name, industry_id, session_id, channel, legacy_imported_at)
+                SELECT $2, (SELECT min(id) FROM industries), $1, $3, now()
                  WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE session_id = $1)
                 RETURNING id
                 """,
                 session_id,
                 label or session_id,
+                channel,
             )
             if tenant_id is not None:
+                reason = (
+                    "New WhatsApp account added" if channel == CHANNEL_WHATSAPP else "New Telegram account added"
+                )
                 await audit.record(
                     con, tenant_id=tenant_id, actor=audit.SYSTEM, event=audit.TENANT_CREATED,
-                    reason="New Telegram account added", payload={"session_id": session_id},
+                    reason=reason, payload={"session_id": session_id},
                 )
         return await self.get(session_id)  # type: ignore[return-value]
 
@@ -401,6 +432,9 @@ class Database:
         self._pool = pool
         self._session_id = validate_session_id(session_id)
         self._tenant_id = tenant_id
+        # The account's network: which customer_ref namespace its chats
+        # live in. The runtime sets it once it knows the account's channel.
+        self.channel = CHANNEL_TELEGRAM
 
     @property
     def session_id(self) -> str:
@@ -466,7 +500,7 @@ class Database:
                 _clean(username),
                 bool(is_bot),
                 access_hash,
-                crypto.customer_ref(tid, "telegram", chat_id),
+                crypto.customer_ref(tid, self.channel, chat_id),
             )
         return await self.get_conversation(chat_id)  # type: ignore[return-value]
 
@@ -555,6 +589,7 @@ class Database:
         attachments: Optional[list[int]] = None,
         llm_model: Optional[str] = None,
         prompt_version: Optional[str] = None,
+        wa_message_id: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         """Insert a message and refresh the conversation's preview.
 
@@ -562,16 +597,24 @@ class Database:
         under the same Telegram message id (we send via Telethon *and*
         watch outgoing events, so the same message can arrive twice).
         `llm_model` / `prompt_version` are set on AI-written messages.
+        A WhatsApp message carries its string id in `wa_message_id` instead,
+        deduplicated the same way.
         """
         text = _clean(text) or ""
         tid = await self.tenant_id()
+        # One arbiter per insert: a message has one network id or none.
+        conflict = (
+            "(session_id, chat_id, wa_message_id) WHERE wa_message_id IS NOT NULL"
+            if wa_message_id is not None else
+            "(session_id, chat_id, telegram_id) WHERE telegram_id IS NOT NULL"
+        )
         async with self._pool.acquire() as con, con.transaction():
             row = await con.fetchrow(
-                """
+                f"""
                 INSERT INTO messages (session_id, tenant_id, chat_id, telegram_id, direction, status,
-                                      text, attachments, llm_model, prompt_version)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                ON CONFLICT (session_id, chat_id, telegram_id) WHERE telegram_id IS NOT NULL
+                                      text, attachments, llm_model, prompt_version, wa_message_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT {conflict}
                 DO NOTHING
                 RETURNING id
                 """,
@@ -585,6 +628,7 @@ class Database:
                 list(attachments or []),
                 llm_model,
                 prompt_version,
+                wa_message_id,
             )
             if row is None:
                 return None
@@ -629,6 +673,21 @@ class Database:
                 tid,
                 chat_id,
                 telegram_id,
+            )
+        return _message(row) if row else None
+
+    async def find_by_wa_message_id(
+        self, chat_id: int, wa_message_id: Optional[str]
+    ) -> Optional[dict[str, Any]]:
+        tid = await self.tenant_id()
+        if wa_message_id is None:
+            return None
+        async with self._pool.acquire() as con:
+            row = await con.fetchrow(
+                "SELECT * FROM messages WHERE tenant_id = $1 AND chat_id = $2 AND wa_message_id = $3",
+                tid,
+                chat_id,
+                wa_message_id,
             )
         return _message(row) if row else None
 
@@ -687,6 +746,7 @@ class Database:
         status: Optional[str] = None,
         telegram_id: Optional[int] = None,
         attachments: Optional[list[int]] = None,
+        wa_message_id: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         tid = await self.tenant_id()
         sets: list[str] = []
@@ -703,6 +763,9 @@ class Database:
         if telegram_id is not None:
             params.append(telegram_id)
             sets.append(f"telegram_id = ${len(params)}")
+        if wa_message_id is not None:
+            params.append(wa_message_id)
+            sets.append(f"wa_message_id = ${len(params)}")
         if not sets:
             return await self.get_message(message_id)
         sql = f"UPDATE messages SET {', '.join(sets)} WHERE tenant_id = $1 AND id = $2"
@@ -1192,6 +1255,7 @@ def _message(row: asyncpg.Record) -> dict[str, Any]:
         "id": row["id"],
         "chat_id": row["chat_id"],
         "telegram_id": row["telegram_id"],
+        "wa_message_id": row["wa_message_id"],
         "direction": row["direction"],
         "status": row["status"],
         "text": row["text"],

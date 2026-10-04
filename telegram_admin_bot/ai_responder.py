@@ -64,13 +64,24 @@ MAX_BURST_MESSAGES = 4
 # far more often than with the separator it was asked for, and a burst that
 # arrives as one multi-line bubble is not a burst.
 _BURST_SPLIT = re.compile(r"\s*\|{3,}\s*|\s*\n\s*")
+# Some things must arrive as one message with their line breaks: a price
+# list split over six bubbles reads as a bot. The model wraps them in
+# BLOCK_OPEN / BLOCK_CLOSE (config burst.keep_together); the markers never
+# reach Telegram either way. An open block with no close runs to the end.
+BLOCK_OPEN = "[block]"
+BLOCK_CLOSE = "[/block]"
+_BLOCK = re.compile(r"\[\s*block\s*\](.*?)(?:\[\s*/\s*block\s*\]|$)", re.IGNORECASE | re.DOTALL)
+_STRAY_BLOCK_TAG = re.compile(r"\[\s*/?\s*block\s*\]", re.IGNORECASE)
+_SEPARATOR_LINE = re.compile(r"^[ \t]*\|{3,}[ \t]*(?:\n|$)", re.MULTILINE)
+_EXTRA_BLANK_LINES = re.compile(r"\n\s*\n(\s*\n)+")
 
-def burst_note(max_messages: int = MAX_BURST_MESSAGES) -> str:
+
+def burst_note(max_messages: int = MAX_BURST_MESSAGES, keep_together: bool = True) -> str:
     """The prompt instruction for replying as several short messages. With a
     limit of 1 (config burst.max_messages) it asks for one message instead."""
     if max_messages <= 1:
         return "Send your reply as one single message."
-    return (
+    note = (
         "SENDING AS SEVERAL MESSAGES: real people often send a reply as a few "
         "short messages in a row rather than one block. When your reply has more "
         "than one thought in it, or it is getting long, break it into consecutive "
@@ -83,6 +94,15 @@ def burst_note(max_messages: int = MAX_BURST_MESSAGES) -> str:
         "sentence. A reply that is a single short thought stays one line. Use at "
         f"most {max_messages} messages and keep each one short."
     )
+    if keep_together:
+        note += (
+            " ONE-PIECE MESSAGES: a price list, rates, a menu or anything else "
+            "that must arrive as one message with its line breaks goes between "
+            f"{BLOCK_OPEN} on its own line before it and {BLOCK_CLOSE} on its own "
+            "line after it. Everything inside is sent as a single message exactly "
+            "as written, and counts as one of your messages."
+        )
+    return note
 
 
 BURST_OUTPUT_NOTE = burst_note(MAX_BURST_MESSAGES)
@@ -113,22 +133,49 @@ class AIResponderError(Exception):
     """Raised for any failure that should surface in the admin panel."""
 
 
-def split_burst(text: str, max_messages: int = MAX_BURST_MESSAGES) -> list[str]:
-    """The parts of a reply, in order: one per separator or line break.
+def _split_lines(text: str) -> list[str]:
+    parts = [part.strip() for part in _BURST_SPLIT.split(text)]
+    return [part for part in parts if part]
+
+
+def _block_text(text: str) -> str:
+    """A kept-together block: its line breaks stay, separators go, and runs
+    of blank lines shrink to one."""
+    text = _SEPARATOR_LINE.sub("", text)
+    lines = [line.rstrip() for line in text.strip().splitlines()]
+    return _EXTRA_BLANK_LINES.sub("\n\n", "\n".join(lines)).strip()
+
+
+def split_burst(text: str, max_messages: int = MAX_BURST_MESSAGES, keep_together: bool = True) -> list[str]:
+    """The parts of a reply, in order: one per separator or line break, and
+    one per [block]…[/block] when `keep_together` (burst.keep_together).
 
     Padding around the separator and a hand that leaned on the key ("||||")
     are tolerated; empty parts are dropped; the result is capped at
     `max_messages` (the tenant's burst.max_messages) with the overflow
     riding on the last part. A reply that was nothing but separators comes
     back empty — the caller reports that rather than sending a blank message.
+    With `keep_together` off, a block is split like any other text; the
+    markers are dropped either way.
     """
     max_messages = max(1, int(max_messages))
-    parts = [part.strip() for part in _BURST_SPLIT.split(text or "")]
-    parts = [part for part in parts if part]
+    text = text or ""
+    parts: list[str] = []
+    if keep_together:
+        last = 0
+        for match in _BLOCK.finditer(text):
+            parts.extend(_split_lines(_STRAY_BLOCK_TAG.sub("", text[last:match.start()])))
+            block = _block_text(_STRAY_BLOCK_TAG.sub("", match.group(1)))
+            if block:
+                parts.append(block)
+            last = match.end()
+        parts.extend(_split_lines(_STRAY_BLOCK_TAG.sub("", text[last:])))
+    else:
+        parts = _split_lines(_STRAY_BLOCK_TAG.sub("", text))
     if len(parts) > max_messages:
-        head = parts[: max_messages - 1]
-        head.append(" ".join(parts[max_messages - 1 :]))
-        parts = head
+        overflow = parts[max_messages - 1 :]
+        joiner = "\n" if any("\n" in part for part in overflow) else " "
+        parts = parts[: max_messages - 1] + [joiner.join(overflow)]
     return parts
 
 
@@ -324,6 +371,7 @@ async def generate_reply(
     burst_max: int = MAX_BURST_MESSAGES,
     usage_sink: Optional[UsageSink] = None,
     no_reply_instruction: str = "",
+    burst_keep_together: bool = True,
 ) -> str:
     """Return the draft reply text, or raise AIResponderError with a safe message.
 
@@ -366,7 +414,7 @@ async def generate_reply(
         sections.append(booking_note.strip())
     if (media_note or "").strip():
         sections.append(media_note.strip())
-    sections.append(burst_note(burst_max))
+    sections.append(burst_note(burst_max, burst_keep_together))
     if (no_reply_instruction or "").strip():
         sections.append(no_reply_section(no_reply_instruction))
 

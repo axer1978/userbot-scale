@@ -37,6 +37,7 @@ import bookings
 import google_calendar
 import ics
 import mailer
+import media
 import vision
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -343,20 +344,15 @@ class BookingFlow:
     async def provider_chat_id(self) -> Optional[int]:
         value = (self.settings.get("provider") or "").strip()
         rt = self.rt
-        if not value or rt.client is None or not rt.telegram_state["connected"]:
+        if not value or not rt.transport.ready:
             return None
         cached_value, cached_id, resolved_at = self._provider
         now = asyncio.get_running_loop().time()
         if cached_value == value and (cached_id is not None or now - resolved_at < self.PROVIDER_RETRY_SECONDS):
             return cached_id
         try:
-            from session_runtime import describe_sender
-
-            target: Any = int(value) if value.lstrip("-").isdigit() else value
-            entity = await rt.client.get_entity(target)
-            chat_id = int(entity.id)
-            name, username, is_bot, access_hash = describe_sender(entity, chat_id)
-            await rt.db.upsert_conversation(chat_id, name, username, is_bot, access_hash)
+            chat_id, peer = await rt.transport.resolve_owner(value)
+            await rt.db.upsert_conversation(chat_id, peer.name, peer.username, peer.is_bot, peer.access_hash)
         except Exception as exc:
             log.warning("[%s] Cannot resolve the booking owner %r: %s", rt.session_id, value, type(exc).__name__)
             self._provider = (value, None, now)
@@ -383,8 +379,16 @@ class BookingFlow:
             await self.rt.push_error(booking["chat_id"], f"Booking #{booking['number']}: could not reach the owner "
                                      "(check booking.provider). They can still answer from the panel.")
             return
-        if remember and row.get("telegram_id"):
-            await self.store.set_fields(booking["id"], provider_message_id=row["telegram_id"])
+        ref = self.owner_message_ref(row)
+        if remember and any(ref.values()):
+            await self.store.set_fields(booking["id"], **ref)
+
+    def owner_message_ref(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Where the id of a message sent to the owner is kept: Telegram's
+        integer id, or WhatsApp's string id in its own column."""
+        if self.rt.transport.id_field == "wa_message_id":
+            return {"provider_wa_message_id": row.get("wa_message_id")}
+        return {"provider_message_id": row.get("telegram_id")}
 
     async def submit(self, booking: dict[str, Any], *, changed: bool = False) -> bool:
         """Put a requested booking to the owner. Left `requested` (and
@@ -413,6 +417,8 @@ class BookingFlow:
             ), actor=bs.SYSTEM)
         except (bs.IllegalTransition, booking_store.StaleBooking):
             return False
+        if row.get("wa_message_id"):
+            await self.store.set_fields(booking["id"], provider_wa_message_id=row["wa_message_id"])
         self._submit_attempts.pop(booking["id"], None)
         await self.announce(booking, f"📅 Booking #{booking['number']} requested for {bookings.describe_when(booking)} "
                                      "— waiting for the owner.")
@@ -482,7 +488,7 @@ class BookingFlow:
         awaiting = await self.store.awaiting_owner()
         if reply_to is not None:
             for booking in awaiting:
-                if booking.get("provider_message_id") == reply_to:
+                if reply_to in (booking.get("provider_message_id"), booking.get("provider_wa_message_id")):
                     return booking
         if cmd.kind in ("yes", "no") and len(awaiting) == 1:
             return awaiting[0]
@@ -754,16 +760,62 @@ class BookingFlow:
             return
         rt.cancel_draft(chat_id)
         rt.sending_chats.add(chat_id)
+        sent: list[int] = []
         try:
-            await rt.send_as_me(chat_id, text, typing=True, reason="arrival instructions")
+            row = await rt.send_as_me(chat_id, text, typing=True, reason="arrival instructions")
+            if row.get("id"):
+                sent.append(row["id"])
+            # Then the photos of the way in, if this network can send files.
+            # One that fails is reported; the instructions are out already.
+            items = rt.media_library.arrival_items() if rt.transport.can_send_files else []
+            for item in items:
+                try:
+                    row = await rt.send_media_as_me(chat_id, item["id"], reason="arrival instructions")
+                except Exception as exc:
+                    await rt.push_error(chat_id, f"Could not send {media.label(item)} with the arrival "
+                                                 f"instructions: {type(exc).__name__}: {exc}")
+                    continue
+                if row.get("id"):
+                    sent.append(row["id"])
         except Exception as exc:
             if not await rt.handle_send_failure(chat_id, exc):
                 await rt.push_error(chat_id, f"Could not send the arrival instructions: {type(exc).__name__}: {exc}")
             return
         finally:
             rt.sending_chats.discard(chat_id)
-        booking = await self.store.set_fields(booking["id"], instructions_sent_at=self.now())
-        await self.announce(booking, f"🚪 Booking #{booking['number']}: the customer has arrived — entry instructions sent.")
+        minutes = int(self.settings.get("arrival_cleanup_minutes") or 0)
+        fields: dict[str, Any] = {"instructions_sent_at": self.now(), "instructions_message_ids": sent}
+        if minutes and sent:
+            fields["instructions_cleanup_at"] = self.now() + timedelta(minutes=minutes)
+        booking = await self.store.set_fields(booking["id"], **fields)
+        later = f" They are deleted from the chat in {minutes} min." if minutes and sent else ""
+        await self.announce(booking, f"🚪 Booking #{booking['number']}: the customer has arrived — entry "
+                                     f"instructions sent.{later}")
+
+    # How long a failed cleanup is retried before the owner is told to
+    # delete the messages by hand.
+    CLEANUP_GIVE_UP = timedelta(hours=6)
+
+    async def clean_up_arrival(self, booking: dict[str, Any]) -> None:
+        """Delete the arrival messages of one booking, for both sides."""
+        chat_id, number = booking["chat_id"], booking["number"]
+        try:
+            await self.rt.delete_sent(chat_id, list(booking.get("instructions_message_ids") or []),
+                                      placeholder=media.DELETED_PLACEHOLDER,
+                                      reason=f"arrival instructions of booking #{number}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self.now() - booking["instructions_cleanup_at"] < self.CLEANUP_GIVE_UP:
+                raise  # tried again next tick
+            await self.store.set_fields(booking["id"], instructions_cleaned_at=self.now())
+            await self.rt.push_error(chat_id, f"Could not delete the arrival instructions of booking #{number}: "
+                                              f"{type(exc).__name__}: {exc}. Delete them by hand.")
+            await self.announce(booking, f"⚠️ Booking #{number}: the arrival instructions could not be deleted "
+                                         "from the chat. Delete them by hand.")
+            return
+        await self.store.set_fields(booking["id"], instructions_cleaned_at=self.now())
+        await self.rt.post_note(chat_id, f"🧹 Booking #{number}: the arrival instructions were deleted from the chat.")
 
     # ----------------------------------------------------------- waitlist
 
@@ -883,6 +935,10 @@ class BookingFlow:
 
         for entry in await self.store.expired_offers(now, self.settings["waitlist_offer_hours"]):
             await guarded(f"waitlist offer {entry['id']}", lambda e=entry: lapse(e))
+
+        for booking in await self.store.due_cleanups(now):
+            await guarded(f"deleting the arrival messages of #{booking['number']}",
+                          lambda b=booking: self.clean_up_arrival(b))
 
         unsent = [] if self.rt.paused() else await self.store.unsent()
         for booking in unsent:

@@ -287,10 +287,14 @@ async def _complete(
     payload: dict[str, Any],
     client: Optional[httpx.AsyncClient] = None,
     usage_sink: Optional[UsageSink] = None,
+    service: str = "Vision API",
+    key_name: str = "VISION_API_KEY",
 ) -> str:
     """One chat completion against the vision endpoint, with retry/backoff
     and safe error text. Returns the reply text stripped (possibly empty —
-    the callers decide what an empty answer means)."""
+    the callers decide what an empty answer means). Any other
+    OpenAI-compatible endpoint works too; `service` and `key_name` name it
+    in the errors (finetune.py sends transcripts to DeepSeek this way)."""
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -298,16 +302,16 @@ async def _complete(
     owns_client = client is None
     http = client or httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS)
     try:
-        last_error = "Vision request failed."
+        last_error = f"{service} request failed."
         for attempt in range(1, MAX_ATTEMPTS + 1):
             delay = BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
             try:
                 response = await http.post(api_url, json=payload, headers=headers)
             except httpx.TimeoutException:
-                last_error = "Vision API timed out."
+                last_error = f"{service} timed out."
             except httpx.HTTPError as exc:
                 last_error = _redact(
-                    f"Could not reach the vision API: {type(exc).__name__}.", api_key
+                    f"Could not reach the {service}: {type(exc).__name__}.", api_key
                 )
             else:
                 if response.status_code == 200:
@@ -318,20 +322,20 @@ async def _complete(
 
                 detail = _clip(_redact(response.text, api_key))
                 if response.status_code == 429:
-                    last_error = f"Vision API rate limit (429). {detail}"
+                    last_error = f"{service} rate limit (429). {detail}"
                     delay = _retry_after(response, attempt)
                 elif response.status_code in (401, 403):
                     # Not retryable — a bad key will not fix itself.
                     raise VisionError(
-                        f"The vision API rejected the key (HTTP {response.status_code}). "
-                        "Check that VISION_API_KEY is correct for VISION_API_URL."
+                        f"The {service} rejected the key (HTTP {response.status_code}). "
+                        f"Check that {key_name} is correct."
                     )
                 elif response.status_code >= 500:
-                    last_error = f"Vision API server error (HTTP {response.status_code}). {detail}"
+                    last_error = f"{service} server error (HTTP {response.status_code}). {detail}"
                     delay = _retry_after(response, attempt)
                 else:
                     raise VisionError(
-                        f"Vision API error (HTTP {response.status_code}). {detail}"
+                        f"{service} error (HTTP {response.status_code}). {detail}"
                     )
 
             if attempt < MAX_ATTEMPTS:

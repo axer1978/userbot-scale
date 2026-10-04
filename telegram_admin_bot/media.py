@@ -32,6 +32,13 @@ INDEX_NAME = "library.json"
 ARRIVAL_REFERENCE = "arrival_reference"
 ROLES = (ARRIVAL_REFERENCE,)
 
+# Per-item switches.
+# view_once: Telegram shows it once and then removes it (photos and videos).
+# send_on_arrival: sent with the arrival instructions (a photo of the door,
+#   the stairs) and deleted with them. Kept from the AI, which must never
+#   send the way in before the customer has arrived.
+FLAGS = ("view_once", "send_on_arrival")
+
 # `[send 3]`, `[send: 3]`, `[SEND #3]`, `[send photo 3]`, `[[send 3]]` — the
 # model is asked for the first form and produces all of them.
 # `[sent photo #3: the beach]` is the history placeholder for a file already
@@ -77,12 +84,25 @@ class MediaLibrary:
         self.dir = Path(directory)
         self._items: dict[int, dict[str, Any]] = {}
         self._next_id = 1
+        # The index file's mtime when this object last read or wrote it.
+        # Another process (the panel) may change the index; refresh() reads
+        # it again first, or it would add that process's new file a second
+        # time with a blank description and save over its entry.
+        self._index_mtime: Optional[int] = None
         self._load()
         self.refresh()
 
     # ------------------------------------------------------------- disk
 
+    def _stat_index(self) -> Optional[int]:
+        try:
+            return (self.dir / INDEX_NAME).stat().st_mtime_ns
+        except OSError:
+            return None
+
     def _load(self) -> None:
+        self._items = {}
+        self._index_mtime = self._stat_index()
         try:
             raw = json.loads((self.dir / INDEX_NAME).read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
@@ -105,6 +125,9 @@ class MediaLibrary:
             }
             if item.get("role") in ROLES and kind == PHOTO:
                 self._items[item_id]["role"] = item["role"]
+            for flag in FLAGS:
+                if item.get(flag) is True:
+                    self._items[item_id][flag] = True
         next_id = raw.get("next_id") if isinstance(raw, dict) else None
         if self._items:
             self._next_id = max(self._items) + 1
@@ -120,6 +143,7 @@ class MediaLibrary:
                 json.dump(payload, fh, indent=2, ensure_ascii=False)
                 fh.write("\n")
             os.replace(tmp, self.dir / INDEX_NAME)
+            self._index_mtime = self._stat_index()
         except BaseException:
             if os.path.exists(tmp):
                 os.unlink(tmp)
@@ -128,6 +152,8 @@ class MediaLibrary:
     def refresh(self) -> bool:
         """Reconcile the index with the folder. Returns True if anything changed."""
         self.dir.mkdir(parents=True, exist_ok=True)
+        if self._stat_index() != self._index_mtime:
+            self._load()
         on_disk = {
             entry.name
             for entry in self.dir.iterdir()
@@ -178,6 +204,14 @@ class MediaLibrary:
     def references(self) -> list[dict[str, Any]]:
         """Photos marked as the entrance reference."""
         return [item for item in self.all() if item.get("role") == ARRIVAL_REFERENCE]
+
+    def arrival_items(self) -> list[dict[str, Any]]:
+        """What goes out with the arrival instructions, in library order."""
+        return [item for item in self.all() if item.get("send_on_arrival")]
+
+    def for_ai(self) -> list[dict[str, Any]]:
+        """What the AI may attach: everything but the arrival items."""
+        return [item for item in self.all() if not item.get("send_on_arrival")]
 
     # ---------------------------------------------------------- changes
 
@@ -240,6 +274,20 @@ class MediaLibrary:
         self.save()
         return dict(item)
 
+    def set_flags(self, item_id: int, **flags: bool) -> Optional[dict[str, Any]]:
+        item = self._items.get(item_id)
+        if item is None:
+            return None
+        for flag, on in flags.items():
+            if flag not in FLAGS:
+                raise ValueError(f"unknown flag {flag!r}")
+            if on:
+                item[flag] = True
+            else:
+                item.pop(flag, None)
+        self.save()
+        return dict(item)
+
     def remove(self, item_id: int) -> bool:
         item = self._items.pop(item_id, None)
         if item is None:
@@ -262,6 +310,11 @@ def label(item: dict[str, Any]) -> str:
     if not text.strip():
         text = Path(item.get("file") or "").stem.replace("_", " ").replace("-", " ")
     return f"{item.get('kind', PHOTO)} #{item.get('id')}: {text.strip()}"
+
+
+# What a deleted message's row keeps: the AI history then shows that
+# something was sent, never what (no door code to repeat later).
+DELETED_PLACEHOLDER = "[deleted from the chat: arrival instructions]"
 
 
 def sent_placeholder(item: dict[str, Any]) -> str:

@@ -378,6 +378,80 @@ async def test_arrival_sends_the_instructions_word_for_word_once(world):
     assert w.sent[CUSTOMER].count("Door code 4321, 2nd floor.") == 1
 
 
+async def test_arrival_messages_are_deleted_for_both_sides_after_the_set_minutes(world, monkeypatch):
+    w = world
+    library = w.app.media_library
+    library.dir.mkdir(parents=True, exist_ok=True)
+    (library.dir / "stairs.jpg").write_bytes(b"\xff\xd8\xff stairs")
+    stairs = library.add_file("stairs.jpg", "the stairs to the flat")
+    library.set_flags(stairs["id"], send_on_arrival=True, view_once=True)
+    files, deleted = [], []
+    file_ids = iter(range(9000, 9100))
+
+    async def fake_deliver_file(peer, chat_id, item, path):
+        files.append(item["id"])
+        return SimpleNamespace(id=next(file_ids))
+
+    async def fake_delete(peer, chat_id, ids):
+        if w.script.get("fail_on") in ids:
+            w.script["fail_on"] = None
+            raise RuntimeError("network down")
+        deleted.append((chat_id, list(ids)))
+
+    monkeypatch.setattr(w.app, "deliver_file", fake_deliver_file)
+    monkeypatch.setattr(w.app.transport, "delete_messages", fake_delete)
+    w.app.config["booking"]["arrival_cleanup_minutes"] = 15
+
+    # The way in is never something the AI can send.
+    assert f"[send {stairs['id']}]" not in w.app.media_prompt()
+
+    await confirmed_booking(w, "2030-03-04T12:30")
+    w.script["arrived"] = True
+    await customer(w, "I'm at the door")
+    assert w.sent[CUSTOMER].count("Door code 4321, 2nd floor.") == 1 and files == [stairs["id"]]
+    booking = await only_booking(w)
+    assert len(booking["instructions_message_ids"]) == 2
+    assert booking["instructions_cleanup_at"] == NOW + timedelta(minutes=15)
+
+    w.clock["now"] = NOW + timedelta(minutes=10)
+    await w.app.flow.tick()
+    assert deleted == []
+
+    # The photo fails after the text went: the next tick retries only the photo.
+    w.script["fail_on"] = 9000
+    w.clock["now"] = NOW + timedelta(minutes=16)
+    await w.app.flow.tick()
+    assert len(deleted) == 1 and (await only_booking(w))["instructions_cleaned_at"] is None
+    await w.app.flow.tick()
+    assert [chat for chat, _ in deleted] == [CUSTOMER, CUSTOMER]
+    assert [len(ids) for _, ids in deleted] == [1, 1] and deleted[-1][1] == [9000]
+    assert (await only_booking(w))["instructions_cleaned_at"] is not None
+
+    # The rows keep only a placeholder: no door code for the AI to repeat.
+    history = await w.db.get_messages(CUSTOMER)
+    assert not any("4321" in m["text"] for m in history)
+    assert sum(m["text"] == media.DELETED_PLACEHOLDER for m in history) == 2
+    await w.app.flow.tick()
+    assert len(deleted) == 2
+
+
+async def test_without_a_cleanup_time_nothing_is_deleted(world, monkeypatch):
+    w = world
+    deleted = []
+
+    async def fake_delete(peer, chat_id, ids):
+        deleted.append(ids)
+
+    monkeypatch.setattr(w.app.transport, "delete_messages", fake_delete)
+    await confirmed_booking(w, "2030-03-04T12:30")
+    w.script["arrived"] = True
+    await customer(w, "I'm at the door")
+    assert (await only_booking(w))["instructions_cleanup_at"] is None
+    w.clock["now"] = NOW + timedelta(days=1)
+    await w.app.flow.tick()
+    assert deleted == []
+
+
 @pytest_asyncio.fixture
 async def photos(world, monkeypatch):
     w = world

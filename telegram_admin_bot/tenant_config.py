@@ -80,6 +80,11 @@ class Burst(_Strict):
     """A reply may go out as several short messages in a row."""
     max_messages: int = Field(4, ge=1, le=10)
     gap_ms: GapMs = Field(default_factory=GapMs)
+    # Price lists and the like arrive as one message with their line breaks.
+    keep_together: bool = Field(True, description=(
+        "Send price lists, rates and other multi-line text as ONE message instead of "
+        "one message per line. The bot marks them with [block]...[/block]; off splits "
+        "them like any other reply."))
 
 
 class QuietHours(_Strict):
@@ -202,8 +207,13 @@ class Booking(_Strict):
     # How long a freed slot is held for the first person on the waitlist
     # before it is offered to the next one.
     waitlist_offer_hours: int = Field(12, ge=1, le=168)
-    # Sent word for word, once, when the customer has arrived.
+    # Sent word for word, once, when the customer has arrived. Media items
+    # marked "send on arrival" go out right after it.
     arrival_instructions: str = Field("", max_length=20_000)
+    # Delete the arrival instructions and those photos from the chat, for
+    # both sides, this many minutes after they were sent (door codes, the
+    # flat number). 0 = keep them.
+    arrival_cleanup_minutes: int = Field(0, ge=0, le=24 * 60)
     # Compare a photo the customer sends on arrival with the entrance
     # photos in the media library (marked as entrance reference). Needs
     # vision.enabled.
@@ -420,6 +430,26 @@ class TenantConfig(_Strict):
             if item and item not in out:
                 out.append(item)
         return out
+
+
+# The client layer a brand-new WhatsApp account starts with (the panel
+# saves it, audited, when the number is first paired; a re-paired number
+# keeps whatever its config says by then). WhatsApp bans numbers for volume
+# and breadth much sooner than Telegram limits them, and a linked device
+# that answers in seconds, around the clock, in long bursts, reads as a bot.
+# So: fewer messages per day and per hour, fewer distinct people per day,
+# slower replies with a human-shaped spread, shorter bursts with longer
+# gaps, a quiet night, replies held for approval and no outreach.
+WHATSAPP_CLIENT_DEFAULTS: dict[str, Any] = {
+    "auto_send": False,
+    "daily_message_cap": 60,
+    "hourly_message_cap": 15,
+    "safety": {"daily_peer_cap": 15},
+    "reply_delay": {"min_s": 45, "max_s": 180, "distribution": "lognormal"},
+    "burst": {"max_messages": 3, "gap_ms": {"min": 1200, "max": 3500}},
+    "quiet_hours": {"enabled": True, "start": "21:00", "end": "09:00"},
+    "outreach": {"enabled": False},
+}
 
 
 class ConfigError(ValueError):
