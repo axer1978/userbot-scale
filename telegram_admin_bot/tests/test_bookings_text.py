@@ -111,6 +111,20 @@ def test_the_owner_request_names_the_number_and_how_to_answer():
     assert "YES 7" in text and "NO 7" in text and "7 15:30" in text
 
 
+def test_the_owner_sees_what_the_customer_actually_wrote():
+    """The owner decides on the request, so they see the customer's words."""
+    history = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hi love"},
+               {"role": "user", "content": "OK unprotected"}, {"role": "user", "content": "1hr in 45 mins"}]
+    said = bookings.customer_words(history)
+    assert said == "OK unprotected / 1hr in 45 mins"
+    notes = bookings.request_notes("", said)
+    assert "they wrote: “OK unprotected / 1hr in 45 mins”" in bookings.format_request(_b(notes=notes))
+    assert bookings.request_notes("1 hour", "x") == "1 hour · they wrote: “x”"
+    assert bookings.request_notes("", "") == ""
+    assert bookings.customer_words([{"role": "assistant", "content": "hi"}]) == ""
+    assert len(bookings.customer_words([{"role": "user", "content": "x" * 900}])) == bookings.MAX_CUSTOMER_WORDS
+
+
 def test_a_pending_booking_is_never_presented_as_confirmed():
     line = bookings.standing_line(_b())
     assert "Do NOT say it is confirmed" in line

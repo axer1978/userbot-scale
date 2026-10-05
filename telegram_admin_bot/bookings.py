@@ -110,6 +110,32 @@ def _who(booking: Mapping[str, Any]) -> str:
     return who
 
 
+MAX_CUSTOMER_WORDS = 300
+
+
+def customer_words(history: Sequence[Mapping[str, str]], limit: int = MAX_CUSTOMER_WORDS) -> str:
+    """The customer's latest messages (everything since the last reply), so
+    the owner deciding on a request sees exactly what was asked."""
+    said: list[str] = []
+    for item in reversed(history):
+        if item.get("role") != "user":
+            break
+        text = (item.get("content") or "").strip()
+        if text:
+            said.append(text)
+    text = " / ".join(reversed(said))
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def request_notes(notes: str, said: str) -> str:
+    """The notes stored on a new request: the extractor's own, then the
+    customer's words."""
+    parts = [notes.strip()] if notes.strip() else []
+    if said.strip():
+        parts.append(f"they wrote: “{said.strip()}”")
+    return " · ".join(parts)
+
+
 def format_request(booking: Mapping[str, Any], *, changed: bool = False) -> str:
     """A new request, or one whose time the customer changed before you answered."""
     n = booking["number"]

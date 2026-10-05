@@ -220,6 +220,7 @@ class BookingFlow:
                 )
             if found:
                 log.info("[%s]   booking intent in chat %s: %s", self.rt.session_id, chat_id, found.get("intent"))
+                found["said"] = bookings.customer_words(history)
                 await self.act(chat_id, found, live, entry)
         except asyncio.CancelledError:
             raise
@@ -257,8 +258,9 @@ class BookingFlow:
                 if same["state"] == bs.REQUESTED:
                     await self.submit(same)
                 return
+            notes = bookings.request_notes(str(data.get("notes") or ""), str(data.get("said") or ""))
             await self.request_time(chat_id, start, end, service=str(data.get("service") or ""),
-                                    notes=str(data.get("notes") or ""), request=request, confirmed=confirmed)
+                                    notes=notes, request=request, confirmed=confirmed)
         elif intent == "cancel":
             target = request or confirmed
             if target is not None:
