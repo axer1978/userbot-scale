@@ -679,16 +679,6 @@ client's config, and add the model's price under **Clients → Platform rules
 → AI prices**. A customer's photo is then described in one or two sentences
 (never the person's appearance) so the reply can take it into account.
 
-*Google Calendar mirror (optional):* create a Google Cloud service account
-with the Calendar API enabled and download its JSON key. Put the key at
-`./data/tenants/<client id>/google-service-account.json`, or put it anywhere
-under `./data` and set `GOOGLE_SERVICE_ACCOUNT_FILE=/app/data/<file>.json` in
-`.env`. That path is the one inside the container. Then recreate with
-`docker compose up -d`. Share the calendar with the service account's email
-address with *Make changes to events*, and put the calendar ID in
-`booking.google_calendar_id`. Calendar failures are reported in the thread and
-never stop the Telegram side.
-
 **Media.** Upload photos and videos the assistant may send, or copy them into
 `./data/tenants/<client id>/media/`, and give each one a short description.
 The AI uses the description to pick the right file when someone asks. By
@@ -930,7 +920,6 @@ ai_responder.py        builds the prompt, calls DeepSeek
 context_link.py        borrows context from a linked chat of the same person
 bookings.py            the words around bookings: owner messages and commands, prompt lines
 media.py               the photo/video library the AI may attach
-google_calendar.py     optional Google Calendar mirror for bookings
 static/                the panel UI: index.html, css/, js/ (plain HTML/CSS/JS, no build step)
 tests/                 pytest suite (see "Running the tests")
 data/                  created at runtime: tenants/<client id>/media/

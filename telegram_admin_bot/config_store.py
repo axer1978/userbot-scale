@@ -130,9 +130,6 @@ DEFAULTS: dict[str, Any] = {
         "default_duration_minutes": 60,
         # How many recent messages are read when looking for an agreed time.
         "scan_messages": 20,
-        # Blank = no calendar. Otherwise the calendar's ID from Google
-        # Calendar -> Settings -> Integrate calendar; see google_calendar.py.
-        "google_calendar_id": "",
         # This long before a confirmed appointment the client is asked whether
         # they are still coming. 0 turns the check-in off.
         "reminder_minutes_before": 120,
@@ -436,7 +433,6 @@ def normalize(raw: Any) -> dict[str, Any]:
         booking.get("default_duration_minutes"), bd["default_duration_minutes"], 5, 24 * 60
     )
     booking["scan_messages"] = _as_int(booking.get("scan_messages"), bd["scan_messages"], 2, 100)
-    booking["google_calendar_id"] = _as_text(booking.get("google_calendar_id"))
     booking["reminder_minutes_before"] = _as_int(
         booking.get("reminder_minutes_before"), bd["reminder_minutes_before"], 0, 7 * 24 * 60
     )

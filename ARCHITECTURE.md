@@ -281,7 +281,7 @@ booking page ─▶ public_app ─▶ bus: booking_customer_action
 
 - Every transition is a function in `booking_states.py` with guards on state, actor and time; `booking_store.apply()` writes it with `WHERE state = <from>`, so two racing changes can't both win. Nothing confirms without the owner or an admin; `accept_proposal` confirms only a time the other side already put forward in writing.
 - A change the customer must hear about sets `customer_notice`; the next reply in that chat carries it (`BookingFlow.reply_note`), and a change that didn't come from the customer's own message starts that reply. The notice is cleared once the reply was sent or saved for approval.
-- After every change: a note in the chat, the owner told what they didn't do themselves, the Google Calendar mirror, the e-mail record (SMTP), and a freed time offered to the waitlist.
+- After every change: a note in the chat, the owner told what they didn't do themselves, the e-mail record (SMTP), and a freed time offered to the waitlist.
 - Arrival: "I'm here" in the hour before to half an hour after the slot sends `arrival_instructions` once. With the photo check, `vision.compare_to_reference` compares the customer's photo with the media items marked as the entrance; the result is stored as a boolean and audited with the model's confidence.
 
 ## Timed work

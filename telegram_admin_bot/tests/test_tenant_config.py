@@ -62,6 +62,18 @@ def test_invalid_overrides_are_rejected_with_a_path(override, path):
     assert any(e["path"].startswith(path) for e in info.value.errors), info.value.errors
 
 
+def test_a_saved_config_with_a_retired_setting_still_loads():
+    # booking.google_calendar_id was removed with the Google Calendar mirror;
+    # configs saved before that keep loading, and the rest still applies.
+    saved = {"booking": {"google_calendar_id": "abc@group.calendar.google.com", "scan_messages": 30}}
+    cfg = tc.resolve(saved, saved).as_dict()
+    assert cfg["booking"]["scan_messages"] == 30
+    assert "google_calendar_id" not in cfg["booking"]
+    # Anything else unknown is still refused.
+    with pytest.raises(tc.ConfigError):
+        tc.resolve(None, {"booking": {"google_calendr_id": "x"}})
+
+
 def test_cross_field_rules_hold_across_layers():
     # Each layer alone is fine; together max < min, which must be refused.
     with pytest.raises(tc.ConfigError):

@@ -194,7 +194,6 @@ class Booking(_Strict):
     owner_email: str = Field("", max_length=254)
     default_duration_minutes: int = Field(60, ge=5, le=24 * 60)
     scan_messages: int = Field(20, ge=2, le=100)
-    google_calendar_id: str = Field("", max_length=256)
     reminders: list[Reminder] = Field(default_factory=_default_reminders, max_length=5)
     # Earliest and latest a booking may start, counted from now.
     min_notice_minutes: int = Field(60, ge=0, le=30 * 24 * 60)
@@ -476,6 +475,13 @@ def _is_list(annotation: Any) -> bool:
     return get_origin(annotation) is list
 
 
+# Settings that were removed. Saved configs may still hold them: they are
+# skipped, not refused, so a tenant's config keeps loading.
+RETIRED = frozenset({
+    "booking.google_calendar_id",  # the Google Calendar mirror was removed
+})
+
+
 def _apply(
     model: type[BaseModel],
     base: dict[str, Any],
@@ -495,7 +501,8 @@ def _apply(
         path = f"{prefix}{key}"
         field = model.model_fields.get(key)
         if field is None:
-            errors.append({"path": path, "message": "not a config field"})
+            if path not in RETIRED:
+                errors.append({"path": path, "message": "not a config field"})
             continue
         sub = _submodel(field.annotation)
         if sub is not None:

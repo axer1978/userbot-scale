@@ -9,7 +9,7 @@ uvicorn[standard]==0.53.0
 httpx==0.28.1
 python-dotenv==1.2.3
 tzdata==2026.4
-# AES-GCM for secrets at rest (crypto.py); also signs the Google Calendar JWT.
+# AES-GCM for secrets at rest (crypto.py).
 cryptography==50.0.1
 asyncpg==0.31.0
 redis==8.1.0

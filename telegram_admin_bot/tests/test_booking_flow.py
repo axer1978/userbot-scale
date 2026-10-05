@@ -100,7 +100,6 @@ async def world(app, db, monkeypatch):
     monkeypatch.setattr(app, "schedule_go_offline", lambda chat_id: None)
     monkeypatch.setattr(app, "utcnow", lambda: clock["now"].astimezone(timezone.utc))
     monkeypatch.setattr(app.flow, "provider_chat_id", owner_chat)
-    monkeypatch.setattr(app.flow, "calendar_client", lambda: None)
     monkeypatch.setattr(session_runtime.asyncio, "sleep", nothing)
     monkeypatch.setattr(ai_responder, "extract_booking", fake_extract)
     monkeypatch.setattr(ai_responder, "extract_arrival", fake_arrival)

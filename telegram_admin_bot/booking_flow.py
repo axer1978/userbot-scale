@@ -34,7 +34,6 @@ import availability
 import booking_states as bs
 import booking_store
 import bookings
-import google_calendar
 import ics
 import mailer
 import media
@@ -88,8 +87,6 @@ class BookingFlow:
         # after the chat's next reply.
         self.address_due: dict[int, int] = {}
         self._provider: tuple[str, Optional[int], float] = ("", None, 0.0)
-        self._calendar: Optional[google_calendar.GoogleCalendar] = None
-        self._calendar_key: tuple[str, str] = ("", "")
         self._submit_attempts: dict[int, float] = {}
 
     # ------------------------------------------------------------ basics
@@ -432,7 +429,6 @@ class BookingFlow:
         self._submit_attempts.pop(booking["id"], None)
         await self.announce(booking, f"📅 Booking #{booking['number']} requested for {bookings.describe_when(booking)} "
                                      "— waiting for the owner.")
-        await self.sync_calendar(None, booking)
         return True
 
     async def on_owner_message(self, chat_id: int, text: str, reply_to: Optional[int]) -> bool:
@@ -626,7 +622,6 @@ class BookingFlow:
         elif change.action == "expire":
             await self.tell_owner(after, bookings.format_owner_update(after, "lapsed — it was not answered in time."))
 
-        await self.sync_calendar(before, after)
         await self.email_record(before, after, change)
 
         moved = after["starts_at"] != before["starts_at"]
@@ -995,57 +990,7 @@ class BookingFlow:
             if loop_now - at >= self.RESUBMIT_SECONDS:
                 self._submit_attempts.pop(booking_id, None)
 
-    # ------------------------------------------------ calendar and e-mail
-
-    def calendar_client(self) -> Optional[google_calendar.GoogleCalendar]:
-        calendar_id = self.settings.get("google_calendar_id") or ""
-        key_file = (os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE") or "").strip()
-        if not key_file and getattr(self.rt, "data_dir", None) is not None:
-            default = self.rt.data_dir / "google-service-account.json"
-            key_file = str(default) if default.exists() else ""
-        key = (calendar_id, key_file)
-        if key == self._calendar_key:
-            return self._calendar
-        self._calendar_key, self._calendar = key, None
-        if not calendar_id or not key_file:
-            return None
-        try:
-            self._calendar = google_calendar.GoogleCalendar(key_file, calendar_id, client=self.rt.http_client)
-        except google_calendar.CalendarError as exc:
-            log.error("[%s] Google Calendar disabled: %s", self.rt.session_id, exc)
-        return self._calendar
-
-    async def sync_calendar(self, before: Optional[dict[str, Any]], after: dict[str, Any]) -> None:
-        """Mirror a booking into Google Calendar: tentative while pending,
-        confirmed once confirmed, gone when cancelled. Failures are shown in
-        the chat and never stop the booking itself."""
-        calendar = self.calendar_client()
-        if calendar is None:
-            return
-        summary = f"#{after['number']} {after.get('service') or 'Booking'} — {after.get('customer_name') or 'customer'}"
-        event_id = after.get("calendar_event_id")
-        try:
-            if after["state"] not in bs.LIVE and after["state"] != bs.COMPLETED:
-                if event_id and after["state"] != bs.NO_SHOW:
-                    await calendar.delete_event(event_id)
-                    await self.store.set_fields(after["id"], calendar_event_id=None)
-                return
-            moved = before is not None and before["starts_at"] != after["starts_at"]
-            if event_id and moved:
-                await calendar.delete_event(event_id)
-                event_id = None
-            if not event_id:
-                event_id = await calendar.create_event(
-                    summary=("[UNCONFIRMED] " if after["state"] != bs.CONFIRMED else "") + summary,
-                    description=f"Customer: {after.get('customer_name') or ''}\nBooking #{after['number']} via Telegram",
-                    start=after["starts_at"], end=after["ends_at"], tz_name=after["tz"],
-                    tentative=after["state"] != bs.CONFIRMED,
-                )
-                await self.store.set_fields(after["id"], calendar_event_id=event_id)
-            elif after["state"] == bs.CONFIRMED and (before is None or before["state"] != bs.CONFIRMED):
-                await calendar.confirm_event(event_id, summary)
-        except Exception as exc:
-            await self.rt.push_error(after["chat_id"], f"Google Calendar: {exc}")
+    # ------------------------------------------------------------ e-mail
 
     async def email_record(self, before: dict[str, Any], after: dict[str, Any], change: bs.Change) -> None:
         """The e-mail record for the owner, when SMTP and owner_email are set."""
