@@ -335,14 +335,20 @@ EXTRACT_SYSTEM_PROMPT = (
     "and nothing else:\n"
     '{"intent": "none"|"book"|"cancel"|"accept_proposal"|"decline_proposal"|'
     '"confirm_attendance"|"waitlist", "start": "YYYY-MM-DDTHH:MM" or null, '
+    '"asap": true|false, '
     '"duration_minutes": <integer or null>, "service": "<a few words or empty>", '
     '"notes": "<anything the business should know, or empty>", '
     '"waitlist_from": "YYYY-MM-DDTHH:MM" or null, "waitlist_to": "YYYY-MM-DDTHH:MM" or null}\n'
     "Intents:\n"
-    "- book: they ask for or agree to one concrete day AND time of day (or "
-    "'now'/'ASAP' = current time rounded up to 5 minutes, or a fixed offset "
-    "like 'in 2 hours'). Also when they ask to MOVE an existing booking to a "
-    "concrete new time. Put that time in start.\n"
+    "- book: they ask for or agree to one concrete day AND time of day, or a "
+    "fixed offset like 'in 2 hours'. Also when they ask to MOVE an existing "
+    "booking to a concrete new time. Put that time in start.\n"
+    "  RIGHT NOW is book too, with asap true and start null (the time is worked "
+    "out elsewhere): they want to meet now or as soon as possible — 'now', "
+    "'now?', 'rn', 'asap', 'can I come now', 'are you free now', 'available "
+    "now?', 'I'm close, can I come' — or they ask a bare 'free?', 'are you "
+    "free?', 'available?' without naming any day or time. asap is false for "
+    "everything else.\n"
     "- cancel: they clearly call off their booking.\n"
     "- accept_proposal / decline_proposal: the business proposed a different "
     "time (see 'Their bookings') and they say yes / no to it. If they answer "
@@ -350,8 +356,9 @@ EXTRACT_SYSTEM_PROMPT = (
     "- confirm_attendance: after a reminder, they say they are still coming.\n"
     "- waitlist: they ask to be told if a time frees up; give the range they "
     "would take in waitlist_from/waitlist_to.\n"
-    "- none: anything else, including a day without a time, a vague window, "
-    "questions about availability, or what they said earlier and then moved away from.\n"
+    "- none: anything else, including a day without a time ('are you free "
+    "tomorrow?'), a vague window ('tonight', 'later'), or what they said "
+    "earlier and then moved away from.\n"
     "Resolve relative dates from the current date and time given. Use 24-hour "
     "local time in the given timezone; never invent a time that was not said. "
     "Whether 'me' agreed is irrelevant: confirmation is decided elsewhere."
@@ -387,7 +394,7 @@ def parse_extraction(text: str) -> Optional[dict[str, Any]]:
     intent = data.get("intent")
     if intent not in INTENTS or intent == "none":
         return None
-    if intent == "book" and not isinstance(data.get("start"), str):
+    if intent == "book" and data.get("asap") is not True and not isinstance(data.get("start"), str):
         return None
     return data
 
@@ -405,10 +412,28 @@ def state_note(bookings: Sequence[Mapping[str, Any]]) -> str:
     return "; ".join(lines)
 
 
+# "Now" that the model turned into a clock time a few minutes back (it sees
+# the time only to the minute, and rounds as it likes) still means now.
+JUST_PASSED = timedelta(minutes=15)
+
+
+def soonest_start(now: datetime) -> datetime:
+    """'Now' as a booking start: the next 5-minute mark at least 2 minutes
+    ahead, so it is still in the future when the slot is checked."""
+    at = now + timedelta(minutes=2)
+    if at.second or at.microsecond:
+        at = at.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    return at + timedelta(minutes=-at.minute % 5)
+
+
 def requested_slot(
-    data: Mapping[str, Any], *, tz_name: str, default_duration: int,
+    data: Mapping[str, Any], *, tz_name: str, default_duration: int, now: Optional[datetime] = None,
 ) -> Optional[tuple[datetime, datetime]]:
+    """The slot the customer asked for. With `now`, "right now" (asap, or a
+    time that passed moments ago) becomes soonest_start(now)."""
     start = parse_local(str(data.get("start") or ""), tz_name)
+    if now is not None and (data.get("asap") is True or (start is not None and now - JUST_PASSED < start <= now)):
+        start = soonest_start(now).astimezone(tzinfo_for(tz_name))
     if start is None:
         return None
     minutes = data.get("duration_minutes")
