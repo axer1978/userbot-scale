@@ -53,6 +53,7 @@ _WRITABLE = {
     "provider_chat_id", "provider_message_id", "provider_wa_message_id", "calendar_event_id",
     "customer_notice", "cancelled_by", "cancel_reason", "decided_by", "decided_at",
     "attendance_confirmed_at", "arrived_at", "arrival_photo_match", "instructions_sent_at",
+    "instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at",
     "customer_name", "customer_username",
 }
 
@@ -117,6 +118,15 @@ class BookingStore:
             "  state IN ('requested', 'pending') OR (state = 'confirmed' AND proposed_by = 'customer')"
             ") AND starts_at > now() - interval '1 day' ORDER BY number",
             self.tenant_id,
+        )
+        return [dict(r) for r in rows]
+
+    async def due_cleanups(self, now: datetime) -> list[dict[str, Any]]:
+        """Bookings whose arrival messages are due to be deleted."""
+        rows = await self.pool.fetch(
+            "SELECT * FROM bookings WHERE tenant_id = $1 AND instructions_cleanup_at <= $2 "
+            "AND instructions_cleaned_at IS NULL ORDER BY instructions_cleanup_at",
+            self.tenant_id, now,
         )
         return [dict(r) for r in rows]
 

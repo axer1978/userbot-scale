@@ -1,0 +1,32 @@
+/* Finetune (components/pages/Finetune.tsx). Kept apart from globals.css so
+   the page can move without touching the shared sheet. */
+
+.ft-drop { display: block; border: 2px dashed var(--border); border-radius: 10px; padding: 28px 16px; text-align: center;
+  color: var(--muted); cursor: pointer; margin-bottom: 12px; }
+.ft-drop.on, .ft-drop:hover { border-color: var(--accent); color: var(--accent); }
+.ft-shots { border: 1px solid var(--border); border-radius: 10px; padding: 4px 12px; }
+.ft-shot { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.ft-shot:last-child { border-bottom: none; }
+.ft-shot select { width: auto; }
+.ft-shot.mark-good { color: var(--ok); }
+.ft-shot.mark-bad { color: var(--danger); }
+.ft-shot .grow, .pf-actions .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ft-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 8px; }
+@media (max-width: 760px) { .ft-cols { grid-template-columns: 1fr; } }
+.ft-mode { display: flex; align-items: center; gap: 8px; }
+.ft-mode select { width: auto; margin-left: auto; }
+.ft-list { margin: 6px 0; padding-left: 18px; font-size: 13px; }
+.ft-files, .ft-raw { margin: 8px 0; font-size: 13px; }
+.ft-back { margin: 0 0 10px; }
+.bk-state.ft-done { background: rgba(76,141,255,.25); }
+.bk-state.ft-applied { background: rgba(46,160,67,.25); }
+.bk-state.ft-failed { background: rgba(242,86,90,.3); }
+.ft-row-discarded { opacity: .6; }
+
+.ft-source { display: flex; gap: 18px; margin: 4px 0 12px; }
+.ft-chat .title { margin-bottom: 8px; }
+.ft-chat .title select { margin-left: auto; }
+.ft-chat-name { width: 110px; }
+.ft-count { margin: 4px 0 0; }
+.ft-chat.mark-good { border-color: var(--ok); }
+.ft-chat.mark-bad { border-color: var(--danger); }

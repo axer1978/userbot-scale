@@ -19,6 +19,8 @@ export type StatusEntry = { session_id: string; epoch: number; state: SocketStat
 export const LOGOUT_TIMEOUT_MS = 25_000;
 export const MAX_TEXT_LENGTH = 65_536;
 export const MAX_READ_IDS = 500;
+// One arrival step sends a few messages; this is a sanity cap, not a batch size.
+export const MAX_DELETE_IDS = 50;
 // How long pair_cancel waits for the run to let go (the panel waits 5 s).
 export const CANCEL_WAIT_MS = 4_000;
 
@@ -88,6 +90,8 @@ export class Gateway {
         return this.sendText(args);
       case 'read':
         return this.read(args);
+      case 'delete':
+        return this.deleteMessages(args);
       case 'presence':
         return this.presence(args);
       case 'logout':
@@ -283,6 +287,18 @@ export class Gateway {
       throw new GatewayError('bad_request', `message_ids must be 1..${MAX_READ_IDS} non-empty strings`);
     }
     await session.read(jid, ids as string[]);
+    return { ok: true };
+  }
+
+  /** Delete messages this account sent, for everyone in the chat. */
+  private async deleteMessages(args: Record<string, unknown>): Promise<{ ok: true }> {
+    const session = this.fencedSocket(args);
+    const jid = jidArg(args);
+    const ids = args.message_ids;
+    if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_DELETE_IDS || !ids.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 128)) {
+      throw new GatewayError('bad_request', `message_ids must be 1..${MAX_DELETE_IDS} non-empty strings`);
+    }
+    await session.deleteMessages(jid, ids as string[]);
     return { ok: true };
   }
 

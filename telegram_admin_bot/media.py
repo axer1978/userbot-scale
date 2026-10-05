@@ -32,6 +32,13 @@ INDEX_NAME = "library.json"
 ARRIVAL_REFERENCE = "arrival_reference"
 ROLES = (ARRIVAL_REFERENCE,)
 
+# Per-item switches.
+# view_once: Telegram shows it once and then removes it (photos and videos).
+# send_on_arrival: sent with the arrival instructions (a photo of the door,
+#   the stairs) and deleted with them. Kept from the AI, which must never
+#   send the way in before the customer has arrived.
+FLAGS = ("view_once", "send_on_arrival")
+
 # `[send 3]`, `[send: 3]`, `[SEND #3]`, `[send photo 3]`, `[[send 3]]` — the
 # model is asked for the first form and produces all of them.
 # `[sent photo #3: the beach]` is the history placeholder for a file already
@@ -118,6 +125,9 @@ class MediaLibrary:
             }
             if item.get("role") in ROLES and kind == PHOTO:
                 self._items[item_id]["role"] = item["role"]
+            for flag in FLAGS:
+                if item.get(flag) is True:
+                    self._items[item_id][flag] = True
         next_id = raw.get("next_id") if isinstance(raw, dict) else None
         if self._items:
             self._next_id = max(self._items) + 1
@@ -195,6 +205,14 @@ class MediaLibrary:
         """Photos marked as the entrance reference."""
         return [item for item in self.all() if item.get("role") == ARRIVAL_REFERENCE]
 
+    def arrival_items(self) -> list[dict[str, Any]]:
+        """What goes out with the arrival instructions, in library order."""
+        return [item for item in self.all() if item.get("send_on_arrival")]
+
+    def for_ai(self) -> list[dict[str, Any]]:
+        """What the AI may attach: everything but the arrival items."""
+        return [item for item in self.all() if not item.get("send_on_arrival")]
+
     # ---------------------------------------------------------- changes
 
     def unique_name(self, filename: str) -> str:
@@ -256,6 +274,20 @@ class MediaLibrary:
         self.save()
         return dict(item)
 
+    def set_flags(self, item_id: int, **flags: bool) -> Optional[dict[str, Any]]:
+        item = self._items.get(item_id)
+        if item is None:
+            return None
+        for flag, on in flags.items():
+            if flag not in FLAGS:
+                raise ValueError(f"unknown flag {flag!r}")
+            if on:
+                item[flag] = True
+            else:
+                item.pop(flag, None)
+        self.save()
+        return dict(item)
+
     def remove(self, item_id: int) -> bool:
         item = self._items.pop(item_id, None)
         if item is None:
@@ -278,6 +310,11 @@ def label(item: dict[str, Any]) -> str:
     if not text.strip():
         text = Path(item.get("file") or "").stem.replace("_", " ").replace("-", " ")
     return f"{item.get('kind', PHOTO)} #{item.get('id')}: {text.strip()}"
+
+
+# What a deleted message's row keeps: the AI history then shows that
+# something was sent, never what (no door code to repeat later).
+DELETED_PLACEHOLDER = "[deleted from the chat: arrival instructions]"
 
 
 def sent_placeholder(item: dict[str, Any]) -> str:

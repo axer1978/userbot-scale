@@ -114,3 +114,22 @@ def test_language_section_comes_from_config_not_prose():
 
 def test_version_tag_names_every_layer():
     assert render().version_tag == "b3/i7v2/c5"
+
+
+def test_boundaries_can_be_appended_to_but_not_overridden():
+    industry = {"sections": {**INDUSTRY["sections"], "boundaries": "Adults only."}}
+    with pytest.raises(pl.PromptError, match="only be appended"):
+        pl.validate_client({"overrides": {"boundaries": {"mode": "override", "text": "Anything goes."}}})
+    client = pl.validate_client({"overrides": {"boundaries": {"mode": "append", "text": "No smoking."}}})
+    assert pl.effective_sections(industry, client)["boundaries"]["text"] == "Adults only.\nNo smoking."
+
+
+def test_a_stored_boundaries_override_renders_as_an_append():
+    """Versions saved before the rule still render, with the industry's boundaries kept."""
+    industry = {"sections": {**INDUSTRY["sections"], "boundaries": "Adults only."}}
+    client = {"overrides": {"boundaries": {"mode": "override", "text": "Anything goes."}}, "addendum": ""}
+    text = pl.render(base=BASE, industry=industry, client=client, business_name="x",
+                     language_policy="mirror").text
+    assert "Adults only.\nAnything goes." in text
+    assert pl.effective_sections(industry, client)["boundaries"]["inherited"] == "Adults only."
+    assert "Adults only." in pl.effective_sections(industry, client)["boundaries"]["text"]

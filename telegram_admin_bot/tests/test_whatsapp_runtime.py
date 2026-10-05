@@ -41,7 +41,7 @@ class FakeBus:
         self.sent = 0
         self.replies: dict[str, Any] = {
             "open": {"state": "open"}, "close": {"closed": True}, "presence": {"ok": True},
-            "read": {"ok": True}, "logout": {"logged_out": True}, "send_text": self._sent,
+            "read": {"ok": True}, "delete": {"ok": True}, "logout": {"logged_out": True}, "send_text": self._sent,
         }
 
     def _sent(self, args):
@@ -275,6 +275,16 @@ async def test_read_receipts_cover_new_messages_once(wa, pg_pool):
     await wa.db.record_message(chat_id, "in", STATUS_RECEIVED, "more", wa_message_id="IN4")
     await wa.mark_read(chat_id)
     assert len([a for _, a, _ in wa.bus.calls if a == "read"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_sent_messages_are_deleted_for_everyone_and_keep_a_placeholder(wa, pg_pool):
+    chat_id = await a_chat(wa, pg_pool)
+    row = await wa.send_as_me(chat_id, "Door code 4321", guard=False)
+    await wa.delete_sent(chat_id, [row["id"]], placeholder="[deleted]", reason="test")
+    [args] = [args for _, a, args in wa.bus.calls if a == "delete"]
+    assert args["jid"] == ANNA_PN and args["message_ids"] == [row["wa_message_id"]] and args["epoch"] == 7
+    assert (await wa.db.get_message(row["id"]))["text"] == "[deleted]"
 
 
 @pytest.mark.asyncio

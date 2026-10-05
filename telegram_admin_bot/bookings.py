@@ -506,9 +506,27 @@ def waitlist_offer_line(starts_at: datetime, ends_at: datetime, tz_name: str) ->
             f"{describe_span(starts_at, ends_at, tz_name)}. Ask whether they want it. It is NOT booked until they say yes.")
 
 
+# Always in the reply prompt while bookings are on: only the owner confirms,
+# so the reply may never say a time is booked on its own — even when the
+# chat's own booking section (or its writing samples) would.
+ONLY_OWNER_CONFIRMS_RULE = (
+    "Only the business confirms appointments, and you will be told here when it has. "
+    "Unless a line below says an appointment is CONFIRMED, do not agree to their time in "
+    "any words: no 'ok', 'deal', 'booked', 'confirmed', 'see you then', 'come over', and "
+    "no arrival steps such as 'text me before you come'. When they name a day and time, "
+    "say you are checking it and will confirm shortly — nothing more about the time."
+)
+
+ADDRESS_FOLLOWS_LINE = (
+    "NEWS TO PASS ON IN THIS REPLY: the time they asked for is free and is being checked. "
+    "The address is sent to them automatically in a separate message right after this reply — "
+    "do not write any address yourself; you may say it follows."
+)
+
+
 def context_for_reply(lines: Sequence[str]) -> str:
     lines = [line for line in lines if line]
-    return "APPOINTMENTS:\n" + "\n".join(lines) if lines else ""
+    return "APPOINTMENTS:\n" + "\n".join([ONLY_OWNER_CONFIRMS_RULE, *lines])
 
 
 # ---------------------------------------------------------------- arrival

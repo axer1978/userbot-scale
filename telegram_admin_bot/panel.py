@@ -75,6 +75,7 @@ import context_link
 import controls
 import media
 import pg
+import finetune_api
 import platform_api
 import manager_admin_api
 import manager_api
@@ -195,6 +196,8 @@ MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 _UPLOAD_PATH_RE = re.compile(
     r"^/api/sessions/[^/]+/media/upload$|^/api/owner/tenants/\d+/photos$|^/api/owner/verification/video$"
 )
+# Finetune screenshots arrive base64 in one JSON body (finetune.py caps them).
+MAX_FINETUNE_BYTES = 100 * 1024 * 1024
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # The body types a page on another site can send without a CORS preflight
 # (an HTML form or a "simple" fetch). No API route takes any of them.
@@ -265,7 +268,12 @@ class RequestGuard:
             if path.startswith("/api/") and content_type in _FORM_TYPES:
                 await self._refuse(scope, receive, send, 415, "Send JSON (Content-Type: application/json).")
                 return
-        limit = MAX_UPLOAD_BYTES if _UPLOAD_PATH_RE.match(path) else MAX_BODY_BYTES
+        if _UPLOAD_PATH_RE.match(path):
+            limit = MAX_UPLOAD_BYTES
+        elif path == finetune_api.RUN_PATH:
+            limit = MAX_FINETUNE_BYTES
+        else:
+            limit = MAX_BODY_BYTES
         length = headers.get("content-length")
         if length is not None and (not length.isdigit() or int(length) > limit):
             await self._refuse(scope, receive, send, 413, "The request is too large.")
@@ -1454,6 +1462,27 @@ async def api_media_role(session_id: str, item_id: int, body: MediaRoleBody) -> 
     return item
 
 
+class MediaFlagsBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    view_once: Optional[bool] = None
+    send_on_arrival: Optional[bool] = None
+
+
+@app.patch("/api/sessions/{session_id}/media/{item_id}/flags", dependencies=[Depends(require_auth)])
+async def api_media_flags(session_id: str, item_id: int, body: MediaFlagsBody) -> dict[str, Any]:
+    """View once (Telegram shows it once), and send on arrival (goes out
+    with the arrival instructions, never sent by the AI)."""
+    library = await media_library_for(session_id)
+    flags = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not flags:
+        raise HTTPException(status_code=400, detail="Nothing to change.")
+    item = library.set_flags(item_id, **flags)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Unknown media item")
+    await publish(session_id, {"type": "media", "media": library.all()})
+    return item
+
+
 @app.delete("/api/sessions/{session_id}/media/{item_id}", dependencies=[Depends(require_auth)])
 async def api_media_delete(session_id: str, item_id: int) -> dict[str, Any]:
     library = await media_library_for(session_id)
@@ -1600,8 +1629,8 @@ app.include_router(booking_api.router, dependencies=[Depends(require_auth)])
 safety_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(safety_api.router, dependencies=[Depends(require_auth)])
 # Phase 4. Admin only: client logins, the unanswered queue, review batches;
-# and manager logins, the terms of service and the sign-up switch.
-for _module in (owner_admin_api, unanswered_api, review_api, manager_admin_api, terms_admin_api):
+# manager logins, the terms of service and the sign-up switch; finetune runs.
+for _module in (owner_admin_api, unanswered_api, review_api, manager_admin_api, terms_admin_api, finetune_api):
     _module.bind(get_pool=lambda: pool, get_bus=lambda: bus)
     app.include_router(_module.router, dependencies=[Depends(require_auth)])
 # Verification videos and photo review: admin only (review.py).

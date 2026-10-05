@@ -506,7 +506,8 @@ class SessionRuntime:
             attachments = [
                 i for i in (draft.get("attachments") or []) if self.media_library.get(i) is not None
             ]
-            parts = ai_responder.split_burst(text, self.config["burst"]["max_messages"])
+            parts = ai_responder.split_burst(
+                text, self.config["burst"]["max_messages"], self.config["burst"].get("keep_together", True))
             if not parts and not attachments:
                 raise ValueError("Message is empty")
             sent = await self.send_burst(
@@ -1149,7 +1150,7 @@ class SessionRuntime:
             return ""
         self.media_library.refresh()
         return media.prompt_section(
-            self.media_library.all(), ask_before_video=self.config["media"].get("ask_before_video", True)
+            self.media_library.for_ai(), ask_before_video=self.config["media"].get("ask_before_video", True)
         )
 
     def contact_overrides(self, chat_id: Optional[int]) -> dict[str, Any]:
@@ -1342,7 +1343,39 @@ class SessionRuntime:
         return await self.transport.send_file(
             peer, chat_id, path, item.get("kind") == media.VIDEO,
             self.config["human"].get("typing_indicator", True),
+            view_once=bool(item.get("view_once")),
         )
+
+    async def delete_sent(self, chat_id: int, row_ids: list[int], *, placeholder: str, reason: str) -> None:
+        """Delete messages this account sent, for both sides, and keep only
+        `placeholder` in their rows (the thread and the AI history). Rows
+        never delivered (no network id) just get the placeholder. One
+        message at a time, each row marked as soon as it is gone: when the
+        network refuses one, this raises and a retry picks up only the
+        rest (rows already showing the placeholder are skipped)."""
+        rows = [row for row in [await self.db.get_message(i) for i in row_ids] if row is not None]
+        field = self.transport.id_field
+        peer: Any = None
+        done: list[int] = []
+        try:
+            for row in rows:
+                if row["text"] == placeholder:
+                    continue
+                network_id = row.get(field)
+                if network_id is not None:
+                    if not self.transport.can_delete:
+                        raise RuntimeError("this network cannot delete messages")
+                    if peer is None:
+                        peer = await self.resolve_peer(chat_id)
+                    await self.transport.delete_messages(peer, chat_id, [network_id])
+                updated = await self.db.update_message(row["id"], text=placeholder, attachments=[])
+                done.append(row["id"])
+                if updated is not None:
+                    await self.push_message(updated)
+        finally:
+            if done:
+                await self.write_audit(audit.MESSAGES_DELETED, actor=audit.BOT, reason=reason,
+                                       payload={"chat_id": chat_id, "message_ids": done})
 
     async def send_media_as_me(
         self, chat_id: int, item_id: int, draft_id: Optional[int] = None, guard: bool = True,
@@ -1564,6 +1597,7 @@ class SessionRuntime:
                     system_prompt=self.transport.adapt_prompt(prompt.text) if prompt else None,
                     language_locked=self.config["language_policy"] != "mirror",
                     burst_max=self.config["burst"]["max_messages"],
+                    burst_keep_together=self.config["burst"].get("keep_together", True),
                     usage_sink=self.usage_sink("reply"),
                     no_reply_instruction=no_reply,
                 )
@@ -1573,10 +1607,13 @@ class SessionRuntime:
                 return
 
             text, attachments = media.split_attachments(text)
-            attachments = [i for i in attachments if self.media_library.get(i) is not None]
+            # Only what the AI was offered: never an arrival item (the way in).
+            attachments = [i for i in attachments
+                           if (item := self.media_library.get(i)) is not None and not item.get("send_on_arrival")]
             if not media_note:
                 attachments = []
-            parts = ai_responder.split_burst(text, self.config["burst"]["max_messages"])
+            parts = ai_responder.split_burst(
+                text, self.config["burst"]["max_messages"], self.config["burst"].get("keep_together", True))
             if not parts and not attachments:
                 raise ai_responder.AIResponderError("The reply came back empty.")
             if attachments:

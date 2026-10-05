@@ -478,8 +478,19 @@ class WhatsAppTransport(Transport):
                 with suppress(Exception):
                     await self._call("presence", {"jid": peer, "state": "paused"}, ACTION_TIMEOUT)
 
-    async def send_file(self, peer: Any, chat_id: int, path: Path, is_video: bool, show_upload: bool) -> Any:
+    async def send_file(self, peer: Any, chat_id: int, path: Path, is_video: bool, show_upload: bool,
+                        view_once: bool = False) -> Any:
         raise GatewayError("bad_request", "sending files on WhatsApp is not supported")
+
+    # WhatsApp deletes one's own messages for everyone for about two days.
+    can_delete = True
+
+    async def delete_messages(self, peer: Any, chat_id: int, message_ids: list[Any]) -> None:
+        row = await wa_store.peer(self.rt.pool, self.rt.session_id, chat_id)
+        if row is None:
+            raise GatewayError("not_found", "no WhatsApp chat for this conversation")
+        await self._call("delete", {"jid": row["jid"], "message_ids": [str(i) for i in message_ids]},
+                         ACTION_TIMEOUT)
 
     def message_id(self, sent: Any) -> Any:
         return sent.get("message_id") if isinstance(sent, dict) else None

@@ -18,3 +18,4 @@ deploy/age-recipient.txt
 # The WhatsApp gateway is its own image (wa_gateway/Dockerfile); its sources
 # and node_modules never belong in the Python image.
 wa_gateway/
+admin-web/

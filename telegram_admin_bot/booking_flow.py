@@ -37,6 +37,7 @@ import bookings
 import google_calendar
 import ics
 import mailer
+import media
 import vision
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -59,10 +60,12 @@ class ReplyNote:
     notice_ids: list[int] = field(default_factory=list)
     transient: list[str] = field(default_factory=list)
     reminder: Optional[tuple[int, int, datetime]] = None
+    # Booking whose address (booking.address) goes out after this reply.
+    address_for: Optional[int] = None
 
     @property
     def has_news(self) -> bool:
-        return bool(self.notice_ids or self.transient)
+        return bool(self.notice_ids or self.transient or self.address_for)
 
 
 class BookingFlow:
@@ -81,6 +84,9 @@ class BookingFlow:
         # chat -> the last time asked for that was not free, for a
         # "put me on the waitlist" that names no range.
         self.last_unavailable: dict[int, tuple[datetime, datetime]] = {}
+        # chat -> booking id: a new request whose address is sent right
+        # after the chat's next reply.
+        self.address_due: dict[int, int] = {}
         self._provider: tuple[str, Optional[int], float] = ("", None, 0.0)
         self._calendar: Optional[google_calendar.GoogleCalendar] = None
         self._calendar_key: tuple[str, str] = ("", "")
@@ -315,6 +321,9 @@ class BookingFlow:
                 )
                 log.info("[%s] Booking #%s requested for %s.", self.rt.session_id, booking["number"],
                          bookings.describe_when(booking))
+                if (self.settings.get("address") or "").strip():
+                    self.address_due[chat_id] = booking["id"]
+                    self.add_line(chat_id, bookings.ADDRESS_FOLLOWS_LINE)
                 await self.submit(booking)
         except booking_store.SlotTaken:
             await self.unavailable(chat_id, start, end, "conflict")
@@ -397,8 +406,10 @@ class BookingFlow:
         if provider is None:
             await self.rt.push_error(
                 booking["chat_id"],
-                f"Booking #{booking['number']} could not be sent: no owner is set in booking.provider, or it "
-                "cannot be found. It is retried every few minutes, and can be answered from the panel.",
+                f"Booking #{booking['number']} was NOT sent to the owner: no owner is set in booking.provider, "
+                "or it cannot be found (a phone number only works if that person lets anyone find them by "
+                "number — an @username is safest). It is retried every few minutes, and can be answered "
+                "from the Bookings page.",
             )
             await self.broadcast(booking)
             return False
@@ -660,7 +671,7 @@ class BookingFlow:
         lines.extend(transient)
         return ReplyNote(
             text=bookings.context_for_reply(lines), notice_ids=sorted(told), transient=transient,
-            reminder=self.reminders_out.get(chat_id),
+            reminder=self.reminders_out.get(chat_id), address_for=self.address_due.get(chat_id),
         )
 
     async def delivered(self, chat_id: int, note: ReplyNote) -> None:
@@ -679,6 +690,27 @@ class BookingFlow:
                 await self.store.mark_reminder_sent(booking, minutes)
             await self.rt.write_audit(audit.REMINDER_SENT, reason=f"{minutes} min before booking #{booking['number']}",
                                       payload={"booking": booking["number"], "minutes_before": minutes})
+        if note.address_for is not None and self.address_due.get(chat_id) == note.address_for:
+            self.address_due.pop(chat_id)
+            await self.send_address(await self.store.get(note.address_for))
+
+    async def send_address(self, booking: dict[str, Any]) -> None:
+        """booking.address, word for word, to a customer who has just named
+        a free time (sent after the reply that says it is being checked)."""
+        text = (self.settings.get("address") or "").strip()
+        rt, chat_id = self.rt, booking["chat_id"]
+        if not text or booking["state"] not in bs.LIVE:
+            return
+        rt.sending_chats.add(chat_id)
+        try:
+            await rt.send_as_me(chat_id, text, typing=True, reason=f"address for booking #{booking['number']}")
+        except Exception as exc:
+            if not await rt.handle_send_failure(chat_id, exc):
+                await rt.push_error(chat_id, f"Could not send the address: {type(exc).__name__}: {exc}")
+            return
+        finally:
+            rt.sending_chats.discard(chat_id)
+        await self.announce(booking, f"📍 Booking #{booking['number']}: address sent.")
 
     # ------------------------------------------------------------ arrival
 
@@ -759,16 +791,62 @@ class BookingFlow:
             return
         rt.cancel_draft(chat_id)
         rt.sending_chats.add(chat_id)
+        sent: list[int] = []
         try:
-            await rt.send_as_me(chat_id, text, typing=True, reason="arrival instructions")
+            row = await rt.send_as_me(chat_id, text, typing=True, reason="arrival instructions")
+            if row.get("id"):
+                sent.append(row["id"])
+            # Then the photos of the way in, if this network can send files.
+            # One that fails is reported; the instructions are out already.
+            items = rt.media_library.arrival_items() if rt.transport.can_send_files else []
+            for item in items:
+                try:
+                    row = await rt.send_media_as_me(chat_id, item["id"], reason="arrival instructions")
+                except Exception as exc:
+                    await rt.push_error(chat_id, f"Could not send {media.label(item)} with the arrival "
+                                                 f"instructions: {type(exc).__name__}: {exc}")
+                    continue
+                if row.get("id"):
+                    sent.append(row["id"])
         except Exception as exc:
             if not await rt.handle_send_failure(chat_id, exc):
                 await rt.push_error(chat_id, f"Could not send the arrival instructions: {type(exc).__name__}: {exc}")
             return
         finally:
             rt.sending_chats.discard(chat_id)
-        booking = await self.store.set_fields(booking["id"], instructions_sent_at=self.now())
-        await self.announce(booking, f"🚪 Booking #{booking['number']}: the customer has arrived — entry instructions sent.")
+        minutes = int(self.settings.get("arrival_cleanup_minutes") or 0)
+        fields: dict[str, Any] = {"instructions_sent_at": self.now(), "instructions_message_ids": sent}
+        if minutes and sent:
+            fields["instructions_cleanup_at"] = self.now() + timedelta(minutes=minutes)
+        booking = await self.store.set_fields(booking["id"], **fields)
+        later = f" They are deleted from the chat in {minutes} min." if minutes and sent else ""
+        await self.announce(booking, f"🚪 Booking #{booking['number']}: the customer has arrived — entry "
+                                     f"instructions sent.{later}")
+
+    # How long a failed cleanup is retried before the owner is told to
+    # delete the messages by hand.
+    CLEANUP_GIVE_UP = timedelta(hours=6)
+
+    async def clean_up_arrival(self, booking: dict[str, Any]) -> None:
+        """Delete the arrival messages of one booking, for both sides."""
+        chat_id, number = booking["chat_id"], booking["number"]
+        try:
+            await self.rt.delete_sent(chat_id, list(booking.get("instructions_message_ids") or []),
+                                      placeholder=media.DELETED_PLACEHOLDER,
+                                      reason=f"arrival instructions of booking #{number}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self.now() - booking["instructions_cleanup_at"] < self.CLEANUP_GIVE_UP:
+                raise  # tried again next tick
+            await self.store.set_fields(booking["id"], instructions_cleaned_at=self.now())
+            await self.rt.push_error(chat_id, f"Could not delete the arrival instructions of booking #{number}: "
+                                              f"{type(exc).__name__}: {exc}. Delete them by hand.")
+            await self.announce(booking, f"⚠️ Booking #{number}: the arrival instructions could not be deleted "
+                                         "from the chat. Delete them by hand.")
+            return
+        await self.store.set_fields(booking["id"], instructions_cleaned_at=self.now())
+        await self.rt.post_note(chat_id, f"🧹 Booking #{number}: the arrival instructions were deleted from the chat.")
 
     # ----------------------------------------------------------- waitlist
 
@@ -888,6 +966,10 @@ class BookingFlow:
 
         for entry in await self.store.expired_offers(now, self.settings["waitlist_offer_hours"]):
             await guarded(f"waitlist offer {entry['id']}", lambda e=entry: lapse(e))
+
+        for booking in await self.store.due_cleanups(now):
+            await guarded(f"deleting the arrival messages of #{booking['number']}",
+                          lambda b=booking: self.clean_up_arrival(b))
 
         unsent = [] if self.rt.paused() else await self.store.unsent()
         for booking in unsent:

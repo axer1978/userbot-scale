@@ -146,9 +146,11 @@ async def test_a_senior_moderator_sees_only_what_the_role_allows(panel_client, p
         assert (await c.get("/api/sessions")).status_code == 200
         assert (await c.get("/api/platform/terms")).status_code == 403  # view.terms is off
         assert (await c.put("/api/tenants/1/config", json={})).status_code == 403  # config.client is off
-        for path in ("/api/managers", "/api/staff/roles", "/api/staff/requests"):
+        for path in ("/api/managers", "/api/staff/roles", "/api/staff/requests", "/api/finetune/runs",
+                     "/api/finetune/industries/1"):
             assert (await c.get(path)).status_code == 403, path
         assert (await c.post("/api/staff/roles", json={"name": "x"})).status_code == 403
+        assert (await c.post("/api/finetune/runs", json={"tenant_id": 1, "images": []})).status_code == 403
 
 
 async def test_a_change_for_approval_looks_done_and_waits(panel_client, pg_pool):

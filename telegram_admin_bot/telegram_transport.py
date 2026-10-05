@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Optional
@@ -19,7 +20,7 @@ from telethon import TelegramClient, errors, events
 from telethon.crypto import AuthKey
 from telethon.sessions import MemorySession
 from telethon.tl.functions.account import GetAuthorizationsRequest, UpdateStatusRequest
-from telethon.tl.functions.contacts import GetContactsRequest
+from telethon.tl.functions.contacts import GetContactsRequest, ResolvePhoneRequest
 from telethon.tl.types import InputPeerUser, User
 
 import anomaly
@@ -43,6 +44,9 @@ from transport import (
 )
 
 log = logging.getLogger("session_runtime")
+
+# ttl_seconds that Telegram reads as "view once" rather than a timer.
+VIEW_ONCE_TTL = 0x7FFFFFFF
 
 def describe_sender(sender: Any, fallback_id: int) -> tuple[str, Optional[str], bool, Optional[int]]:
     """(display_name, username, is_bot, access_hash) for a private-chat peer."""
@@ -353,13 +357,19 @@ class TelegramTransport(Transport):
 
         return await self.client.send_message(peer, text)
 
-    async def send_file(self, peer: Any, chat_id: int, path: Path, is_video: bool, show_upload: bool) -> Any:
+    can_delete = True
+
+    async def send_file(self, peer: Any, chat_id: int, path: Path, is_video: bool, show_upload: bool,
+                        view_once: bool = False) -> Any:
+        # Telegram's "view once": the self-destruct timer set to its maximum.
+        # Photos and videos only, as files (not albums or documents).
+        ttl = VIEW_ONCE_TTL if view_once else None
         if not show_upload:
-            return await self.client.send_file(peer, str(path), supports_streaming=is_video)
+            return await self.client.send_file(peer, str(path), supports_streaming=is_video, ttl=ttl)
         try:
             async with self.client.action(chat_id, "video" if is_video else "photo") as progress:
                 return await self.client.send_file(
-                    peer, str(path), supports_streaming=is_video, progress_callback=progress.progress,
+                    peer, str(path), supports_streaming=is_video, progress_callback=progress.progress, ttl=ttl,
                 )
         except asyncio.CancelledError:
             raise
@@ -368,7 +378,12 @@ class TelegramTransport(Transport):
                 raise
             log.warning("[%s] Upload indicator unavailable (%s); sending anyway.", self.rt.session_id,
                         type(exc).__name__)
-        return await self.client.send_file(peer, str(path), supports_streaming=is_video)
+        return await self.client.send_file(peer, str(path), supports_streaming=is_video, ttl=ttl)
+
+    async def delete_messages(self, peer: Any, chat_id: int, message_ids: list[Any]) -> None:
+        # revoke=True: gone for the customer too. In a private chat Telegram
+        # allows that for one's own messages at any age.
+        await self.client.delete_messages(peer, [int(i) for i in message_ids], revoke=True)
 
     def message_id(self, sent: Any) -> Any:
         return getattr(sent, "id", None)
@@ -406,10 +421,34 @@ class TelegramTransport(Transport):
         ]
 
     async def resolve_owner(self, value: str) -> tuple[int, PeerInfo]:
-        target: Any = int(value) if value.lstrip("-").isdigit() else value
-        entity = await self.client.get_entity(target)
+        entity = await self._owner_entity(value)
         chat_id = int(entity.id)
         return chat_id, peer_info(entity, chat_id)
+
+    async def _owner_entity(self, value: str) -> Any:
+        """booking.provider: @username, numeric id or phone number.
+        Telethon's get_entity finds a phone only among this account's
+        contacts, so a phone is looked up with contacts.ResolvePhone (works
+        when the owner lets people find them by number)."""
+        client = self.client
+        digits = re.sub(r"[+()\s-]", "", value)
+        if not digits.isdigit() or len(digits) < 7:
+            return await client.get_entity(int(value) if value.lstrip("-").isdigit() else value)
+        if not value.startswith("+") and value.lstrip("-").isdigit():
+            # Bare digits: a user id, or a phone typed without the +.
+            try:
+                return await client.get_entity(int(value))
+            except (ValueError, TypeError):
+                pass
+        try:
+            return await client.get_entity("+" + digits)
+        except (ValueError, TypeError):
+            pass
+        resolved = await client(ResolvePhoneRequest(phone=digits))
+        user = next((u for u in resolved.users if u.id == getattr(resolved.peer, "user_id", None)), None)
+        if user is None:
+            raise ValueError(f"no Telegram user for phone {value}")
+        return user
 
     async def download_photo(self, message: Inbound, path: Optional[Path] = None) -> Optional[bytes]:
         if path is None:

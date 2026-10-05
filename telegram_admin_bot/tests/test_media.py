@@ -327,3 +327,63 @@ async def test_an_outgoing_media_event_is_not_recorded_twice(app, db, library, o
     await app.send_media_as_me(7, 1)
     assert seen == [{7: 1}]
     assert app.in_flight_media == {}
+
+
+# ------------------------------------------------- view once / on arrival
+
+
+def test_flags_are_kept_and_arrival_items_are_hidden_from_the_ai(tmp_path):
+    (tmp_path / "beach.jpg").write_bytes(b"jpg")
+    (tmp_path / "door.jpg").write_bytes(b"jpg")
+    lib = media.MediaLibrary(tmp_path)
+    lib.set_flags(1, view_once=True)
+    lib.set_flags(2, send_on_arrival=True, view_once=True)
+    again = media.MediaLibrary(tmp_path)
+    assert again.get(1).get("view_once") is True and not again.get(1).get("send_on_arrival")
+    assert [i["id"] for i in again.arrival_items()] == [2]
+    assert [i["id"] for i in again.for_ai()] == [1]
+    assert "[send 2]" not in media.prompt_section(again.for_ai())
+    again.set_flags(2, send_on_arrival=False)
+    assert "send_on_arrival" not in again.get(2)
+    with pytest.raises(ValueError):
+        again.set_flags(1, secret=True)
+
+
+@pytest.mark.asyncio
+async def test_a_view_once_item_is_sent_as_view_once(app, library, monkeypatch):
+    seen = {}
+
+    async def fake_send_file(peer, chat_id, path, is_video, show_upload, view_once=False):
+        seen["view_once"] = view_once
+
+    monkeypatch.setattr(app.transport, "send_file", fake_send_file)
+    library.set_flags(1, view_once=True)
+    await app.deliver_file(1, 1, library.get(1), library.path(1))
+    assert seen["view_once"] is True
+    await app.deliver_file(1, 1, library.get(2), library.path(2))
+    assert seen["view_once"] is False
+
+
+@pytest.mark.asyncio
+async def test_telegram_view_once_and_delete_for_both_sides(tmp_path):
+    import telegram_transport
+
+    calls = {}
+
+    class FakeClient:
+        async def send_file(self, peer, file, **kw):
+            calls["send"] = kw
+            return type("Sent", (), {"id": 5})()
+
+        async def delete_messages(self, peer, ids, revoke=False):
+            calls["delete"] = (peer, ids, revoke)
+
+    transport = object.__new__(telegram_transport.TelegramTransport)
+    transport.client = FakeClient()
+    (tmp_path / "a.jpg").write_bytes(b"jpg")
+    await transport.send_file("peer", 1, tmp_path / "a.jpg", False, False, view_once=True)
+    assert calls["send"]["ttl"] == telegram_transport.VIEW_ONCE_TTL
+    await transport.send_file("peer", 1, tmp_path / "a.jpg", False, False)
+    assert calls["send"]["ttl"] is None
+    await transport.delete_messages("peer", 1, ["7", 8])
+    assert calls["delete"] == ("peer", [7, 8], True)
