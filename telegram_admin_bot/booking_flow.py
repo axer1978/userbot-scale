@@ -52,6 +52,9 @@ VIA_OWNER = "owner"
 VIA_PANEL = "panel"
 VIA_SYSTEM = "system"
 
+# A live booking starting within this long of now already answers "now?".
+ASAP_WINDOW = timedelta(minutes=60)
+
 
 @dataclass
 class ReplyNote:
@@ -246,8 +249,19 @@ class BookingFlow:
         offered = entry if entry is not None and entry["state"] == "offered" else None
 
         if intent == "book":
+            now = self.now()
+            if data.get("asap") is True:
+                # "Now?" again, or "ok" after it, while a time around now is
+                # already with the owner: the same request, not a new time
+                # every five minutes.
+                current = next((b for b in live if now - bookings.JUST_PASSED <= b["starts_at"]
+                                <= now + ASAP_WINDOW), None)
+                if current is not None:
+                    if current["state"] == bs.REQUESTED:
+                        await self.submit(current)
+                    return
             slot = bookings.requested_slot(data, tz_name=self.tz,
-                                           default_duration=self.settings["default_duration_minutes"])
+                                           default_duration=self.settings["default_duration_minutes"], now=now)
             if slot is None:
                 return
             start, end = slot
