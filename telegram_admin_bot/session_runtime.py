@@ -236,6 +236,9 @@ class SessionRuntime:
         self.offline_timer: Optional[asyncio.Task] = None
         self.active_chats: set[int] = set()
         self.sending_chats: set[int] = set()
+        # chat_id -> time.monotonic() of the last message sent to it, for
+        # the live-chat reply speed and staying online after a reply.
+        self.last_sent_at: dict[int, float] = {}
 
         self.flow = booking_flow.BookingFlow(self)
         self.REMINDER_TICK_SECONDS = 60
@@ -1227,9 +1230,13 @@ class SessionRuntime:
         hi = _ov_int(overrides, "offline_delay_max", int(presence.get("offline_delay_max", 90)))
         if self.offline_timer is not None and not self.offline_timer.done():
             self.offline_timer.cancel()
-        self.offline_timer = asyncio.create_task(
-            self._go_offline_after(random.uniform(min(lo, hi), max(lo, hi)))
-        )
+        delay = humanlike.offline_after_reply(
+            presence, random.uniform(min(lo, hi), max(lo, hi)), self.seconds_since_sent(chat_id))
+        self.offline_timer = asyncio.create_task(self._go_offline_after(delay))
+
+    def seconds_since_sent(self, chat_id: Optional[int]) -> Optional[float]:
+        sent = self.last_sent_at.get(chat_id) if chat_id is not None else None
+        return None if sent is None else time.monotonic() - sent
 
     async def go_online_for(self, chat_id: Optional[int]) -> None:
         if chat_id is not None:
@@ -1455,6 +1462,8 @@ class SessionRuntime:
                 chat_id, item_id, draft_id=draft_id if (not parts and index == 0) else None, guard=guard,
                 actor=actor, reason=reason,
             )
+        if parts or files:
+            self.last_sent_at[chat_id] = time.monotonic()
         return row
 
     # ------------------------------------------------------------------
@@ -1495,14 +1504,18 @@ class SessionRuntime:
 
     def reply_delay(self, chat_id: int) -> float:
         """Seconds before the reply to this chat is written: a per-contact
-        override from the Style sheet if one is set, else the tenant's
-        reply_delay. Quiet hours come on top (draft_worker)."""
+        override from the Style sheet if one is set, else the quick live
+        range when the bot wrote in this chat a moment ago, else the
+        tenant's reply_delay. Quiet hours come on top (draft_worker)."""
         overrides = self.contact_overrides(chat_id)
         if overrides.get("min_delay_seconds") is not None or overrides.get("max_delay_seconds") is not None:
             delay_cfg = self.config["reply_delay"]
             low = _ov_int(overrides, "min_delay_seconds", int(delay_cfg["min_s"]))
             high = _ov_int(overrides, "max_delay_seconds", int(delay_cfg["max_s"]))
             return random.uniform(min(low, high), max(low, high))
+        live = humanlike.live_reply_delay(self.config["reply_delay"], self.seconds_since_sent(chat_id))
+        if live is not None:
+            return live
         return humanlike.sample_reply_delay(self.config["reply_delay"])
 
     async def draft_worker(self, chat_id: int, attempt: int = 0) -> None:

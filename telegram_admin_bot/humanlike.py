@@ -37,6 +37,29 @@ def sample_reply_delay(delay: dict[str, Any], rng: Optional[random.Random] = Non
     return rng.uniform(low, high)
 
 
+def live_reply_delay(delay: dict[str, Any], seconds_since_reply: Optional[float],
+                     rng: Optional[random.Random] = None) -> Optional[float]:
+    """The quick delay for a live chat (the bot wrote in it less than
+    live_window_s ago), or None when the chat is not live and the normal
+    reply_delay applies."""
+    rng = rng or random  # type: ignore[assignment]
+    window = float(delay.get("live_window_s", 0) or 0)
+    if not window or seconds_since_reply is None or not 0 <= seconds_since_reply <= window:
+        return None
+    low, high = float(delay.get("live_min_s", 3)), float(delay.get("live_max_s", 12))
+    return low if high <= low else rng.uniform(low, high)
+
+
+def offline_after_reply(presence: dict[str, Any], sampled: float, seconds_since_reply: Optional[float]) -> float:
+    """Seconds to stay online before going offline: the sampled offline
+    delay, but never before stay_online_after_reply_s has passed since the
+    last reply."""
+    stay = float(presence.get("stay_online_after_reply_s", 0) or 0)
+    if not stay or seconds_since_reply is None:
+        return sampled
+    return max(sampled, stay - seconds_since_reply)
+
+
 def burst_gap_seconds(burst: dict[str, Any], rng: Optional[random.Random] = None) -> float:
     rng = rng or random  # type: ignore[assignment]
     gap = burst["gap_ms"]

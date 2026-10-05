@@ -57,11 +57,21 @@ class ReplyDelay(_Strict):
     # lognormal: clustered around the middle, with a tail towards max_s,
     # which is closer to how long people actually take to answer.
     distribution: Literal["uniform", "lognormal"] = "uniform"
+    # A live chat: the bot sent a message in it within live_window_s, so the
+    # person is most likely still looking at it. Someone texting from their
+    # phone answers a live chat in seconds, not minutes. 0 = off.
+    live_window_s: int = Field(300, ge=0, le=86_400, description=(
+        "A chat counts as live for this many seconds after the bot's last message in it. "
+        "While it is live, replies use live_min_s..live_max_s instead of min_s..max_s. 0 = off."))
+    live_min_s: float = Field(3, ge=0, le=86_400, description="Fastest reply in a live chat, in seconds.")
+    live_max_s: float = Field(12, ge=0, le=86_400, description="Slowest reply in a live chat, in seconds.")
 
     @model_validator(mode="after")
     def _ordered(self) -> "ReplyDelay":
         if self.max_s < self.min_s:
             raise ValueError("reply_delay.max_s must be at least reply_delay.min_s")
+        if self.live_max_s < self.live_min_s:
+            raise ValueError("reply_delay.live_max_s must be at least reply_delay.live_min_s")
         return self
 
 
@@ -116,6 +126,12 @@ class Presence(_Strict):
     go_online_delay_max: int = Field(8, ge=0, le=120)
     offline_delay_min: int = Field(15, ge=0, le=3600)
     offline_delay_max: int = Field(90, ge=0, le=3600)
+    # A person working from their phone doesn't put it away the moment
+    # they've answered: the account stays online at least this long after a
+    # reply, so a quick answer from the client finds it still there.
+    stay_online_after_reply_s: int = Field(180, ge=0, le=3600, description=(
+        "Stay online at least this many seconds after sending a reply (offline_delay "
+        "applies when it is longer). 0 = only offline_delay."))
 
     @model_validator(mode="after")
     def _ordered(self) -> "Presence":
@@ -445,7 +461,7 @@ WHATSAPP_CLIENT_DEFAULTS: dict[str, Any] = {
     "daily_message_cap": 60,
     "hourly_message_cap": 15,
     "safety": {"daily_peer_cap": 15},
-    "reply_delay": {"min_s": 45, "max_s": 180, "distribution": "lognormal"},
+    "reply_delay": {"min_s": 45, "max_s": 180, "distribution": "lognormal", "live_min_s": 10, "live_max_s": 30},
     "burst": {"max_messages": 3, "gap_ms": {"min": 1200, "max": 3500}},
     "quiet_hours": {"enabled": True, "start": "21:00", "end": "09:00"},
     "outreach": {"enabled": False},
