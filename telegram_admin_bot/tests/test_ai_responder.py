@@ -3,6 +3,8 @@ run of messages instead of only the last one."""
 
 from __future__ import annotations
 
+import pytest
+
 import ai_responder
 
 
@@ -133,3 +135,37 @@ def test_prompt_never_contains_both_language_instructions_at_once():
     assert "Reply in the language they are writing in" not in system, \
         "prompt still tells the model to switch to the sender's language"
     assert "no other" in system
+
+
+# ------------------------------------------------- our own initiative
+
+async def _sent_messages(monkeypatch, history):
+    seen: dict = {}
+
+    async def fake_complete(*, api_key, messages, ai_config, client=None):
+        seen["messages"] = messages
+        return "ok"
+
+    monkeypatch.setattr(ai_responder, "_complete", fake_complete)
+    await ai_responder.generate_reply(api_key="k", history=history, persona={}, ai_config={})
+    return seen["messages"]
+
+
+@pytest.mark.asyncio
+async def test_a_message_we_start_ends_with_a_note_to_write_it(monkeypatch):
+    """A booking confirmed after "let me check": the chat ends on our turn,
+    and without a closing turn the model repeated it or wrote nonsense."""
+    messages = await _sent_messages(monkeypatch, [
+        {"role": "user", "content": "22:00 ok?"},
+        {"role": "assistant", "content": "let me check love, one sec"},
+    ])
+    assert messages[-1] == {"role": "system", "content": ai_responder.OWN_INITIATIVE_NOTE}
+
+
+@pytest.mark.asyncio
+async def test_a_reply_to_them_ends_with_their_message(monkeypatch):
+    messages = await _sent_messages(monkeypatch, [
+        {"role": "assistant", "content": "hi"},
+        {"role": "user", "content": "22:00 ok?"},
+    ])
+    assert messages[-1] == {"role": "user", "content": "22:00 ok?"}

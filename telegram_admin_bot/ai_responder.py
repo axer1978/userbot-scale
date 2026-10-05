@@ -422,11 +422,22 @@ async def generate_reply(
     messages.extend(_merge_consecutive_turns(history))
     if len(messages) == 1:
         raise AIResponderError("No conversation history to reply to.")
+    if messages[-1].get("role") == "assistant":
+        # Nothing new from them: a booking update, a reminder or a waitlist
+        # offer starts this message. Ending on our own turn, the model tends
+        # to repeat or continue it, or to answer with nothing usable.
+        messages.append({"role": "system", "content": OWN_INITIATIVE_NOTE})
 
     return await _complete(
         api_key=api_key, messages=messages, ai_config=ai_config, client=client, **_sink(usage_sink)
     )
 
+
+OWN_INITIATIVE_NOTE = (
+    "They have not written anything since your last message. Write the next message you send them now, "
+    "on your own initiative: pass on the NEWS or SEND NOW lines in the APPOINTMENTS notes, in your usual "
+    "voice. Do not repeat or continue your previous message."
+)
 
 NO_REPLY_MARKER = "[NO_REPLY]"
 
