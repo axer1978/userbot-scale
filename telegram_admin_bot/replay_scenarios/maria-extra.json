@@ -3498,7 +3498,9 @@
       "has_any": [
        "check",
        "sec",
-       "moment"
+       "moment",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -3963,7 +3965,9 @@
        "time",
        "when",
        "hour",
-       "riga"
+       "riga",
+       "here",
+       "ganu"
       ],
       "lacks": [
        "old town",
@@ -3982,7 +3986,9 @@
        "hour",
        "riga",
        "person",
-       "see"
+       "see",
+       "here",
+       "ganu"
       ],
       "lacks": [
        "old town",
@@ -5054,7 +5060,9 @@
        "taxi",
        "sober",
        "tomorrow",
-       "drive"
+       "drive",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -5322,7 +5330,9 @@
        "time",
        "when",
        "hour",
-       "riga"
+       "riga",
+       "here",
+       "ganu"
       ],
       "lacks": [
        "euro girls",

@@ -475,7 +475,9 @@
       "has_any": [
        "check",
        "sec",
-       "moment"
+       "moment",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -2014,7 +2016,9 @@
        "sent",
        "scroll",
        "отправ",
-       "уже"
+       "уже",
+       "here",
+       "ganu"
       ]
      }
     },

@@ -1017,7 +1017,9 @@
       "has_any": [
        "what hour",
        "what time",
-       "when"
+       "when",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -2147,7 +2149,9 @@
       "has_any": [
        "riga",
        "address",
-       "confirm"
+       "confirm",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -2223,7 +2227,9 @@
        "taxi",
        "what time",
        "where",
-       "when"
+       "when",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -2940,7 +2946,9 @@
       "has_any": [
        "what hour",
        "what time",
-       "when"
+       "when",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -4233,7 +4241,9 @@
       "has_any": [
        "above",
        "message",
-       "sent"
+       "sent",
+       "here",
+       "ganu"
       ]
      }
     },

@@ -42,7 +42,9 @@
        "sec",
        "moment",
        "minute",
-       "riga"
+       "riga",
+       "here",
+       "ganu"
       ],
       "lacks": [
        "old town",
@@ -112,7 +114,9 @@
        "check",
        "sec",
        "moment",
-       "minute"
+       "minute",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -208,7 +212,9 @@
        "chat",
        "earlier",
        "check",
-       "look"
+       "look",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -418,7 +424,9 @@
        "hour",
        "confirm",
        "once",
-       "as soon"
+       "as soon",
+       "here",
+       "ganu"
       ],
       "lacks": [
        "near the station",
@@ -503,7 +511,9 @@
        "sec",
        "moment",
        "minute",
-       "riga"
+       "riga",
+       "here",
+       "ganu"
       ],
       "lacks": [
        "yes it's near",
@@ -877,7 +887,9 @@
        "провер",
        "как только",
        "секунд",
-       "минут"
+       "минут",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -1147,7 +1159,9 @@
        "come to",
        "coming to",
        "your place",
-       "outcall"
+       "outcall",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -1197,7 +1211,9 @@
        "moment",
        "minute",
        "riga",
-       "taxi"
+       "taxi",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -1318,7 +1334,9 @@
        "hour",
        "confirm",
        "once",
-       "as soon"
+       "as soon",
+       "here",
+       "ganu"
       ],
       "lacks": [
        "min walk",
@@ -1522,7 +1540,9 @@
        "address",
        "show",
        "driver",
-       "him"
+       "him",
+       "here",
+       "ganu"
       ]
      }
     },
@@ -3308,7 +3328,9 @@
        "sec",
        "moment",
        "minute",
-       "wait"
+       "wait",
+       "here",
+       "ganu"
       ]
      }
     },

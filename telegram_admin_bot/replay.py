@@ -24,9 +24,10 @@ and per step, optionally:
     "expect":     {"has_all": [...], "has_any": [...], "lacks": [...]}, any case
 
 What the system sends by itself is replayed too, as in the runtime: the
-address (booking.address) right after the reply to the chat's first
-confirmed_news (a moved booking is not sent it again), unless the request was
-an outcall; and on "arrived" the way in
+address (booking.address) where a reply wrote [address] (every chat must have
+it with the prices in the first reply, except in "except_categories"), or
+after a confirmation if it is not in the chat yet (not for an outcall); and
+on "arrived" the way in
 (booking.arrival_instructions) is the whole answer: the arrival check must
 read the message as arrival, and no reply is written. Later steps are
 way_in_sent.
@@ -68,8 +69,9 @@ import tenants
 
 SCENARIO_DIR = Path(__file__).with_name("replay_scenarios")
 
-# Never in a reply: block markers, the street, the door code, prompt text.
-ALWAYS_LACKS = ("[block]", "[/block]", "ganu", "1234", "platform rules", "appointments:",
+# Never in a reply: block markers, the address tag, prompt text. (The street
+# may be named: it goes out with the prices.)
+ALWAYS_LACKS = ("[block]", "[/block]", "[address]", "platform rules", "appointments:",
                 "news to pass on", "send now:")
 # Before the owner has confirmed: no agreeing to the time in any words.
 UNCONFIRMED_LACKS = ("is booked", "you're booked", "it's booked", "booking is confirmed",
@@ -80,6 +82,8 @@ AT_THE_DOOR_LACKS = ("one sec, coming", "i'm coming down", "im coming down", "i'
                      "i'll open the door", "meet you downstairs", "meet you at the entrance",
                      "wait for me downstairs", "спущусь", "спускаюсь", "открою дверь", "nākšu lejā",
                      "nāku lejā", "atvēršu durvis")
+# The door code, until the system has sent the way in.
+DOOR_CODE = "1234"
 CONFIRMED_STATES = {"confirmed_news", "confirmed", "arrived", "way_in_sent"}
 STATES = {"requested", "requested_now", "pending", *CONFIRMED_STATES, "declined_news", "cancelled_news"}
 INTENTS = {"none", "book", "asap", "cancel"}
@@ -160,13 +164,15 @@ def fake_booking(state: str, now: datetime, tz: str, start: Optional[datetime] =
 
 
 def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[datetime] = None,
-                 address_follows: bool = False) -> str:
-    if not state:
-        return bookings.context_for_reply([])
-    booking = fake_booking(state, now, tz, start)
-    lines = [bookings.notice_line(booking) if booking["customer_notice"] else bookings.standing_line(booking)]
-    if state == "confirmed_news" and address_follows:
-        lines.append(bookings.ADDRESS_FOLLOWS_LINE)
+                 address_follows: bool = False, address_set: bool = False) -> str:
+    lines = []
+    if state:
+        booking = fake_booking(state, now, tz, start)
+        lines.append(bookings.notice_line(booking) if booking["customer_notice"] else bookings.standing_line(booking))
+        if state == "confirmed_news" and address_follows:
+            lines.append(bookings.ADDRESS_FOLLOWS_LINE)
+    if address_set:
+        lines.append(bookings.ADDRESS_TAG_LINE)
     return bookings.context_for_reply(lines)
 
 
@@ -184,6 +190,8 @@ def check_reply(text: str, step: dict[str, Any], state: Optional[str]) -> list[s
     for word in [*expect.get("lacks", []), *ALWAYS_LACKS]:
         if word.lower() in low:
             failed.append(f"contains {word!r}")
+    if state != "way_in_sent" and DOOR_CODE in low:
+        failed.append("gives the door code before he arrived")
     for word in AT_THE_DOOR_LACKS:
         if word in low:
             failed.append(f"meets them at the door ({word!r}); they come up once the way in is sent")
@@ -268,8 +276,9 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
     live: Optional[str] = None
     # The request was for an outcall (as the extractor read it): no address.
     outcall = False
-    # The address goes out once per booking, with its first confirmation.
+    # The address is in the chat (normally from the first reply's [address]).
     address_sent = False
+    first_reply = True
     address = (ctx.config["booking"].get("address") or "").strip()
     way_in = (ctx.config["booking"].get("arrival_instructions") or "").strip()
     for step in scenario["steps"]:
@@ -320,12 +329,19 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
             api_key=ctx.key, history=[dict(m) for m in history], persona={}, ai_config=ctx.config["ai"],
             client=ctx.http, adaptive_style=ctx.config["human"]["adaptive_style"],
             booking_note=booking_note(state, now, ctx.tz, start,
-                                      address_follows=bool(address) and not outcall and not address_sent),
+                                      address_follows=bool(address) and not outcall and not address_sent,
+                                      address_set=bool(address)),
             system_prompt=ctx.prompt.text,
             language_locked=ctx.config["language_policy"] != "mirror", burst_max=burst["max_messages"],
             burst_keep_together=burst.get("keep_together", True))
+        # The address the reply asked for goes in as a message of its own
+        # (shown as sent by the system); the reply is checked without it.
+        text, tagged = bookings.take_address_tag(text)
         parts = ai_responder.split_burst(text, burst["max_messages"], burst.get("keep_together", True))
         sent = "\n".join(parts)
+        if (first_reply and address and not tagged and scenario["category"] not in ctx.except_categories):
+            failed.append("the address was not sent with the prices in the first reply")
+        first_reply = False
         # A step's expectations are about what was said around the fixed
         # messages (rates, extras), whose words would match anything.
         fixed = {_norm(t) for t in ctx.must_send.values()}
@@ -334,8 +350,9 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
         suspends = ctx.config["anomaly"]["tripwire_suspend"]
         failed += [("policy would hold it AND SWITCH THE ACCOUNT OFF (trip-wire): " if r in verdict.tripwire and suspends
                     else "policy would hold it: ") + r for r in verdict.reasons]
-        auto = [address] if state == "confirmed_news" and address and not outcall and not address_sent else []
-        address_sent = (address_sent or bool(auto)) and state != "cancelled_news"
+        auto = [address] if address and (tagged or (state == "confirmed_news" and not outcall
+                                                    and not address_sent)) else []
+        address_sent = address_sent or bool(auto)
         result.turns.append({"said": step.get("customer") or f"[{step['event']}]", "reply": parts, "auto": auto,
                              "failed": failed})
         history.extend({"role": "assistant", "content": p} for p in [*parts, *auto])

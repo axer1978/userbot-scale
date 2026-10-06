@@ -48,9 +48,11 @@ def test_agreeing_to_a_time_fails_until_the_owner_confirmed():
     assert replay.check_reply("let me check love, one sec", step, "requested") == []
 
 
-def test_the_street_and_block_markers_always_fail():
-    assert replay.check_reply("Ganu iela 4 love", {"customer": "address?"}, None)
+def test_block_markers_and_an_early_door_code_fail():
     assert replay.check_reply("[block]\nrates\n[/block]", {"customer": "hi"}, None)
+    assert replay.check_reply("code 1234 love", {"customer": "code?"}, "confirmed")
+    assert replay.check_reply("the gate code is 1234 love", {"customer": "gate?"}, "way_in_sent") == []
+    assert replay.check_reply("here love\nganu street 4", {"customer": "where?"}, None) == []
 
 
 def test_meeting_them_at_the_door_fails_they_come_up():
@@ -68,8 +70,10 @@ def test_an_arrival_step_has_nothing_to_check_the_way_in_is_the_answer():
     assert problems({"event": "confirmed", "booking": "arrived"})
 
 
-def test_the_address_follows_only_the_confirmation():
+def test_the_address_tag_is_offered_and_the_address_follows_only_a_confirmation():
     now = datetime(2026, 10, 5, 19, 20, tzinfo=timezone.utc)
+    assert "[address]" in replay.booking_note(None, now, "Europe/Riga", address_set=True)
+    assert "[address]" not in replay.booking_note(None, now, "Europe/Riga")
     assert "address is sent" in replay.booking_note("confirmed_news", now, "Europe/Riga", address_follows=True)
     assert "address is sent" not in replay.booking_note("confirmed_news", now, "Europe/Riga")
     assert "address is sent" not in replay.booking_note("requested", now, "Europe/Riga", address_follows=True)
