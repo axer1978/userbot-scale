@@ -166,18 +166,24 @@ async def test_a_request_goes_to_the_owner_and_yes_confirms_it(world):
     assert (await only_booking(w))["customer_notice"] is None
 
 
-async def test_the_address_follows_the_reply_when_a_free_time_is_named(world):
+async def test_the_address_follows_the_reply_that_says_it_is_confirmed(world):
     w = world
     w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
     w.script["reply"] = "checking, one moment"
     await customer(w, "tomorrow at 15?", book())
 
-    # Reply first, then the address word for word; not yet confirmed.
-    assert w.sent[CUSTOMER][-2:] == ["checking, one moment", "Brivibas iela 1, Riga"]
-    assert "address is sent to them automatically" in w.script["notes"][-1]
-    assert (await only_booking(w))["state"] == bs.PENDING
+    # Not while the owner has not answered.
+    assert "Brivibas iela 1, Riga" not in w.sent[CUSTOMER]
+    assert "address is sent to them automatically" not in w.script["notes"][-1]
 
-    # Sent once per request, not again on the next message.
+    w.script["reply"] = "booked for tomorrow 15:00"
+    await owner(w, "YES 1")
+
+    # The confirmation first, then the address word for word.
+    assert w.sent[CUSTOMER][-2:] == ["booked for tomorrow 15:00", "Brivibas iela 1, Riga"]
+    assert "address is sent to them automatically" in w.script["notes"][-1]
+
+    # Once per booking, not again on the next message.
     await customer(w, "great")
     assert w.sent[CUSTOMER].count("Brivibas iela 1, Riga") == 1
 
@@ -195,11 +201,23 @@ async def test_an_outcall_gets_no_address_and_the_owner_sees_it_is_an_outcall(wo
     w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
     w.script["reply"] = "checking, one moment"
     await customer(w, "to my hotel tomorrow at 15?", book(outcall=True, notes="Hotel Bellevue"))
-
-    assert "Brivibas iela 1, Riga" not in w.sent[CUSTOMER]
-    assert "address is sent to them automatically" not in w.script["notes"][-1]
     [request] = w.sent[OWNER]
     assert "Notes: Outcall. Hotel Bellevue" in request
+
+    await owner(w, "YES 1")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert "Brivibas iela 1, Riga" not in w.sent[CUSTOMER]
+    assert "address is sent to them automatically" not in w.script["notes"][-1]
+
+
+async def test_an_outcall_customer_waiting_in_his_room_never_gets_the_way_in(world):
+    w = world
+    await customer(w, "to my hotel today at 12:30?", book("2030-03-04T12:30", outcall=True))
+    await owner(w, "YES 1")
+    w.script["arrived"] = True
+    await customer(w, "I'm in my room waiting, 312")
+    assert "Door code 4321, 2nd floor." not in w.sent[CUSTOMER]
+    assert (await only_booking(w))["instructions_sent_at"] is None
 
 
 async def test_nothing_is_confirmed_without_the_owner(world):
@@ -407,11 +425,17 @@ async def test_arrival_sends_the_instructions_word_for_word_once(world):
     w = world
     await confirmed_booking(w, "2030-03-04T12:30")
     w.script["arrived"] = True
+    w.script["reply"] = "one sec, coming"
+    replies = w.script["calls"]
     await customer(w, "I'm at the door")
     assert w.sent[CUSTOMER].count("Door code 4321, 2nd floor.") == 1
     assert (await only_booking(w))["instructions_sent_at"] is not None
+    # The way in is the whole answer: no reply is written to "I'm here".
+    assert w.sent[CUSTOMER][-1] == "Door code 4321, 2nd floor." and w.script["calls"] == replies
+    # A message after that is answered as usual; the way in is not sent again.
     await customer(w, "I'm here!!")
     assert w.sent[CUSTOMER].count("Door code 4321, 2nd floor.") == 1
+    assert w.script["calls"] == replies + 1
 
 
 async def test_arrival_messages_are_deleted_for_both_sides_after_the_set_minutes(world, monkeypatch):

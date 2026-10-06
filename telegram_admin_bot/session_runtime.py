@@ -125,6 +125,9 @@ log = logging.getLogger("session_runtime")
 # reply_skip_reason's answer for a bare "ok" / "thanks". It is skipped like
 # the others but not queued as unanswered: it needed no answer.
 ACK_SKIP = "the message is only an acknowledgement"
+# ... and for "I'm here" once the way in (booking.arrival_instructions) went
+# out: that was the answer. Not queued either.
+WAY_IN_SKIP = "they have arrived and the way in was sent"
 # In staging, a chat that is not a test chat gets this note at most once an
 # hour, so a busy chat's history isn't all notes.
 STAGING_NOTE = "Staging: not answered — not a test chat."
@@ -1721,6 +1724,8 @@ class SessionRuntime:
     async def reply_skip_reason(self, chat_id: int, history: list[dict[str, str]]) -> str:
         """Why this message should get no reply (replies.* in the config), or ""."""
         replies = self.config["replies"]
+        if self.flow.answered_by_way_in(chat_id):
+            return WAY_IN_SKIP
         last = history[-1] if history else {}
         if (replies["skip_acknowledgements"] and last.get("role") == "user"
                 and ai_limits.is_acknowledgement(last.get("content", ""), replies["acknowledgements"])):
@@ -1734,7 +1739,7 @@ class SessionRuntime:
         # A reply limit or the tenant's no-reply instruction left a
         # customer without an answer: queued. A bare acknowledgement
         # ("ok", "thanks") needed none, so it is not.
-        if reason != ACK_SKIP:
+        if reason not in (ACK_SKIP, WAY_IN_SKIP):
             await self.queue_unanswered(chat_id, unanswered.SKIPPED, reason)
 
     async def check_policy(

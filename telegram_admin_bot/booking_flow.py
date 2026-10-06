@@ -87,9 +87,12 @@ class BookingFlow:
         # chat -> the last time asked for that was not free, for a
         # "put me on the waitlist" that names no range.
         self.last_unavailable: dict[int, tuple[datetime, datetime]] = {}
-        # chat -> booking id: a new request whose address is sent right
-        # after the chat's next reply.
+        # chat -> booking id: a booking just confirmed, whose address is
+        # sent right after the reply that tells them.
         self.address_due: dict[int, int] = {}
+        # Chats whose latest message ("I'm here") was answered by the way
+        # in itself: no reply is written after it.
+        self.let_in: set[int] = set()
         self._provider: tuple[str, Optional[int], float] = ("", None, 0.0)
         self._calendar: Optional[google_calendar.GoogleCalendar] = None
         self._calendar_key: tuple[str, str] = ("", "")
@@ -158,6 +161,7 @@ class BookingFlow:
     async def on_customer_message(self, chat_id: int, text: str) -> None:
         """Every text a customer sends while bookings are on, before the
         reply is drafted (the draft waits for this to finish)."""
+        self.let_in.discard(chat_id)
         answer = bookings.reminder_answer(text)
         if answer is not None:
             booking = await self._reminded_booking(chat_id)
@@ -191,7 +195,14 @@ class BookingFlow:
         if task is not None and not task.done():
             try:
                 await asyncio.shield(task)
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                # The scan was replaced by a newer message's: carry on. The
+                # reply itself being cancelled (the way in answered "I'm
+                # here", a newer message) must stop it.
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+            except Exception:
                 pass
 
     async def scan(self, chat_id: int) -> None:
@@ -281,7 +292,7 @@ class BookingFlow:
             if outcall and "outcall" not in notes.lower():
                 notes = ("Outcall. " + notes).strip()
             await self.request_time(chat_id, start, end, service=str(data.get("service") or ""), notes=notes,
-                                    request=request, confirmed=confirmed, outcall=outcall)
+                                    request=request, confirmed=confirmed)
         elif intent == "cancel":
             target = request or confirmed
             if target is not None:
@@ -305,11 +316,10 @@ class BookingFlow:
 
     async def request_time(
         self, chat_id: int, start: datetime, end: datetime, *, service: str, notes: str,
-        request: Optional[dict[str, Any]], confirmed: Optional[dict[str, Any]], outcall: bool = False,
+        request: Optional[dict[str, Any]], confirmed: Optional[dict[str, Any]],
     ) -> None:
         """The customer asked for a concrete time: a new request, a changed
-        request, or a move of their confirmed booking. An outcall gets no
-        address: the business goes to them."""
+        request, or a move of their confirmed booking."""
         current = request or confirmed
         result = await self.check(start, end, exclude_id=current["id"] if current else None)
         if not result.ok:
@@ -340,9 +350,6 @@ class BookingFlow:
                 )
                 log.info("[%s] Booking #%s requested for %s.", self.rt.session_id, booking["number"],
                          bookings.describe_when(booking))
-                if (self.settings.get("address") or "").strip() and not outcall:
-                    self.address_due[chat_id] = booking["id"]
-                    self.add_line(chat_id, bookings.ADDRESS_FOLLOWS_LINE)
                 await self.submit(booking)
         except booking_store.SlotTaken:
             await self.unavailable(chat_id, start, end, "conflict")
@@ -682,6 +689,9 @@ class BookingFlow:
         with_notice = await self.store.with_notice(chat_id)
         for booking in with_notice:
             lines.append(bookings.notice_line(booking))
+            if self.address_follows(booking):
+                self.address_due[chat_id] = booking["id"]
+                lines.append(bookings.ADDRESS_FOLLOWS_LINE)
         told = {b["id"] for b in with_notice}
         for booking in await self.store.for_chat(chat_id):
             if booking["id"] not in told:
@@ -713,9 +723,16 @@ class BookingFlow:
             self.address_due.pop(chat_id)
             await self.send_address(await self.store.get(note.address_for))
 
+    def address_follows(self, booking: dict[str, Any]) -> bool:
+        """The address goes out with the news that a booking is confirmed —
+        never for an outcall, where the business goes to them."""
+        return (booking.get("customer_notice") == bs.NOTICE_CONFIRMED
+                and bool((self.settings.get("address") or "").strip())
+                and not bookings.is_outcall(booking))
+
     async def send_address(self, booking: dict[str, Any]) -> None:
-        """booking.address, word for word, to a customer who has just named
-        a free time (sent after the reply that says it is being checked)."""
+        """booking.address, word for word, to a customer whose booking was
+        just confirmed (sent after the reply that tells them)."""
         text = (self.settings.get("address") or "").strip()
         rt, chat_id = self.rt, booking["chat_id"]
         if not text or booking["state"] not in bs.LIVE:
@@ -734,12 +751,19 @@ class BookingFlow:
     # ------------------------------------------------------------ arrival
 
     def _arriving(self, live: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        """The confirmed booking whose customer may be arriving now. Never
+        an outcall: the business goes to them, so there is no way in to send."""
         now = self.now()
         for booking in live:
             if (booking["state"] == bs.CONFIRMED and not booking.get("instructions_sent_at")
-                    and bookings.arrival_window(booking, now)):
+                    and not bookings.is_outcall(booking) and bookings.arrival_window(booking, now)):
                 return booking
         return None
+
+    def answered_by_way_in(self, chat_id: int) -> bool:
+        """Their latest message was answered by the arrival instructions:
+        they go straight in, so nothing more is written to it."""
+        return chat_id in self.let_in
 
     def photo_check_ready(self) -> bool:
         url, key = vision.endpoint_from_env()
@@ -833,6 +857,7 @@ class BookingFlow:
             return
         finally:
             rt.sending_chats.discard(chat_id)
+        self.let_in.add(chat_id)
         minutes = int(self.settings.get("arrival_cleanup_minutes") or 0)
         fields: dict[str, Any] = {"instructions_sent_at": self.now(), "instructions_message_ids": sent}
         if minutes and sent:

@@ -460,7 +460,8 @@ def requested_slot(
 
 NO_DIRECTIONS_RULE = (
     "Never give the address, directions, door codes or how to get in "
-    "yourself — that is sent automatically once they have arrived."
+    "yourself — the address is sent automatically once the appointment is "
+    "confirmed, the way in once they have arrived."
 )
 
 _NOTICE_TEXT = {
@@ -554,10 +555,14 @@ ONLY_OWNER_CONFIRMS_RULE = (
 )
 
 ADDRESS_FOLLOWS_LINE = (
-    "NEWS TO PASS ON IN THIS REPLY: the time they asked for is free and is being checked. "
     "The address is sent to them automatically in a separate message right after this reply — "
-    "do not write any address yourself; you may say it follows."
+    "do not write any address yourself."
 )
+
+
+def is_outcall(booking: Mapping[str, Any]) -> bool:
+    """The business goes to them (the request's notes say outcall)."""
+    return "outcall" in str(booking.get("notes") or "").lower()
 
 
 def context_for_reply(lines: Sequence[str]) -> str:
@@ -571,10 +576,14 @@ ARRIVAL_SYSTEM_PROMPT = (
     "You read the end of a private chat between a business ('me') and a "
     "customer ('them') who has an appointment about now. Decide whether the "
     "customer's LATEST message says they have physically arrived at the meeting "
-    "place — for example 'I'm here', 'at the door', 'downstairs', 'я на месте', "
-    "'esmu klāt', 'just parked outside'. Being on the way, running late, or "
-    "asking where to go is NOT arrival. Answer with a single JSON object and "
-    'nothing else: {"arrived": true|false}'
+    "place — for example 'I'm here', 'at the door', 'downstairs', 'outside', "
+    "'я на месте', 'я внизу', 'я у подъезда', 'esmu klāt', 'esmu pie mājas', "
+    "'just parked outside'. Someone already at the building who "
+    "asks which door, entrance, floor or code ('I'm at the building, which "
+    "door?', 'here, two doors, which one?') HAS arrived. Being on the way, "
+    "almost there, running late, in the area or the city but not at the place, "
+    "or asking for the address is NOT arrival. Answer with a single JSON object "
+    'and nothing else: {"arrived": true|false}'
 )
 
 
