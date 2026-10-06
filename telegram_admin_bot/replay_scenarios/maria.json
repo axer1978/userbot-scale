@@ -6656,6 +6656,174 @@
    ]
   },
   {
+   "id": "payment-01",
+   "category": "payment",
+   "steps": [
+    {
+     "customer": "hey beautiful",
+     "intent": "none"
+    },
+    {
+     "customer": "can I pay by card?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash"
+      ],
+      "lacks": [
+       "card is ok",
+       "card is fine",
+       "revolut is ok",
+       "transfer is ok",
+       "paypal is fine",
+       "send the deposit",
+       "iban"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "payment-02",
+   "category": "payment",
+   "steps": [
+    {
+     "customer": "Hello Nikol",
+     "intent": "none"
+    },
+    {
+     "customer": "revolut ok?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash"
+      ],
+      "lacks": [
+       "card is ok",
+       "card is fine",
+       "revolut is ok",
+       "transfer is ok",
+       "paypal is fine",
+       "send the deposit",
+       "iban"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "payment-03",
+   "category": "payment",
+   "steps": [
+    {
+     "customer": "hi there",
+     "intent": "none"
+    },
+    {
+     "customer": "do you take bank transfer?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash"
+      ],
+      "lacks": [
+       "card is ok",
+       "card is fine",
+       "revolut is ok",
+       "transfer is ok",
+       "paypal is fine",
+       "send the deposit",
+       "iban"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "payment-04",
+   "category": "payment",
+   "steps": [
+    {
+     "customer": "good evening, are you working tonight?",
+     "intent": "none"
+    },
+    {
+     "customer": "cash or card?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash"
+      ],
+      "lacks": [
+       "card is ok",
+       "card is fine",
+       "revolut is ok",
+       "transfer is ok",
+       "paypal is fine",
+       "send the deposit",
+       "iban"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "payment-05",
+   "category": "payment",
+   "steps": [
+    {
+     "customer": "yo",
+     "intent": "none"
+    },
+    {
+     "customer": "can i send a deposit first?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash"
+      ],
+      "lacks": [
+       "card is ok",
+       "card is fine",
+       "revolut is ok",
+       "transfer is ok",
+       "paypal is fine",
+       "send the deposit",
+       "iban"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "payment-06",
+   "category": "payment",
+   "steps": [
+    {
+     "customer": "hi, found your profile",
+     "intent": "none"
+    },
+    {
+     "customer": "is paypal fine?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash"
+      ],
+      "lacks": [
+       "card is ok",
+       "card is fine",
+       "revolut is ok",
+       "transfer is ok",
+       "paypal is fine",
+       "send the deposit",
+       "iban"
+      ]
+     }
+    }
+   ]
+  },
+  {
    "id": "under-18-01",
    "category": "under 18",
    "steps": [
