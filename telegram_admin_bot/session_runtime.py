@@ -1610,6 +1610,7 @@ class SessionRuntime:
                 return
 
             text, attachments = media.split_attachments(text)
+            text = self.flow.fill_address(text)
             # Only what the AI was offered: never an arrival item (the way in).
             attachments = [i for i in attachments
                            if (item := self.media_library.get(i)) is not None and not item.get("send_on_arrival")]

@@ -459,9 +459,8 @@ def requested_slot(
 # ----------------------------------------------- what the reply writer knows
 
 NO_DIRECTIONS_RULE = (
-    "Never give the address, directions, door codes or how to get in "
-    "yourself — the address is sent automatically once the appointment is "
-    "confirmed, the way in once they have arrived."
+    "Never give directions, door codes or how to get in yourself — the way "
+    "in is sent automatically once they have arrived."
 )
 
 _NOTICE_TEXT = {
@@ -558,6 +557,38 @@ ADDRESS_FOLLOWS_LINE = (
     "The address is sent to them automatically in a separate message right after this reply — "
     "do not write any address yourself."
 )
+
+# Where a reply wants the street address (booking.address): the system puts
+# it there word for word, as a message of its own, so the model never types
+# (or misremembers) it.
+ADDRESS_TAG = "[address]"
+_ADDRESS_TAG = re.compile(r"\[\s*address\s*\]", re.IGNORECASE)
+ADDRESS_TAG_LINE = (
+    "The street address is set. Write [address] on a line of its own where it should go (with the prices "
+    "in your first reply, and again when they ask where you are) and the system puts the address there, "
+    "word for word, as a message of its own. Never write the address yourself."
+)
+
+
+def take_address_tag(text: str) -> tuple[str, bool]:
+    """The reply without its [address] tags, and whether it had one."""
+    if not _ADDRESS_TAG.search(text or ""):
+        return text, False
+    cleaned = "\n".join(line.strip() for line in _ADDRESS_TAG.sub("", text).splitlines())
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip(), True
+
+
+def fill_address(text: str, address: str) -> str:
+    """The reply with booking.address where it wrote [address] (once), as a
+    block of its own; without an address the tag is just dropped."""
+    address = (address or "").strip()
+    match = _ADDRESS_TAG.search(text or "")
+    if match is None:
+        return text
+    if not address:
+        return take_address_tag(text)[0]
+    rest, _ = take_address_tag(text[match.end():])
+    return (text[:match.start()].rstrip() + f"\n[block]\n{address}\n[/block]\n" + rest).strip()
 
 
 def is_outcall(booking: Mapping[str, Any]) -> bool:

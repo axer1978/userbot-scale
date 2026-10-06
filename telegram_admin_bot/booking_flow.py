@@ -87,7 +87,8 @@ class BookingFlow:
         # chat -> the last time asked for that was not free, for a
         # "put me on the waitlist" that names no range.
         self.last_unavailable: dict[int, tuple[datetime, datetime]] = {}
-        # chat -> booking id: a booking just confirmed, whose address is
+        # chat -> booking id: a booking just confirmed whose address is not
+        # in the chat yet (normally it went with the first reply's prices):
         # sent right after the reply that tells them.
         self.address_due: dict[int, int] = {}
         # Chats whose latest message ("I'm here") was answered by the way
@@ -689,13 +690,15 @@ class BookingFlow:
         with_notice = await self.store.with_notice(chat_id)
         for booking in with_notice:
             lines.append(bookings.notice_line(booking))
-            if self.address_follows(booking):
+            if self.address_follows(booking) and not await self.address_in_chat(chat_id):
                 self.address_due[chat_id] = booking["id"]
                 lines.append(bookings.ADDRESS_FOLLOWS_LINE)
         told = {b["id"] for b in with_notice}
         for booking in await self.store.for_chat(chat_id):
             if booking["id"] not in told:
                 lines.append(bookings.standing_line(booking))
+        if self.address():
+            lines.append(bookings.ADDRESS_TAG_LINE)
         transient = list(self.pending_lines.get(chat_id, []))
         lines.extend(transient)
         return ReplyNote(
@@ -722,6 +725,20 @@ class BookingFlow:
         if note.address_for is not None and self.address_due.get(chat_id) == note.address_for:
             self.address_due.pop(chat_id)
             await self.send_address(await self.store.get(note.address_for))
+
+    def address(self) -> str:
+        """booking.address, or "" when bookings are off or none is set."""
+        return (self.settings.get("address") or "").strip() if self.enabled() else ""
+
+    def fill_address(self, text: str) -> str:
+        """A reply's [address] tag as the address itself, a message of its own."""
+        return bookings.fill_address(text, self.address())
+
+    async def address_in_chat(self, chat_id: int) -> bool:
+        address = self.address()
+        history = await self.rt.db.get_history_for_ai(chat_id, limit=200)
+        return bool(address) and any(m.get("role") == "assistant" and address in (m.get("content") or "")
+                                     for m in history)
 
     def address_follows(self, booking: dict[str, Any]) -> bool:
         """The address goes out with the news that a booking is confirmed —

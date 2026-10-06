@@ -188,6 +188,23 @@ async def test_the_address_follows_the_reply_that_says_it_is_confirmed(world):
     assert w.sent[CUSTOMER].count("Brivibas iela 1, Riga") == 1
 
 
+async def test_the_address_goes_with_the_prices_and_not_again_after_the_confirmation(world):
+    w = world
+    w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
+    w.script["reply"] = "hi love, 100 for 30 min\n[address]"
+    await customer(w, "hi, prices?")
+    # The reply is told about the tag; the address goes word for word, alone.
+    assert "[address]" in w.script["notes"][-1]
+    assert w.sent[CUSTOMER][-2:] == ["hi love, 100 for 30 min", "Brivibas iela 1, Riga"]
+
+    w.script["reply"] = "checking, one moment"
+    await customer(w, "tomorrow at 15?", book())
+    w.script["reply"] = "booked for tomorrow 15:00"
+    await owner(w, "YES 1")
+    assert w.sent[CUSTOMER].count("Brivibas iela 1, Riga") == 1
+    assert "address is sent to them automatically" not in w.script["notes"][-1]
+
+
 async def test_no_address_for_a_time_that_is_not_free(world):
     w = world
     w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
