@@ -426,7 +426,7 @@ async def generate_reply(
         # Nothing new from them: a booking update, a reminder or a waitlist
         # offer starts this message. Ending on our own turn, the model tends
         # to repeat or continue it, or to answer with nothing usable.
-        messages.append({"role": "system", "content": OWN_INITIATIVE_NOTE})
+        messages.append({"role": "system", "content": own_initiative_note(booking_note)})
 
     return await _complete(
         api_key=api_key, messages=messages, ai_config=ai_config, client=client, **_sink(usage_sink)
@@ -438,6 +438,19 @@ OWN_INITIATIVE_NOTE = (
     "on your own initiative: pass on the NEWS or SEND NOW lines in the APPOINTMENTS notes, in your usual "
     "voice. Do not repeat or continue your previous message."
 )
+
+
+def own_initiative_note(booking_note: str = "") -> str:
+    """OWN_INITIATIVE_NOTE, with the news it is about repeated at the end of
+    the conversation: far up in the system prompt, a CONFIRMED after an
+    earlier "let me check" was answered "still checking"."""
+    news = [line.strip() for line in (booking_note or "").splitlines()
+            if line.strip().startswith(("NEWS TO PASS ON", "SEND NOW"))]
+    if not news:
+        return OWN_INITIATIVE_NOTE
+    return (OWN_INITIATIVE_NOTE + " This is the news, and it is current: it replaces anything said earlier in "
+            "this chat.\n" + "\n".join(news))
+
 
 NO_REPLY_MARKER = "[NO_REPLY]"
 
