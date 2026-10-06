@@ -1,0 +1,4357 @@
+{
+ "scenarios": [
+  {
+   "id": "h2-01",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi, free now?",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "10 min away",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "made it, i'm outside",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which flat",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-02",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hey, can i come at 20:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "at ur door now",
+     "booking": "arrived"
+    },
+    {
+     "customer": "door's closed, what now?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-03",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi love, how much cash do i need?",
+     "intent": "none"
+    },
+    {
+     "customer": "ok 1 hour for 200, free at 21:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on the way, running late sry",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "no worries",
+       "ok",
+       "take your time",
+       "perfect",
+       "how long",
+       "how much time",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im here finally",
+     "booking": "arrived"
+    },
+    {
+     "customer": "code?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-04",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "are you on euro girls?",
+     "expect": {
+      "has_any": [
+       "yes",
+       "thank",
+       "what hour",
+       "what time",
+       "when"
+      ],
+      "lacks": [
+       "euro girls",
+       "eurogirls"
+      ]
+     }
+    },
+    {
+     "customer": "ok great, can i come over at 19:30?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "time",
+       "when",
+       "another",
+       "other"
+      ]
+     }
+    },
+    {
+     "customer": "how about 20:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "omw, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "standing outside ur building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-05",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "do u have pics",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "nice 😍 when can i come?",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when",
+       "time",
+       "hour"
+      ]
+     }
+    },
+    {
+     "customer": "now? im near",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "just arrived",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-06",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "kissing - whats the price?",
+     "intent": "none"
+    },
+    {
+     "customer": "ok and 1 hour with kissing, 22:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 20 mins",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here now, by the entrance",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-07",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "привет, можно в 20:30?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "провер",
+       "секунд",
+       "минут"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "еду, 15 минут",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "отлично",
+       "жду",
+       "сколько"
+      ]
+     }
+    },
+    {
+     "customer": "я внизу",
+     "booking": "arrived"
+    },
+    {
+     "customer": "какая квартира",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent",
+       "выше",
+       "сообщени",
+       "код",
+       "квартир",
+       "поднима"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-08",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hey is 150 for an hour ok?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "fixed"
+      ]
+     }
+    },
+    {
+     "customer": "ok fine, 200. can i come at 21:00",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on the taxi",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "taxi dropped me off, im outside",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which buzzer do i press",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-09",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "can i come later today?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "around 19:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "15 mins away",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-10",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "do you do 69?",
+     "intent": "none"
+    },
+    {
+     "customer": "ok, and 1 hour with 69, 23:00 ok?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "in the car, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "parked right outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-11",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hii 😘",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "when r u free",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when",
+       "time",
+       "hour",
+       "today",
+       "now"
+      ]
+     }
+    },
+    {
+     "customer": "21:30",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "5 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "at the door babe",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-12",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "found u on gribu.lv 😊 30 min possible?",
+     "expect": {
+      "has_any": [
+       "yes",
+       "what hour",
+       "what time",
+       "when"
+      ],
+      "lacks": [
+       "gribu"
+      ]
+     }
+    },
+    {
+     "customer": "ok 20:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "still 5 min away",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im by the front door",
+     "booking": "arrived"
+    },
+    {
+     "customer": "is it the door with the intercom?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-13",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "heyyy 💦",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "can i pay with card?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash",
+       "meet"
+      ]
+     }
+    },
+    {
+     "customer": "ok fine, 22:00 for 1 hour",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "taxi ordered, there in 12",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "arrived 🙂",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-14",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "role play - is that a thing?",
+     "intent": "none"
+    },
+    {
+     "customer": "cool, 23:30 ok?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "10 mins",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs rn",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-15",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "heyy hw much 4 1hr",
+     "intent": "none"
+    },
+    {
+     "customer": "ok kool can i come 2nite at 9?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "leavin now be there in 20",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im outsid",
+     "booking": "arrived"
+    },
+    {
+     "customer": "wich door lol",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-16",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "can you send a video?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "wow ok 🔥 now possible?",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'm there now",
+     "booking": "arrived"
+    },
+    {
+     "customer": "how do i get in",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-17",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "unprotected oral - is that +50?",
+     "intent": "none"
+    },
+    {
+     "customer": "ok, 1 hour for 250 then, 21:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "15 min away, traffic is bad",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "at your door",
+     "booking": "arrived"
+    },
+    {
+     "customer": "what's the code again",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-18",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi, 30 min now?",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "omw, 5 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "pulled up outside ur place",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-19",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "threesome - how much extra?",
+     "intent": "none"
+    },
+    {
+     "customer": "ok too expensive lol",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "ok",
+       "love",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "just me then, 22:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "5 mins",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here, front door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-20",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "are you colombian?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "yes",
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "cool! 23:00 work?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "10 min, just left the bar",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "made it, in front of ur building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-21",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "dom - what does domination include?",
+     "intent": "none"
+    },
+    {
+     "customer": "ok not into it nvm",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "ok",
+       "love",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "just normal stuff 20:30?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on the tram, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'm here at the building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-22",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hello, is 19:00 possible today?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "customer": "any news love?",
+     "booking": "pending",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute",
+       "wait",
+       "soon",
+       "confirm"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "omw 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "at the entrance now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-23",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi babe 💕",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "can you do 100 for an hour?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "fixed",
+       "200"
+      ]
+     }
+    },
+    {
+     "customer": "ok fine lol 21:00",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "15 mins",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "by the gate now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-24",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "what time you free tonight",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "22:30?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on the way",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im here love",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which floor",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-25",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hey, incall at 20:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "thx, see u at 8 😘",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "perfect",
+       "ok",
+       "see",
+       "wait",
+       "😘",
+       "❤️",
+       "🔥"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, there in 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "ok im outside the building, just got out of the taxi",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-26",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi nikol! 😘😘",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "free at 19:30?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "7 mins",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm outside babe",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-27",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "esmu tuvu, var tūlīt?",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "pārbaud",
+       "mirkl",
+       "minūt"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "jau klāt",
+     "booking": "arrived"
+    },
+    {
+     "customer": "kurš stāvs?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent",
+       "augšā",
+       "ziņ",
+       "kod",
+       "dzīvok",
+       "nāc"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-28",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "what's included for 100?",
+     "intent": "none"
+    },
+    {
+     "customer": "ok 30 min at 23:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "5 min away",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm here now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-29",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "sex without condom possible?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "protection",
+       "condom"
+      ]
+     }
+    },
+    {
+     "customer": "ok, 1 hour protected for 200, 21:00",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im at the entrance",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-30",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "čau 🔥",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when",
+       "cikos",
+       "kad",
+       "laik"
+      ]
+     }
+    },
+    {
+     "customer": "20:00 var?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute",
+       "pārbaud",
+       "mirkl",
+       "minūt"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "būšu pēc 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "lieliski",
+       "gaidu",
+       "cik"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie durvīm",
+     "booking": "arrived"
+    },
+    {
+     "customer": "durvis neatveras",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent",
+       "augšā",
+       "ziņ",
+       "kod",
+       "dzīvok",
+       "nāc"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-31",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "можно без презерватива?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "protection",
+       "condom",
+       "презерв",
+       "защит"
+      ]
+     }
+    },
+    {
+     "customer": "окей, тогда в 22:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute",
+       "провер",
+       "секунд",
+       "минут"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "еду",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "отлично",
+       "жду",
+       "сколько"
+      ]
+     }
+    },
+    {
+     "customer": "стою у подъезда",
+     "booking": "arrived"
+    },
+    {
+     "customer": "какой код?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent",
+       "выше",
+       "сообщени",
+       "код",
+       "квартир",
+       "поднима"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-32",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "are u the best company in riga",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "yes",
+       "thank",
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "haha ok, 21:00 then?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "otw 🚗 15min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im here, black jacket 😅",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-33",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "where are you based",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "riga",
+       "address",
+       "confirm"
+      ]
+     }
+    },
+    {
+     "customer": "ok, can i come 19:30",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "ok, driving over now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs by the door",
+     "booking": "arrived"
+    },
+    {
+     "customer": "code pls",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-34",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hey, can u come to my hotel tonight?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "what time",
+       "where",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "22:00, hotel rixwell in old town, room 512",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "confirmed",
+       "yes love",
+       "address"
+      ]
+     }
+    },
+    {
+     "customer": "great 😍 i'll have the cash ready",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "perfect",
+       "ok",
+       "see",
+       "wait",
+       "😘",
+       "❤️",
+       "🔥",
+       "cash"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-35",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hiii 💦💦",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "can i come today after work?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when",
+       "time",
+       "hour"
+      ]
+     }
+    },
+    {
+     "customer": "around 18:30",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "finished work, on my way, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm here 🙂",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-36",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "do you meet at the door or how does it work",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "come up",
+       "flat",
+       "code",
+       "send",
+       "confirm",
+       "upstairs",
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "ok 22:00",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "be there in 5",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here now, buzz me in",
+     "booking": "arrived"
+    },
+    {
+     "customer": "so i just come up myself?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "straight up",
+       "upstairs",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-37",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "are u free rn",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "omw, bought u flowers 🌹 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "outside rn",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which apt",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-38",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hey can i come in 40 min?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "already in the car, 25 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "ok im here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-39",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "can i do outcall?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "what time",
+       "where",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "nah just incall then, 21:30?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on way",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "outside 😅",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-40",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "yo u cute",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "thank",
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "ok 19:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving home now, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-41",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi, 1h at 22:00 possible?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "do i pay before or after?",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash",
+       "meet"
+      ]
+     }
+    },
+    {
+     "customer": "ok, 10 min away",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here, by your door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-42",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "привет, сегодня вечером можно?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when",
+       "во сколько",
+       "когда",
+       "время"
+      ]
+     }
+    },
+    {
+     "customer": "в 21:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute",
+       "провер",
+       "секунд",
+       "минут"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "выезжаю, минут 20",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "отлично",
+       "жду",
+       "сколько"
+      ]
+     }
+    },
+    {
+     "customer": "пришёл",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-43",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "looking for best company in latvia 🇱🇻",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "yes",
+       "thank",
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "can u do 20:00",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im in front of ur house",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-44",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "sveika, vai var šovakar pusdesmitos?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "pārbaud",
+       "mirkl",
+       "minūt"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "esmu ceļā, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "lieliski",
+       "gaidu",
+       "cik"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie mājas",
+     "booking": "arrived"
+    },
+    {
+     "customer": "kura ieeja?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent",
+       "augšā",
+       "ziņ",
+       "kod",
+       "dzīvok",
+       "nāc"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-45",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "yo whats good, u workin 2day?",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "bet, 7:30pm?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "omw fr, 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im here, outside",
+     "booking": "arrived"
+    },
+    {
+     "customer": "where do i go now",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-46",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi! saw ur profile, 30 min at 20:00 possible?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "great, will text 15 min before",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "perfect",
+       "ok",
+       "see",
+       "wait",
+       "😘",
+       "❤️",
+       "🔥"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "at the door 🙂",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-47",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "sveika! atradu tevi gribu.lv 🙂",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "thank",
+       "paldies",
+       "what hour",
+       "what time",
+       "when",
+       "cikos",
+       "kad",
+       "laik"
+      ],
+      "lacks": [
+       "gribu"
+      ]
+     }
+    },
+    {
+     "customer": "var tūlīt?",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute",
+       "pārbaud",
+       "mirkl",
+       "minūt"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "izbraucu, 15 minūtes",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "lieliski",
+       "gaidu",
+       "cik"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie tavas mājas",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-48",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi, 1 hour tonight at 21:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "can i add kissing?",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "50",
+       "kissing",
+       "yes"
+      ]
+     }
+    },
+    {
+     "customer": "omw now 15 mins",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im here 🙈",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-49",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "can u do domination?",
+     "intent": "none"
+    },
+    {
+     "customer": "ok + dom for 1 hour, 23:30",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "5 more mins",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "just got here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-50",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hey gorgeous",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "thank",
+       "what hour",
+       "what time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "u free now?",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way 🚗",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here babe",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-51",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "привет, час сколько стоит?",
+     "intent": "none"
+    },
+    {
+     "customer": "давай в 20:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute",
+       "провер",
+       "секунд",
+       "минут"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "еду сейчас",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "отлично",
+       "жду",
+       "сколько"
+      ]
+     }
+    },
+    {
+     "customer": "я уже у двери",
+     "booking": "arrived"
+    },
+    {
+     "customer": "какой этаж",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent",
+       "выше",
+       "сообщени",
+       "код",
+       "квартир",
+       "поднима"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-52",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "what if i pay with bank transfer",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash",
+       "meet"
+      ]
+     }
+    },
+    {
+     "customer": "ok cash then, 1 hour at 19:00",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on the way, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm here by the entrance",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-53",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "role play - what kind?",
+     "intent": "none"
+    },
+    {
+     "customer": "ok but 180 for 1 hour + roleplay?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "fixed"
+      ]
+     }
+    },
+    {
+     "customer": "fine 250 total, 22:00",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way babe, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here 😊 front door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-54",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi it's Toms again 😊 same as last time, 21:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving work now, 25 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "in the courtyard now",
+     "booking": "arrived"
+    },
+    {
+     "customer": "same code as last time?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-55",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi love from euro girls 💕",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "thank",
+       "what hour",
+       "what time",
+       "when"
+      ],
+      "lacks": [
+       "euro girls",
+       "eurogirls"
+      ]
+     }
+    },
+    {
+     "customer": "1 hour 21:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way 20 mins",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "outside ur place now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-56",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "can my gf join? 👀",
+     "intent": "none"
+    },
+    {
+     "customer": "ok 1 hour for both of us at 20:30",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "we're on our way, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "we're downstairs",
+     "booking": "arrived"
+    },
+    {
+     "customer": "what floor are u on",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-57",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "привет дорогая 🔥",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when",
+       "во сколько",
+       "когда",
+       "время"
+      ]
+     }
+    },
+    {
+     "customer": "свободна сейчас?",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute",
+       "провер",
+       "секунд",
+       "минут"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "уже тут, внизу",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-58",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "vai tev ir vairāk fotogrāfiju?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "when",
+       "cikos",
+       "kad",
+       "laik",
+       "person",
+       "see"
+      ]
+     }
+    },
+    {
+     "customer": "ok 22:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute",
+       "pārbaud",
+       "mirkl",
+       "minūt"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "braucu",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "lieliski",
+       "gaidu",
+       "cik"
+      ]
+     }
+    },
+    {
+     "customer": "esmu klāt pie ieejas",
+     "booking": "arrived"
+    },
+    {
+     "customer": "kods?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent",
+       "augšā",
+       "ziņ",
+       "kod",
+       "dzīvok",
+       "nāc"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-59",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "how much for 30 min + kissing",
+     "intent": "none"
+    },
+    {
+     "customer": "ok 19:30 lets go",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "omw 10",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-60",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "yo free?",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "in a bolt, 10 mins",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im at the door",
+     "booking": "arrived"
+    },
+    {
+     "customer": "left or right door?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-61",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi, can i come in 15 min? already in the area",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "customer": "im outside already 😅",
+     "booking": "pending",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute",
+       "wait",
+       "soon",
+       "confirm"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "ok still waiting outside",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which floor is it",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-62",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "evening love, 20:00 ok?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "sorry, can we do 20:30 instead? stuck at work",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving the office now, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here, at the entrance",
+     "booking": "arrived"
+    },
+    {
+     "customer": "can u come down and open? 🙏",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ],
+      "lacks": [
+       "coming"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-63",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "22:40 possible?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "in the bolt now, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "outside ur building now, which entrance?",
+     "booking": "arrived"
+    },
+    {
+     "customer": "code doesnt work 😕",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "flat",
+       "sent"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "h2-64",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "can i come at 19:45?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "where is it again? cant find the msg",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "sent"
+      ]
+     }
+    },
+    {
+     "customer": "traffic, running 10 min late sorry",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "no worries",
+       "ok",
+       "take your time",
+       "perfect",
+       "how long",
+       "how much time",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "ok made it, standing at your door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "h2-65",
+   "category": "everyday to door",
+   "steps": [
+    {
+     "customer": "hi, 1 hour at 21:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "sorry something came up, cant make it tonight",
+     "booking": "cancelled_news",
+     "state_note": "confirmed",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "ok",
+       "no worries",
+       "another",
+       "next time",
+       "other"
+      ],
+      "lacks": [
+       "let me check"
+      ]
+     }
+    },
+    {
+     "customer": "ok sorted it out 🙈 can i still come at 23:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "minute"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "omw again 😅 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here 🙂 at the gate",
+     "booking": "arrived"
+    }
+   ]
+  }
+ ]
+}
