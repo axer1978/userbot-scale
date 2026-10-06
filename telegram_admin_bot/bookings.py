@@ -335,7 +335,7 @@ EXTRACT_SYSTEM_PROMPT = (
     "and nothing else:\n"
     '{"intent": "none"|"book"|"cancel"|"accept_proposal"|"decline_proposal"|'
     '"confirm_attendance"|"waitlist", "start": "YYYY-MM-DDTHH:MM" or null, '
-    '"asap": true|false, '
+    '"asap": true|false, "outcall": true|false, '
     '"duration_minutes": <integer or null>, "service": "<a few words or empty>", '
     '"notes": "<anything the business should know, or empty>", '
     '"waitlist_from": "YYYY-MM-DDTHH:MM" or null, "waitlist_to": "YYYY-MM-DDTHH:MM" or null}\n'
@@ -358,9 +358,17 @@ EXTRACT_SYSTEM_PROMPT = (
     "would take in waitlist_from/waitlist_to.\n"
     "- none: anything else, including a day without a time ('are you free "
     "tomorrow?'), a vague window ('tonight', 'later'), or what they said "
-    "earlier and then moved away from.\n"
-    "Resolve relative dates from the current date and time given. Use 24-hour "
-    "local time in the given timezone; never invent a time that was not said. "
+    "earlier and then moved away from. Also none when their latest message "
+    "names no time of its own: a nudge while they wait ('??', 'so?', 'is it "
+    "ok?', 'hello?'), thanks, 'ok', a question. A time already in 'Their "
+    "bookings' is never a new request unless they ask to change it.\n"
+    "outcall: true when they want the business to come to them (their hotel, "
+    "their place, 'outcall'), false otherwise.\n"
+    "Resolve relative dates from the current date and time given; an offset "
+    "('in 40 min') counts from the message that said it. Use 24-hour local time "
+    "in the given timezone; never invent a time that was not said. Half-hour "
+    "words: in Latvian and Russian 'half ten' ('pusdesmitos', 'полдесятого') "
+    "is 9:30; in English 'half ten' is 10:30. "
     "Whether 'me' agreed is irrelevant: confirmation is decided elsewhere."
 )
 

@@ -276,8 +276,12 @@ class BookingFlow:
                 if same["state"] == bs.REQUESTED:
                     await self.submit(same)
                 return
-            await self.request_time(chat_id, start, end, service=str(data.get("service") or ""),
-                                    notes=str(data.get("notes") or ""), request=request, confirmed=confirmed)
+            outcall = data.get("outcall") is True
+            notes = str(data.get("notes") or "")
+            if outcall and "outcall" not in notes.lower():
+                notes = ("Outcall. " + notes).strip()
+            await self.request_time(chat_id, start, end, service=str(data.get("service") or ""), notes=notes,
+                                    request=request, confirmed=confirmed, outcall=outcall)
         elif intent == "cancel":
             target = request or confirmed
             if target is not None:
@@ -301,10 +305,11 @@ class BookingFlow:
 
     async def request_time(
         self, chat_id: int, start: datetime, end: datetime, *, service: str, notes: str,
-        request: Optional[dict[str, Any]], confirmed: Optional[dict[str, Any]],
+        request: Optional[dict[str, Any]], confirmed: Optional[dict[str, Any]], outcall: bool = False,
     ) -> None:
         """The customer asked for a concrete time: a new request, a changed
-        request, or a move of their confirmed booking."""
+        request, or a move of their confirmed booking. An outcall gets no
+        address: the business goes to them."""
         current = request or confirmed
         result = await self.check(start, end, exclude_id=current["id"] if current else None)
         if not result.ok:
@@ -335,7 +340,7 @@ class BookingFlow:
                 )
                 log.info("[%s] Booking #%s requested for %s.", self.rt.session_id, booking["number"],
                          bookings.describe_when(booking))
-                if (self.settings.get("address") or "").strip():
+                if (self.settings.get("address") or "").strip() and not outcall:
                     self.address_due[chat_id] = booking["id"]
                     self.add_line(chat_id, bookings.ADDRESS_FOLLOWS_LINE)
                 await self.submit(booking)
