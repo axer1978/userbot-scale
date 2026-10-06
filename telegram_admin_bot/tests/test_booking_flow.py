@@ -190,6 +190,18 @@ async def test_no_address_for_a_time_that_is_not_free(world):
     assert "Brivibas iela 1, Riga" not in w.sent.get(CUSTOMER + 1, [])
 
 
+async def test_an_outcall_gets_no_address_and_the_owner_sees_it_is_an_outcall(world):
+    w = world
+    w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
+    w.script["reply"] = "checking, one moment"
+    await customer(w, "to my hotel tomorrow at 15?", book(outcall=True, notes="Hotel Bellevue"))
+
+    assert "Brivibas iela 1, Riga" not in w.sent[CUSTOMER]
+    assert "address is sent to them automatically" not in w.script["notes"][-1]
+    [request] = w.sent[OWNER]
+    assert "Notes: Outcall. Hotel Bellevue" in request
+
+
 async def test_nothing_is_confirmed_without_the_owner(world):
     w = world
     await customer(w, "tomorrow at 15?", book())
