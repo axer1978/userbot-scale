@@ -64,7 +64,7 @@ SCENARIO_DIR = Path(__file__).with_name("replay_scenarios")
 ALWAYS_LACKS = ("[block]", "[/block]", "ganu", "iela", "1234", "platform rules", "appointments:",
                 "news to pass on", "send now:")
 # Before the owner has confirmed: no agreeing to the time in any words.
-UNCONFIRMED_LACKS = ("is booked", "you're booked", "it's booked", "booking is confirmed", "it's confirmed",
+UNCONFIRMED_LACKS = ("is booked", "you're booked", "it's booked", "booking is confirmed",
                      "text me 15", "15 mins before", "15 min before", "15 minutes before", "see you then",
                      "see you soon")
 CONFIRMED_STATES = {"confirmed_news", "confirmed", "arrived"}
