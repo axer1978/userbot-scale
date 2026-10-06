@@ -53,6 +53,29 @@ def test_the_street_and_block_markers_always_fail():
     assert replay.check_reply("[block]\nrates\n[/block]", {"customer": "hi"}, None)
 
 
+def test_meeting_them_at_the_door_fails_they_come_up():
+    step = {"customer": "here"}
+    assert replay.check_reply("perfect, one sec, coming", step, "way_in_sent")
+    assert replay.check_reply("I'll come down love", step, "way_in_sent")
+    assert replay.check_reply("come up love, see you upstairs 😘", step, "way_in_sent") == []
+
+
+def test_an_arrival_step_has_nothing_to_check_the_way_in_is_the_answer():
+    def problems(step):
+        return replay.validate({"scenarios": [{"id": "a", "steps": [{"customer": "hi"}, step]}]})
+    assert problems({"customer": "I'm here", "booking": "arrived"}) == []
+    assert problems({"customer": "I'm here", "booking": "arrived", "expect": {"has_any": ["sec"]}})
+    assert problems({"event": "confirmed", "booking": "arrived"})
+
+
+def test_the_address_follows_only_the_confirmation():
+    now = datetime(2026, 10, 5, 19, 20, tzinfo=timezone.utc)
+    assert "address is sent" in replay.booking_note("confirmed_news", now, "Europe/Riga", address_follows=True)
+    assert "address is sent" not in replay.booking_note("confirmed_news", now, "Europe/Riga")
+    assert "address is sent" not in replay.booking_note("requested", now, "Europe/Riga", address_follows=True)
+    assert "already sent the entry instructions" in replay.booking_note("way_in_sent", now, "Europe/Riga")
+
+
 def test_expectations_are_checked_in_any_case():
     step = {"customer": "kiss?", "expect": {"has_all": ["Kissing"], "has_any": ["50", "fifty"], "lacks": ["SORRY"]}}
     assert replay.check_reply("kissing is +50 love", step, None) == []

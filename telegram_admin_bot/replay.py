@@ -18,10 +18,18 @@ and per step, optionally:
 
     "booking":    the chat's booking state for that reply: requested,
                   requested_now, pending, confirmed_news, declined_news,
-                  cancelled_news, confirmed, arrived
+                  cancelled_news, confirmed, arrived, way_in_sent
     "state_note": the booking the extractor is told about (confirmed)
     "intent":     what the booking extractor must read: none, book, asap, cancel
     "expect":     {"has_all": [...], "has_any": [...], "lacks": [...]}, any case
+
+What the system sends by itself is replayed too, as in the runtime: the
+address (booking.address) right after the reply to the chat's first
+confirmed_news (a moved booking is not sent it again), unless the request was
+an outcall; and on "arrived" the way in
+(booking.arrival_instructions) is the whole answer: the arrival check must
+read the message as arrival, and no reply is written. Later steps are
+way_in_sent.
 
 Every reply is also checked for what must never appear (ALWAYS_LACKS), for
 agreeing to a time before the owner confirmed (UNCONFIRMED_LACKS), and by
@@ -61,13 +69,18 @@ import tenants
 SCENARIO_DIR = Path(__file__).with_name("replay_scenarios")
 
 # Never in a reply: block markers, the street, the door code, prompt text.
-ALWAYS_LACKS = ("[block]", "[/block]", "ganu", "iela", "1234", "platform rules", "appointments:",
+ALWAYS_LACKS = ("[block]", "[/block]", "ganu", "1234", "platform rules", "appointments:",
                 "news to pass on", "send now:")
 # Before the owner has confirmed: no agreeing to the time in any words.
 UNCONFIRMED_LACKS = ("is booked", "you're booked", "it's booked", "booking is confirmed",
                      "text me 15", "15 mins before", "15 min before", "15 minutes before", "see you then",
                      "see you soon")
-CONFIRMED_STATES = {"confirmed_news", "confirmed", "arrived"}
+# She never meets them at the entrance: they come up once the way in is sent.
+AT_THE_DOOR_LACKS = ("one sec, coming", "i'm coming down", "im coming down", "i'll come down", "i will come down",
+                     "i'll open the door", "meet you downstairs", "meet you at the entrance",
+                     "wait for me downstairs", "спущусь", "спускаюсь", "открою дверь", "nākšu lejā",
+                     "nāku lejā", "atvēršu durvis")
+CONFIRMED_STATES = {"confirmed_news", "confirmed", "arrived", "way_in_sent"}
 STATES = {"requested", "requested_now", "pending", *CONFIRMED_STATES, "declined_news", "cancelled_news"}
 INTENTS = {"none", "book", "asap", "cancel"}
 
@@ -116,6 +129,10 @@ def validate(data: dict[str, Any]) -> list[str]:
                 problems.append(f"{sid}: unknown intent {step['intent']!r}")
             if step.get("intent") and "customer" not in step:
                 problems.append(f"{sid}: an intent check needs a customer message")
+            if step.get("booking") == "arrived" and ("customer" not in step or step.get("expect")
+                                                      or step.get("intent")):
+                problems.append(f"{sid}: an arrived step is a customer message with no expect or intent "
+                                "(the way in is the answer)")
     return problems
 
 
@@ -136,17 +153,19 @@ def fake_booking(state: str, now: datetime, tz: str, start: Optional[datetime] =
               "declined_news": bs.CANCELLED, "cancelled_news": bs.CANCELLED}.get(state, bs.PENDING)
     notice = {"confirmed_news": bs.NOTICE_CONFIRMED, "declined_news": bs.NOTICE_DECLINED,
               "cancelled_news": bs.NOTICE_CANCELLED}.get(state)
+    status = bs.CONFIRMED if state == "way_in_sent" else status
     return {"number": 7, "state": status, "starts_at": start, "ends_at": start + timedelta(hours=1), "tz": tz,
             "proposed_by": None, "customer_notice": notice,
-            "instructions_sent_at": now if state == "arrived" else None}
+            "instructions_sent_at": now if state in ("arrived", "way_in_sent") else None}
 
 
-def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[datetime] = None) -> str:
+def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[datetime] = None,
+                 address_follows: bool = False) -> str:
     if not state:
         return bookings.context_for_reply([])
     booking = fake_booking(state, now, tz, start)
     lines = [bookings.notice_line(booking) if booking["customer_notice"] else bookings.standing_line(booking)]
-    if state in ("requested", "requested_now"):
+    if state == "confirmed_news" and address_follows:
         lines.append(bookings.ADDRESS_FOLLOWS_LINE)
     return bookings.context_for_reply(lines)
 
@@ -165,6 +184,9 @@ def check_reply(text: str, step: dict[str, Any], state: Optional[str]) -> list[s
     for word in [*expect.get("lacks", []), *ALWAYS_LACKS]:
         if word.lower() in low:
             failed.append(f"contains {word!r}")
+    for word in AT_THE_DOOR_LACKS:
+        if word in low:
+            failed.append(f"meets them at the door ({word!r}); they come up once the way in is sent")
     if state not in CONFIRMED_STATES:
         for word in UNCONFIRMED_LACKS:
             if word in low:
@@ -244,6 +266,12 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
     # The chat's live booking before this message, which the extractor is
     # told about as in the runtime: a request waiting, or a confirmed one.
     live: Optional[str] = None
+    # The request was for an outcall (as the extractor read it): no address.
+    outcall = False
+    # The address goes out once per booking, with its first confirmation.
+    address_sent = False
+    address = (ctx.config["booking"].get("address") or "").strip()
+    way_in = (ctx.config["booking"].get("arrival_instructions") or "").strip()
     for step in scenario["steps"]:
         if "bot" in step:
             history.append({"role": "assistant", "content": step["bot"]})
@@ -253,6 +281,23 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
         now = datetime.now(timezone.utc)
         state = step.get("booking")
         failed: list[str] = []
+        if state in ("confirmed", "arrived") and not outcall:
+            # The runtime's arrival check reads every message near the time
+            # (never for an outcall: there is no way in to send).
+            arrived = await ai_responder.extract_arrival(api_key=ctx.key, history=[dict(m) for m in history],
+                                                         ai_config=ctx.config["ai"], client=ctx.http)
+            if state == "arrived" and not arrived:
+                failed.append("arrival not recognised: the way in would not be sent")
+            elif state == "confirmed" and arrived:
+                failed.append("read as arrived: the way in would be sent now")
+        if state == "arrived":
+            auto = [way_in] if way_in else []
+            if not way_in:
+                failed.append("no booking.arrival_instructions: nothing would be sent")
+            result.turns.append({"said": step["customer"], "reply": [], "auto": auto, "failed": failed})
+            history.extend({"role": "assistant", "content": a} for a in auto)
+            live = "confirmed"
+            continue
         requesting = state in ("requested", "requested_now")
         if step.get("intent") or requesting:
             note_for = step.get("state_note") or live
@@ -264,6 +309,7 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
                 failed.append(f"booking: {problem}")
             # The booking is for the time they asked for, as in the runtime.
             if requesting and found and found.get("intent") == "book":
+                outcall = found.get("outcall") is True or outcall
                 kwargs = {"now": now} if "now" in inspect.signature(bookings.requested_slot).parameters else {}
                 slot = bookings.requested_slot(found, tz_name=ctx.tz, default_duration=60, **kwargs)
                 if slot is not None and slot[0] > now:
@@ -273,20 +319,28 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
         text = await ai_responder.generate_reply(
             api_key=ctx.key, history=[dict(m) for m in history], persona={}, ai_config=ctx.config["ai"],
             client=ctx.http, adaptive_style=ctx.config["human"]["adaptive_style"],
-            booking_note=booking_note(state, now, ctx.tz, start), system_prompt=ctx.prompt.text,
+            booking_note=booking_note(state, now, ctx.tz, start,
+                                      address_follows=bool(address) and not outcall and not address_sent),
+            system_prompt=ctx.prompt.text,
             language_locked=ctx.config["language_policy"] != "mirror", burst_max=burst["max_messages"],
             burst_keep_together=burst.get("keep_together", True))
         parts = ai_responder.split_burst(text, burst["max_messages"], burst.get("keep_together", True))
         sent = "\n".join(parts)
-        failed += check_reply(sent, step, state)
+        # A step's expectations are about what was said around the fixed
+        # messages (rates, extras), whose words would match anything.
+        fixed = {_norm(t) for t in ctx.must_send.values()}
+        failed += check_reply("\n".join(p for p in parts if _norm(p) not in fixed), step, state)
         verdict = policy.check_outbound(sent, ctx.config, ctx.prompt.business_text)
         suspends = ctx.config["anomaly"]["tripwire_suspend"]
         failed += [("policy would hold it AND SWITCH THE ACCOUNT OFF (trip-wire): " if r in verdict.tripwire and suspends
                     else "policy would hold it: ") + r for r in verdict.reasons]
-        result.turns.append({"said": step.get("customer") or f"[{step['event']}]", "reply": parts, "failed": failed})
-        history.extend({"role": "assistant", "content": p} for p in parts)
+        auto = [address] if state == "confirmed_news" and address and not outcall and not address_sent else []
+        address_sent = (address_sent or bool(auto)) and state != "cancelled_news"
+        result.turns.append({"said": step.get("customer") or f"[{step['event']}]", "reply": parts, "auto": auto,
+                             "failed": failed})
+        history.extend({"role": "assistant", "content": p} for p in [*parts, *auto])
         live = {"requested": "pending", "requested_now": "pending", "pending": "pending", "confirmed_news": "confirmed",
-                "confirmed": "confirmed", "arrived": "confirmed"}.get(state or "")
+                "confirmed": "confirmed", "way_in_sent": "confirmed"}.get(state or "")
     if ctx.must_send and scenario["category"] not in ctx.except_categories:
         replies = [p for t in result.turns for p in t["reply"]]
         if failed := check_chat(replies, ctx.must_send):
@@ -335,6 +389,8 @@ def report(results: list[Result], verbose: bool) -> str:
             lines.append(f"  them: {t['said']}")
             for p in t["reply"]:
                 lines.append("   bot: " + p.replace("\n", "\n        "))
+            for p in t.get("auto", []):
+                lines.append("  auto: " + p)
             for f in t["failed"]:
                 lines.append(f"     ✗ {f}")
     passed = sum(r.ok for r in results)

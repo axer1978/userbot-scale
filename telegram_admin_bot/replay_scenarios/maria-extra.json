@@ -62,14 +62,7 @@
     },
     {
      "customer": "dwnstairs",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -136,14 +129,7 @@
     },
     {
      "customer": "🚪👋",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -209,14 +195,7 @@
     },
     {
      "customer": "I have arrived and am standing outside the building.",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -282,14 +261,7 @@
     },
     {
      "customer": "im hear at the dor",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -355,14 +327,7 @@
     },
     {
      "customer": "OUTSIDE YOUR BUILDING",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -421,14 +386,7 @@
     },
     {
      "customer": "i am come, stand near door",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -494,14 +452,7 @@
     },
     {
      "customer": "esmu klāt",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -570,14 +521,7 @@
     },
     {
      "customer": "Я на месте",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -636,14 +580,7 @@
     },
     {
      "customer": "я у двери",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -693,14 +630,7 @@
     },
     {
      "customer": "pulled up outside",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -762,14 +692,7 @@
     },
     {
      "customer": "ok im outside the entrance",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -828,14 +751,7 @@
     },
     {
      "customer": "i'm at the entrance",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -901,14 +817,7 @@
     },
     {
      "customer": "ok here now",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -977,14 +886,7 @@
     },
     {
      "customer": "made it, downstairs",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -1050,14 +952,7 @@
     },
     {
      "customer": "im out front",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -1145,14 +1040,7 @@
     },
     {
      "customer": "here, a bit nervous haha",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -1365,14 +1253,7 @@
     },
     {
      "customer": "at the entrance door",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -1459,14 +1340,7 @@
     },
     {
      "customer": "i've arrived, standing by the door",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -1538,14 +1412,7 @@
     },
     {
      "customer": "22:40, im at the door now",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -1614,14 +1481,7 @@
     },
     {
      "customer": "sorry!! here now",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -1691,14 +1551,7 @@
     },
     {
      "customer": "I am arrive",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -1764,14 +1617,7 @@
     },
     {
      "customer": "yo im outside",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -1837,14 +1683,7 @@
     },
     {
      "customer": "Arrived.",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -1910,14 +1749,7 @@
     },
     {
      "customer": "esmu lejā",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -1997,14 +1829,7 @@
     },
     {
      "customer": "ding dong, I'm here",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -2158,14 +1983,7 @@
     },
     {
      "customer": "👋 outside",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -2234,14 +2052,7 @@
     },
     {
      "customer": "ya tut, u dveri",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -3526,7 +3337,22 @@
    "steps": [
     {
      "customer": "hey nikol, can i pop over?",
+     "expect": {
+      "has_any": [
+       "check",
+       "sec",
+       "moment",
+       "what time",
+       "what hour",
+       "around what",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "now if you can",
      "booking": "requested_now",
+     "intent": "asap",
      "expect": {
       "has_any": [
        "check",
@@ -4732,14 +4558,7 @@
     },
     {
      "customer": "ok still outside, open pls 🥶",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec",
-       "moment"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -6097,13 +5916,7 @@
     },
     {
      "customer": "I'm here",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -6211,13 +6024,7 @@
     },
     {
      "customer": "here",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -6318,13 +6125,7 @@
     },
     {
      "customer": "at door",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -6417,13 +6218,7 @@
     },
     {
      "customer": "arrived",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -6512,13 +6307,7 @@
     },
     {
      "customer": "here",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -6622,13 +6411,7 @@
     },
     {
      "customer": "downstairs",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -6717,13 +6500,7 @@
     },
     {
      "customer": "at gate",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -6812,13 +6589,7 @@
     },
     {
      "customer": "I'm here",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -6907,13 +6678,7 @@
     },
     {
      "customer": "outside",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -7017,13 +6782,7 @@
     },
     {
      "customer": "here",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -7116,13 +6875,7 @@
     },
     {
      "customer": "downstairs",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -7226,13 +6979,7 @@
     },
     {
      "customer": "outside",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -7321,13 +7068,7 @@
     },
     {
      "customer": "I'm here",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   },
@@ -7427,13 +7168,7 @@
     },
     {
      "customer": "at door",
-     "booking": "arrived",
-     "expect": {
-      "has_any": [
-       "coming",
-       "sec"
-      ]
-     }
+     "booking": "arrived"
     }
    ]
   }
