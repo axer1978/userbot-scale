@@ -166,20 +166,130 @@ async def test_a_request_goes_to_the_owner_and_yes_confirms_it(world):
     assert (await only_booking(w))["customer_notice"] is None
 
 
-async def test_the_address_follows_the_reply_when_a_free_time_is_named(world):
+async def test_the_address_follows_the_reply_that_says_it_is_confirmed(world):
     w = world
     w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
     w.script["reply"] = "checking, one moment"
     await customer(w, "tomorrow at 15?", book())
 
-    # Reply first, then the address word for word; not yet confirmed.
-    assert w.sent[CUSTOMER][-2:] == ["checking, one moment", "Brivibas iela 1, Riga"]
-    assert "address is sent to them automatically" in w.script["notes"][-1]
-    assert (await only_booking(w))["state"] == bs.PENDING
+    # Not while the owner has not answered.
+    assert "Brivibas iela 1, Riga" not in w.sent[CUSTOMER]
+    assert "address is sent to them automatically" not in w.script["notes"][-1]
 
-    # Sent once per request, not again on the next message.
+    w.script["reply"] = "booked for tomorrow 15:00"
+    await owner(w, "YES 1")
+
+    # The confirmation first, then the address word for word.
+    assert w.sent[CUSTOMER][-2:] == ["booked for tomorrow 15:00", "Brivibas iela 1, Riga"]
+    assert "address is sent to them automatically" in w.script["notes"][-1]
+
+    # Once per booking, not again on the next message.
     await customer(w, "great")
     assert w.sent[CUSTOMER].count("Brivibas iela 1, Riga") == 1
+
+
+async def test_the_address_goes_with_the_prices_and_not_again_after_the_confirmation(world):
+    w = world
+    w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
+    w.script["reply"] = "hi love, 100 for 30 min\n[address]"
+    await customer(w, "hi, prices?")
+    # The reply is told about the tag; the address goes word for word, alone.
+    assert "[address]" in w.script["notes"][-1]
+    assert w.sent[CUSTOMER][-2:] == ["hi love, 100 for 30 min", "Brivibas iela 1, Riga"]
+
+    w.script["reply"] = "checking, one moment"
+    await customer(w, "tomorrow at 15?", book())
+    w.script["reply"] = "booked for tomorrow 15:00"
+    await owner(w, "YES 1")
+    assert w.sent[CUSTOMER].count("Brivibas iela 1, Riga") == 1
+    assert "address is sent to them automatically" not in w.script["notes"][-1]
+
+
+async def test_quiet_until_answered_says_nothing_until_the_owner_answers(world):
+    w = world
+    w.app.config["booking"]["quiet_until_answered"] = True
+    w.script["reply"] = "hi love, prices"
+    await customer(w, "hi")
+    assert w.sent[CUSTOMER] == ["hi love, prices"]
+
+    # The time goes to the owner; nothing is written, not even to a nudge.
+    replies = w.script["calls"]
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "??")
+    assert w.sent[CUSTOMER] == ["hi love, prices"] and w.script["calls"] == replies
+    assert len(w.sent[OWNER]) == 1
+
+    # The owner's answer is the next message.
+    w.script["reply"] = "yes love, booked for tomorrow 15:00"
+    await owner(w, "YES 1")
+    assert w.sent[CUSTOMER][-1] == "yes love, booked for tomorrow 15:00"
+    assert "has just been CONFIRMED" in w.script["notes"][-1]
+
+
+async def test_quiet_until_answered_still_sends_photos_they_ask_for(world, monkeypatch):
+    w = world
+    w.app.config["booking"]["quiet_until_answered"] = True
+    library = w.app.media_library
+    library.dir.mkdir(parents=True, exist_ok=True)
+    (library.dir / "me.jpg").write_bytes(b"\xff\xd8\xff me")
+    photo = library.add_file("me.jpg", "me in a red dress")
+    files = []
+    file_ids = iter(range(9000, 9100))
+
+    async def fake_deliver_file(peer, chat_id, item, path):
+        files.append(item["id"])
+        return SimpleNamespace(id=next(file_ids))
+
+    check = {"says": False, "calls": 0}
+
+    async def fake_photo_check(**kw):
+        check["calls"] += 1
+        return check["says"]
+
+    monkeypatch.setattr(w.app, "deliver_file", fake_deliver_file)
+    monkeypatch.setattr(ai_responder, "extract_photo_request", fake_photo_check)
+    w.script["reply"] = "hi love, prices"
+    await customer(w, "hi")
+    await customer(w, "tomorrow at 15?", book())
+    calls = w.script["calls"]
+
+    # Talk that only mentions photos waits like anything else, unchecked.
+    await customer(w, "nice pics 😍")
+    assert check["calls"] == 0 and files == []
+
+    # The photo check says it is no request for her photos: nothing.
+    await customer(w, "a pic of the building?")
+    assert check["calls"] == 1 and files == [] and w.sent[CUSTOMER] == ["hi love, prices"]
+
+    # It says it is: the photos he has not had go out on their own, with
+    # no text and no reply written.
+    check["says"] = True
+    await customer(w, "can I see a photo first?")
+    assert files == [photo["id"]] and w.sent[CUSTOMER] == ["hi love, prices"]
+    assert w.script["calls"] == calls
+
+    # Once he has had them all, nothing more goes out while it waits.
+    await customer(w, "more pics?")
+    assert check["calls"] == 2 and files == [photo["id"]]
+
+    # The owner's answer still comes next.
+    w.script["reply"] = "yes love, booked for tomorrow 15:00"
+    await owner(w, "YES 1")
+    assert w.sent[CUSTOMER][-1] == "yes love, booked for tomorrow 15:00"
+
+
+async def test_quiet_until_answered_still_answers_a_first_message_with_a_time(world):
+    w = world
+    w.app.config["booking"]["quiet_until_answered"] = True
+    w.script["reply"] = "hi love, prices"
+    await customer(w, "hi, tomorrow at 15?", book())
+    assert w.sent[CUSTOMER] == ["hi love, prices"]
+    assert "Say nothing about that time now" in w.script["notes"][-1]
+
+    # A cancel while it waits is answered: nothing waits any more.
+    w.script["reply"] = "no problem love"
+    await customer(w, "sorry, can't come", {"intent": "cancel"})
+    assert w.sent[CUSTOMER][-1] == "no problem love"
 
 
 async def test_no_address_for_a_time_that_is_not_free(world):
@@ -195,11 +305,23 @@ async def test_an_outcall_gets_no_address_and_the_owner_sees_it_is_an_outcall(wo
     w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
     w.script["reply"] = "checking, one moment"
     await customer(w, "to my hotel tomorrow at 15?", book(outcall=True, notes="Hotel Bellevue"))
-
-    assert "Brivibas iela 1, Riga" not in w.sent[CUSTOMER]
-    assert "address is sent to them automatically" not in w.script["notes"][-1]
     [request] = w.sent[OWNER]
     assert "Notes: Outcall. Hotel Bellevue" in request
+
+    await owner(w, "YES 1")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert "Brivibas iela 1, Riga" not in w.sent[CUSTOMER]
+    assert "address is sent to them automatically" not in w.script["notes"][-1]
+
+
+async def test_an_outcall_customer_waiting_in_his_room_never_gets_the_way_in(world):
+    w = world
+    await customer(w, "to my hotel today at 12:30?", book("2030-03-04T12:30", outcall=True))
+    await owner(w, "YES 1")
+    w.script["arrived"] = True
+    await customer(w, "I'm in my room waiting, 312")
+    assert "Door code 4321, 2nd floor." not in w.sent[CUSTOMER]
+    assert (await only_booking(w))["instructions_sent_at"] is None
 
 
 async def test_nothing_is_confirmed_without_the_owner(world):
@@ -407,11 +529,17 @@ async def test_arrival_sends_the_instructions_word_for_word_once(world):
     w = world
     await confirmed_booking(w, "2030-03-04T12:30")
     w.script["arrived"] = True
+    w.script["reply"] = "one sec, coming"
+    replies = w.script["calls"]
     await customer(w, "I'm at the door")
     assert w.sent[CUSTOMER].count("Door code 4321, 2nd floor.") == 1
     assert (await only_booking(w))["instructions_sent_at"] is not None
+    # The way in is the whole answer: no reply is written to "I'm here".
+    assert w.sent[CUSTOMER][-1] == "Door code 4321, 2nd floor." and w.script["calls"] == replies
+    # A message after that is answered as usual; the way in is not sent again.
     await customer(w, "I'm here!!")
     assert w.sent[CUSTOMER].count("Door code 4321, 2nd floor.") == 1
+    assert w.script["calls"] == replies + 1
 
 
 async def test_arrival_messages_are_deleted_for_both_sides_after_the_set_minutes(world, monkeypatch):

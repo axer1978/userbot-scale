@@ -139,7 +139,7 @@ def test_prompt_never_contains_both_language_instructions_at_once():
 
 # ------------------------------------------------- our own initiative
 
-async def _sent_messages(monkeypatch, history):
+async def _sent_messages(monkeypatch, history, booking_note=""):
     seen: dict = {}
 
     async def fake_complete(*, api_key, messages, ai_config, client=None):
@@ -147,7 +147,8 @@ async def _sent_messages(monkeypatch, history):
         return "ok"
 
     monkeypatch.setattr(ai_responder, "_complete", fake_complete)
-    await ai_responder.generate_reply(api_key="k", history=history, persona={}, ai_config={})
+    await ai_responder.generate_reply(api_key="k", history=history, persona={}, ai_config={},
+                                      booking_note=booking_note)
     return seen["messages"]
 
 
@@ -163,9 +164,43 @@ async def test_a_message_we_start_ends_with_a_note_to_write_it(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_news_itself_closes_a_message_we_start(monkeypatch):
+    """A second confirmation, after a change and another "let me check", was
+    answered "still checking": the news is repeated where the model reads last."""
+    news = "NEWS TO PASS ON IN THIS REPLY: the appointment on Tue 06 Oct 18:15 has just been CONFIRMED."
+    messages = await _sent_messages(monkeypatch, [
+        {"role": "user", "content": "can I come in 20 min instead?"},
+        {"role": "assistant", "content": "let me check love, one sec"},
+    ], booking_note="APPOINTMENTS:\nOnly the business confirms appointments.\n" + news)
+    assert messages[-1]["role"] == "system"
+    assert messages[-1]["content"].startswith(ai_responder.OWN_INITIATIVE_NOTE)
+    assert messages[-1]["content"].endswith(news)
+    assert "Only the business confirms" not in messages[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_news_for_a_reply_to_them_is_repeated_last(monkeypatch):
+    """Their time went unanswered until the owner confirmed: the chat ends on
+    their message, and the confirmation was answered as if it were absent."""
+    news = "NEWS TO PASS ON IN THIS REPLY: the appointment on Tue 06 Oct 23:00 has just been CONFIRMED."
+    messages = await _sent_messages(monkeypatch, [
+        {"role": "assistant", "content": "hi love"},
+        {"role": "user", "content": "at 23?"},
+    ], booking_note="APPOINTMENTS:\nOnly the business confirms appointments.\n" + news)
+    assert messages[-2] == {"role": "user", "content": "at 23?"}
+    assert messages[-1] == {"role": "system", "content": ai_responder.NEWS_NOTE + "\n" + news}
+
+
+@pytest.mark.asyncio
 async def test_a_reply_to_them_ends_with_their_message(monkeypatch):
     messages = await _sent_messages(monkeypatch, [
         {"role": "assistant", "content": "hi"},
         {"role": "user", "content": "22:00 ok?"},
     ])
     assert messages[-1] == {"role": "user", "content": "22:00 ok?"}
+
+
+def test_the_no_reply_marker_never_goes_out_as_text():
+    assert ai_responder.is_no_reply(" [no_reply] ")
+    assert ai_responder.without_no_reply("here love 😘|||[NO_REPLY]") == "here love 😘|||"
+    assert ai_responder.split_burst(ai_responder.without_no_reply("here love 😘|||[NO_REPLY]"), 4) == ["here love 😘"]

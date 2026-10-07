@@ -45,6 +45,49 @@ def test_plain_text_is_untouched():
     assert media.split_attachments("send me one|||ok") == ("send me one|||ok", [])
 
 
+def test_a_message_asking_to_see_photos_is_told_apart():
+    for text in ("could you send a pic while i wait?", "selfie?", "how do you look?", "pic pls",
+                 "скинь фото", "как ты выглядишь?", "atsūti bildi", "show me you"):
+        assert media.asks_for_photos(text), text
+    for text in ("nice pics 😍", "ur pics are fake anyway", "??", "ok 22:00", "are you there?"):
+        assert not media.asks_for_photos(text), text
+
+
+def test_their_messages_since_our_last_one_are_read_one_by_one():
+    history = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hey"},
+               {"role": "user", "content": "22:00?"}, {"role": "user", "content": "pic?"}]
+    assert media.latest_from_them(history) == ["22:00?", "pic?"]
+    assert media.latest_from_them(history[:2]) == []
+    assert media.they_ask_for_photos(history)
+    # The question mark of one message does not make the next one a request.
+    history[-1]["content"] = "nice pics 😍"
+    assert not media.they_ask_for_photos(history)
+
+
+def test_the_photos_he_has_not_had_are_those_not_shown_as_sent():
+    items = [{"id": 1, "kind": "photo", "description": "a"}, {"id": 2, "kind": "photo", "description": "b"}]
+    history = [{"role": "assistant", "content": media.sent_placeholder(items[0])}, {"role": "user", "content": "more?"}]
+    assert media.unsent(items, history) == [items[1]]
+    assert media.unsent(items, history[1:]) == items
+
+
+def test_the_media_note_says_what_the_chat_has_had():
+    items = [{"id": 1, "kind": "photo", "description": "a"}, {"id": 2, "kind": "photo", "description": "b"}]
+    assert media.sent_line(items, []) == ""
+    one = [{"role": "assistant", "content": media.sent_placeholder(items[0])}]
+    assert media.sent_line(items, one) == "Already sent in this chat: photo #1."
+    both = one + [{"role": "assistant", "content": media.sent_placeholder(items[1])}]
+    assert "had all your photos" in media.sent_line(items, both)
+
+
+def test_the_photo_check_answer_is_read_safely():
+    assert media.parse_photo_request('{"photos": true}')
+    assert media.parse_photo_request('sure: {"photos": true}')
+    assert not media.parse_photo_request('{"photos": false}')
+    assert not media.parse_photo_request("yes")
+    assert not media.parse_photo_request("{photos: yes")
+
+
 # --------------------------------------------------------- the library
 
 def test_files_dropped_in_the_folder_are_picked_up(tmp_path):

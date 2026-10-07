@@ -363,8 +363,11 @@ EXTRACT_SYSTEM_PROMPT = (
     "ok?', 'hello?'), thanks, a plain 'ok', or a question with no time in it. "
     "A length alone ('1 hour?', '30 min incall?') is not a time. A time "
     "already in 'Their bookings' is never a new request unless they ask to "
-    "change it. A message that does name a time ('tonight 22:00 ok?', "
-    "'tomorrow at 14:00?') is book, question mark or not.\n"
+    "change it: their latest message following up on a request that is "
+    "already there (a nudge, a question, thanks, 'already on my way') is none, "
+    "also when the request was 'now' or 'in 30 min'. A message that does name "
+    "a time ('tonight 22:00 ok?', 'tomorrow at 14:00?') is book, question mark "
+    "or not.\n"
     "outcall: true when they want the business to come to them (their hotel, "
     "their place, 'outcall'), false otherwise.\n"
     "Resolve relative dates from the current date and time given; an offset "
@@ -377,12 +380,14 @@ EXTRACT_SYSTEM_PROMPT = (
 
 
 def extraction_prompt(
-    transcript: str, tz_name: str, now: Optional[datetime] = None, state_note: str = "",
+    transcript: str, tz_name: str, now: Optional[datetime] = None, state_note: str = "", latest: str = "",
 ) -> str:
     now = now or datetime.now(tzinfo_for(tz_name))
     parts = [f"Current date and time: {now:%A %Y-%m-%d %H:%M} ({tz_name})."]
     parts.append("Their bookings: " + (state_note or "none."))
     parts.append("Conversation, oldest first:\n\n" + transcript)
+    if latest:
+        parts.append("\nTheir latest message, the one to decide on: " + " ".join(latest.split()))
     return "\n".join(parts)
 
 
@@ -459,8 +464,8 @@ def requested_slot(
 # ----------------------------------------------- what the reply writer knows
 
 NO_DIRECTIONS_RULE = (
-    "Never give the address, directions, door codes or how to get in "
-    "yourself — that is sent automatically once they have arrived."
+    "Never give directions, door codes or how to get in yourself — the way "
+    "in is sent automatically once they have arrived."
 )
 
 _NOTICE_TEXT = {
@@ -470,9 +475,16 @@ _NOTICE_TEXT = {
     bs.NOTICE_RESCHEDULED: "the appointment has been MOVED; it is now on {when}. Tell them, restating the new day and time.",
     bs.NOTICE_CANCELLED: "the appointment on {when} has been CANCELLED. Tell them so.",
     bs.NOTICE_EXPIRED: "the request for {when} could not be confirmed in time and has lapsed. Apologise briefly and offer to find another time.",
-    bs.NOTICE_REQUESTED: "their request for {when} has been passed on; it is NOT confirmed yet. Say it is being checked.",
+    bs.NOTICE_REQUESTED: "their request for {when} has been passed on; it is NOT confirmed yet. Say you will confirm it in a moment.",
     bs.NOTICE_KEPT: "the appointment could not be moved; it stays on {when}. Tell them so.",
 }
+
+
+def quiet_request_line(booking: Mapping[str, Any]) -> str:
+    """The request notice when the business answers before anything else
+    is said (booking.quiet_until_answered)."""
+    return (f"Their request for {describe_when(booking)} has gone to the business and is NOT confirmed. "
+            "Say nothing about that time now: the answer comes in a later message.")
 
 
 def notice_line(booking: Mapping[str, Any]) -> str:
@@ -491,7 +503,7 @@ def standing_line(booking: Mapping[str, Any]) -> str:
             return (f"The business proposed {describe_proposal(booking)} instead of {when}; waiting for "
                     "their answer. Do NOT say anything is confirmed.")
         return (f"An appointment on {when} has been requested and is waiting for confirmation. Do NOT "
-                "say it is confirmed or booked. If they ask, say it is being checked.")
+                "say it is confirmed or booked. If they ask, say you will confirm it in a moment.")
     if state == bs.CONFIRMED:
         line = f"The appointment on {when} is confirmed."
         if booking.get("proposed_by") == bs.CUSTOMER:
@@ -550,14 +562,50 @@ ONLY_OWNER_CONFIRMS_RULE = (
     "Unless a line below says an appointment is CONFIRMED, do not agree to their time in "
     "any words: no 'ok', 'deal', 'booked', 'confirmed', 'see you then', 'come over', and "
     "no arrival steps such as 'text me before you come'. When they name a day and time, "
-    "say you are checking it and will confirm shortly — nothing more about the time."
+    "say only that you will confirm it in a moment — nothing more about the time."
 )
 
 ADDRESS_FOLLOWS_LINE = (
-    "NEWS TO PASS ON IN THIS REPLY: the time they asked for is free and is being checked. "
     "The address is sent to them automatically in a separate message right after this reply — "
-    "do not write any address yourself; you may say it follows."
+    "do not write any address yourself."
 )
+
+# Where a reply wants the street address (booking.address): the system puts
+# it there word for word, as a message of its own, so the model never types
+# (or misremembers) it.
+ADDRESS_TAG = "[address]"
+_ADDRESS_TAG = re.compile(r"\[\s*address\s*\]", re.IGNORECASE)
+ADDRESS_TAG_LINE = (
+    "The street address is set. Write [address] on a line of its own where it should go (with the prices "
+    "in your first reply, and again when they ask where you are) and the system puts the address there, "
+    "word for word, as a message of its own. Never write the address yourself."
+)
+
+
+def take_address_tag(text: str) -> tuple[str, bool]:
+    """The reply without its [address] tags, and whether it had one."""
+    if not _ADDRESS_TAG.search(text or ""):
+        return text, False
+    cleaned = "\n".join(line.strip() for line in _ADDRESS_TAG.sub("", text).splitlines())
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip(), True
+
+
+def fill_address(text: str, address: str) -> str:
+    """The reply with booking.address where it wrote [address] (once), as a
+    block of its own; without an address the tag is just dropped."""
+    address = (address or "").strip()
+    match = _ADDRESS_TAG.search(text or "")
+    if match is None:
+        return text
+    if not address:
+        return take_address_tag(text)[0]
+    rest, _ = take_address_tag(text[match.end():])
+    return (text[:match.start()].rstrip() + f"\n[block]\n{address}\n[/block]\n" + rest).strip()
+
+
+def is_outcall(booking: Mapping[str, Any]) -> bool:
+    """The business goes to them (the request's notes say outcall)."""
+    return "outcall" in str(booking.get("notes") or "").lower()
 
 
 def context_for_reply(lines: Sequence[str]) -> str:
@@ -571,10 +619,14 @@ ARRIVAL_SYSTEM_PROMPT = (
     "You read the end of a private chat between a business ('me') and a "
     "customer ('them') who has an appointment about now. Decide whether the "
     "customer's LATEST message says they have physically arrived at the meeting "
-    "place — for example 'I'm here', 'at the door', 'downstairs', 'я на месте', "
-    "'esmu klāt', 'just parked outside'. Being on the way, running late, or "
-    "asking where to go is NOT arrival. Answer with a single JSON object and "
-    'nothing else: {"arrived": true|false}'
+    "place — for example 'I'm here', 'at the door', 'downstairs', 'outside', "
+    "'я на месте', 'я внизу', 'я у подъезда', 'esmu klāt', 'esmu pie mājas', "
+    "'just parked outside'. Someone already at the building who "
+    "asks which door, entrance, floor or code ('I'm at the building, which "
+    "door?', 'here, two doors, which one?') HAS arrived. Being on the way, "
+    "almost there, running late, in the area or the city but not at the place, "
+    "or asking for the address is NOT arrival. Answer with a single JSON object "
+    'and nothing else: {"arrived": true|false}'
 )
 
 

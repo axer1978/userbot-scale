@@ -1,0 +1,6947 @@
+{
+ "every_chat_sends": {
+  "rates message": "1 time 💦💦\n30 minutes 100 euro\n\n2 times 💦💦\n1 hour 200 euro\nIncall 200\nOutcall 200+ 🚕\n\nBest company in Latvia 🇱🇻🔥",
+  "extras message": "Kissing +50\nUnprotected oral sex/OWP +50\nDomination +50\nRole-play +50\nThreesome (with a couple) +100\n69 +50"
+ },
+ "except_categories": [
+  "under 18"
+ ],
+ "never_says": [
+  "let me check",
+  "checking",
+  "i'll ask",
+  "i will ask",
+  "my manager",
+  "the agency",
+  "our girls",
+  "check with",
+  "i'll check",
+  "i will check",
+  "let you know"
+ ],
+ "scenarios": [
+  {
+   "id": "p4f-01",
+   "category": "photos then booking",
+   "steps": [
+    {
+     "customer": "hey, free this evening?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "what hour",
+       "what time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "nice. got any pics?",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "ok you're cute 😍 20:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "hello??",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "leaving in 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "im here",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which floor?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "floor",
+       "come up",
+       "love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-02",
+   "category": "photos then booking",
+   "steps": [
+    {
+     "customer": "how much for 1 hour?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "what hour",
+       "what time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "ok. selfie? 😏",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "nice 🔥 can i come 22:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "other time",
+       "sorry",
+       "another time"
+      ]
+     }
+    },
+    {
+     "customer": "23:00 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-03",
+   "category": "photos then booking",
+   "steps": [
+    {
+     "customer": "привет, ты сегодня работаешь?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "love",
+       "❤️",
+       "😘",
+       "час",
+       "время",
+       "сколько",
+       "привет"
+      ]
+     }
+    },
+    {
+     "customer": "скинь фото",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘",
+       "вот",
+       "держи",
+       "❤️",
+       "люб"
+      ]
+     }
+    },
+    {
+     "customer": "красивая 🔥 в 21:00 можно?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "ну что?",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "записал",
+       "забронир"
+      ]
+     }
+    },
+    {
+     "customer": "выезжаю, 20 минут",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘",
+       "отлично",
+       "супер",
+       "жду",
+       "идеальн",
+       "❤️",
+       "сколько"
+      ]
+     }
+    },
+    {
+     "customer": "я на месте",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-04",
+   "category": "photos then booking",
+   "steps": [
+    {
+     "customer": "sveiki, vai šovakar esi brīva?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "love",
+       "❤️",
+       "😘",
+       "cikos",
+       "laik",
+       "sveik",
+       "mīļ"
+      ]
+     }
+    },
+    {
+     "customer": "atsūti bildi lūdzu",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘",
+       "šeit",
+       "lūdzu",
+       "mīļ",
+       "❤️"
+      ]
+     }
+    },
+    {
+     "customer": "forši 😍 vai varu atnākt 22:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "rezerv",
+       "22:30"
+      ]
+     }
+    },
+    {
+     "customer": "braucu, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘",
+       "lieliski",
+       "gaidu",
+       "super",
+       "mīļ",
+       "❤️"
+      ]
+     }
+    },
+    {
+     "customer": "esmu klāt, pie durvīm",
+     "booking": "arrived"
+    },
+    {
+     "customer": "kurš stāvs?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "stāv",
+       "ziņ",
+       "love",
+       "augš",
+       "😘"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-05",
+   "category": "photos then booking",
+   "steps": [
+    {
+     "customer": "hi",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "what hour",
+       "what time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "how do you look? 😊",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "wow 😍 is 21:00 ok?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "nice pics btw 😍",
+     "booking": "pending",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "any more photos?",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "all my photos",
+       "in person",
+       "that's all",
+       "see me"
+      ]
+     }
+    },
+    {
+     "customer": "ok 😂 on my way, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-06",
+   "category": "photos then booking",
+   "steps": [
+    {
+     "customer": "hi, is kissing included?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "+50",
+       "50",
+       "kissing",
+       "kiss"
+      ]
+     }
+    },
+    {
+     "customer": "show me a pic first 😏",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "ok im in. 23:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "send me one more selfie while i wait",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok 😘 coming, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "im at the entrance",
+     "booking": "arrived"
+    },
+    {
+     "customer": "the code doesnt work?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "try",
+       "again",
+       "love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-07",
+   "category": "photos then booking",
+   "steps": [
+    {
+     "customer": "hi, 30 min is 100 right?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "100",
+       "yes",
+       "what hour",
+       "what time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "ok. tonight at 21:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "while i wait can you send a photo?",
+     "booking": "pending",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "😍😍",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok, in a taxi, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "here now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-08",
+   "category": "photos then booking",
+   "steps": [
+    {
+     "customer": "hello, are you available today?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "what hour",
+       "what time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "pics? 🙏",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "beautiful. 19:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "other time",
+       "sorry",
+       "another time"
+      ]
+     }
+    },
+    {
+     "customer": "20:00 works?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on the way, got more pics to send? 😏",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "all my photos",
+       "in person",
+       "that's all",
+       "perfect",
+       "arrive"
+      ]
+     }
+    },
+    {
+     "customer": "im outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-09",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "привет) можно сегодня к тебе?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "love",
+       "❤️",
+       "😘",
+       "час",
+       "время",
+       "сколько",
+       "привет"
+      ]
+     }
+    },
+    {
+     "customer": "в 22:00 приду, норм?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "пока жду, скинь пару фоток?",
+     "booking": "pending",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘",
+       "вот",
+       "держи",
+       "❤️",
+       "люб"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "забронир",
+       "подтвер",
+       "во сколько"
+      ]
+     }
+    },
+    {
+     "customer": "огонь 🔥",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "записал",
+       "забронир",
+       "22"
+      ]
+     }
+    },
+    {
+     "customer": "еду, минут 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘",
+       "отлично",
+       "супер",
+       "жду",
+       "идеальн",
+       "❤️",
+       "сколько"
+      ]
+     }
+    },
+    {
+     "customer": "я у подъезда",
+     "booking": "arrived"
+    },
+    {
+     "customer": "какой этаж?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "выше",
+       "сообщени",
+       "этаж",
+       "поднима",
+       "love",
+       "😘"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-10",
+   "category": "photos after confirmation",
+   "steps": [
+    {
+     "customer": "hi, is tonight possible?",
+     "intent": "none",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "love",
+       "yes"
+      ]
+     }
+    },
+    {
+     "customer": "ok 🔥 23:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 20 min. do you have a video? or at least a pic so i know its you 😊",
+     "booking": "confirmed",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘",
+       "perfect"
+      ],
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "ok im here",
+     "booking": "arrived"
+    },
+    {
+     "customer": "lift is broken 😩",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "stairs",
+       "floor",
+       "above",
+       "message",
+       "love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-11",
+   "category": "photos then booking",
+   "steps": [
+    {
+     "customer": "hey beautiful 😘",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "what hour",
+       "what time",
+       "love"
+      ]
+     },
+     "photos": false
+    },
+    {
+     "customer": "what do you look like?",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "are those recent?",
+     "photos": false,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "yes",
+       "recent",
+       "love",
+       "😘",
+       "me"
+      ],
+      "lacks": [
+       "don't do"
+      ]
+     }
+    },
+    {
+     "customer": "ok 21:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "just parked outside",
+     "booking": "arrived"
+    },
+    {
+     "customer": "left or right door?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-12",
+   "category": "photos then booking",
+   "steps": [
+    {
+     "customer": "hi, how does it work? first time doing this",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "love",
+       "what hour",
+       "what time",
+       "come",
+       "😘"
+      ]
+     },
+     "photos": false
+    },
+    {
+     "customer": "ok. can i see a picture of you first?",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "ok i want to come now if possible",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "customer": "?",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "im down here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-13",
+   "category": "photos first message",
+   "steps": [
+    {
+     "customer": "pics?",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "here",
+       "what hour",
+       "what time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "nice 😍 22:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on my way 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "outside now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-14",
+   "category": "photos first message",
+   "steps": [
+    {
+     "customer": "hi, how much for an hour? and can i see a photo?",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "here",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "ok 😍 is 20:00 possible?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "other time",
+       "sorry",
+       "another time"
+      ]
+     }
+    },
+    {
+     "customer": "21:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "leaving, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "im at the building",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which flat?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "flat",
+       "come up",
+       "love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-15",
+   "category": "photos first message",
+   "steps": [
+    {
+     "customer": "hey, free at 22:00? send me a pic first",
+     "photos": true,
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "here",
+       "love"
+      ],
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "??",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok 😘 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "im downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-16",
+   "category": "photos first message",
+   "steps": [
+    {
+     "customer": "привет, скинь фото?",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "here",
+       "love",
+       "❤️",
+       "😘",
+       "вот",
+       "держи",
+       "люб",
+       "привет"
+      ]
+     }
+    },
+    {
+     "customer": "ммм 🔥 в 21:30 можно?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "ау",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "записал",
+       "забронир"
+      ]
+     }
+    },
+    {
+     "customer": "выхожу, 15 мин",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘",
+       "отлично",
+       "супер",
+       "жду",
+       "идеальн",
+       "❤️",
+       "сколько"
+      ]
+     }
+    },
+    {
+     "customer": "я здесь",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-17",
+   "category": "photos first message",
+   "steps": [
+    {
+     "customer": "čau, vai vari atsūtīt bildi? un cik maksā stunda?",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "here",
+       "love",
+       "šeit",
+       "mīļ",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "labi 😍 22:00 der?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "rezerv"
+      ]
+     }
+    },
+    {
+     "customer": "braucu, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘",
+       "lieliski",
+       "gaidu",
+       "super",
+       "mīļ",
+       "❤️"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie durvīm",
+     "booking": "arrived"
+    },
+    {
+     "customer": "kods nestrādā",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "try",
+       "come up",
+       "kod",
+       "ziņ",
+       "love",
+       "augš",
+       "😘"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-18",
+   "category": "photos first message",
+   "steps": [
+    {
+     "customer": "hello 😊 can i see some pictures of you?",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "here",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "any more pics? 😏",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "all my photos",
+       "in person",
+       "that's all",
+       "see me"
+      ]
+     }
+    },
+    {
+     "customer": "haha ok. 23:00 then",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "still waiting..",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-19",
+   "category": "photos first message",
+   "steps": [
+    {
+     "customer": "how do you look? can i come now?",
+     "photos": true,
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "here",
+       "love"
+      ],
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "?",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "coming, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "im here",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which door, left or right?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-20",
+   "category": "photos first message",
+   "steps": [
+    {
+     "customer": "selfie? 😏",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "here",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "nice 🔥 20:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "can you send a photo of the building so i find it?",
+     "booking": "confirmed",
+     "photos": false,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "map",
+       "love",
+       "address"
+      ]
+     }
+    },
+    {
+     "customer": "ok. 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "found it, im outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-21",
+   "category": "photos first message",
+   "steps": [
+    {
+     "customer": "покажи себя, в 22:00 приду",
+     "photos": true,
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "here",
+       "love",
+       "❤️",
+       "вот",
+       "держи",
+       "привет",
+       "😘"
+      ],
+      "lacks": [
+       "what hour",
+       "what time",
+       "во сколько"
+      ]
+     }
+    },
+    {
+     "customer": "ты тут?",
+     "booking": "pending"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "other time",
+       "sorry",
+       "не подходит",
+       "другое время",
+       "не получится",
+       "извин",
+       "22"
+      ]
+     }
+    },
+    {
+     "customer": "тогда 23:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "записал",
+       "забронир"
+      ]
+     }
+    },
+    {
+     "customer": "еду, 15 мин",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘",
+       "отлично",
+       "супер",
+       "жду",
+       "идеальн",
+       "❤️",
+       "сколько"
+      ]
+     }
+    },
+    {
+     "customer": "я на месте",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-22",
+   "category": "photos first message",
+   "steps": [
+    {
+     "customer": "show me you 😍",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "here",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "can you send one holding a paper with my name, Tom? just to verify",
+     "photos": false,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't do",
+       "love",
+       "😘",
+       "don't"
+      ]
+     }
+    },
+    {
+     "customer": "fine. 21:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok on my way, 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    },
+    {
+     "customer": "going up",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "love",
+       "see",
+       "come up",
+       "above",
+       "😘",
+       "❤️",
+       "perfect",
+       "ok"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-23",
+   "category": "photos after confirmation",
+   "steps": [
+    {
+     "customer": "hi, tonight 21:00 possible?",
+     "booking": "requested",
+     "intent": "book",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "love",
+       "❤️"
+      ],
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "u there?",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "21"
+      ]
+     }
+    },
+    {
+     "customer": "great. btw what do you look like? 😅 didnt see any pics",
+     "booking": "confirmed",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "ok leaving soon, 25 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "im here, there are two doors which one?",
+     "booking": "arrived"
+    },
+    {
+     "customer": "can u send a pic of the door? i dont get it",
+     "booking": "way_in_sent",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "come up",
+       "code",
+       "sorry",
+       "love",
+       "😘"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-24",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "hey, whats the price for 30 min?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "100",
+       "love",
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "ok 21:30 then. and send a pic pls 🙏",
+     "booking": "requested",
+     "intent": "book",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "wow ok 🔥",
+     "booking": "pending"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "other time",
+       "sorry",
+       "another time",
+       "21:30"
+      ]
+     }
+    },
+    {
+     "customer": "22:30 works?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "in the taxi now, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "taxi dropped me off, im outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4f-25",
+   "category": "outcall photos",
+   "steps": [
+    {
+     "customer": "hi, do you do outcall? hotel in old town. send some pics pls",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi",
+       "what time",
+       "where",
+       "here",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "nice 😍 23:00 at the radisson old town",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "so? 🙂",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "23"
+      ],
+      "lacks": [
+       "text me 15",
+       "15 mins before"
+      ]
+     }
+    },
+    {
+     "customer": "room 512, 5th floor",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you",
+       "23",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "can u send me a pic of what youll be wearing tonight? 😏",
+     "booking": "confirmed",
+     "photos": false,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "love",
+       "😘",
+       "see",
+       "surprise",
+       "in person"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-26",
+   "category": "under 18",
+   "steps": [
+    {
+     "customer": "hey can i see pics? im 17 btw 😅",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18"
+      ],
+      "lacks": [
+       "what time",
+       "what hour",
+       "here love"
+      ]
+     }
+    },
+    {
+     "customer": "pls just one pic 🙏",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry",
+       "can't",
+       "no"
+      ],
+      "lacks": [
+       "what time",
+       "what hour",
+       "here love"
+      ]
+     }
+    },
+    {
+     "customer": "jk im 19 lol. pics now?",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry",
+       "can't",
+       "no"
+      ],
+      "lacks": [
+       "what time",
+       "what hour",
+       "here love"
+      ]
+     }
+    },
+    {
+     "customer": "ok where are you located at least",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry",
+       "can't",
+       "no"
+      ],
+      "lacks": [
+       "what time",
+       "what hour",
+       "here love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4f-27",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "sveika, šodien 20:00 var?",
+     "booking": "requested",
+     "intent": "book",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "hi my love",
+       "love",
+       "❤️",
+       "sveik",
+       "mīļ"
+      ],
+      "lacks": [
+       "what hour",
+       "what time",
+       "cikos"
+      ]
+     }
+    },
+    {
+     "customer": "kamēr gaidu, vari atsūtīt pāris bildes?",
+     "booking": "pending",
+     "photos": true,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘",
+       "šeit",
+       "lūdzu",
+       "mīļ",
+       "❤️"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "rezerv",
+       "apstiprin",
+       "cikos"
+      ]
+     }
+    },
+    {
+     "customer": "😍 skaista",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "rezerv",
+       "20"
+      ]
+     }
+    },
+    {
+     "customer": "vari atsūtīt bildi, kur rādi sirsniņu ar rokām? lai zinu, ka tā tiešām esi tu",
+     "booking": "confirmed",
+     "photos": false,
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "love",
+       "😘",
+       "piedod",
+       "diemžēl",
+       "nedaru",
+       "mīļ"
+      ]
+     }
+    },
+    {
+     "customer": "braucu, būšu pēc 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "😘",
+       "lieliski",
+       "gaidu",
+       "super",
+       "mīļ",
+       "❤️"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie ieejas",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-01",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "hey nikol, you free tonight?",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "ok 22:30 then, 1 hour",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "while u decide, can i see a few pics? 😊",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "damn 🔥🔥",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "great, leaving in 10, its a 20 min drive",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-02",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "hi, 20:00 today possible?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "at least show me what you look like 🙈",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "ok wow. so is 20 ok or not??",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "omw, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which floor again?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-03",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "Привет, сегодня в 21:00 можно на час?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "во сколько",
+       "какое время"
+      ]
+     }
+    },
+    {
+     "customer": "А фотки есть? Скинь пока жду",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "вот",
+       "держи",
+       "люб",
+       "мил",
+       "here",
+       "love",
+       "😘",
+       "❤️"
+      ],
+      "lacks": [
+       "заброни",
+       "подтвер",
+       "во сколько",
+       "booked",
+       "what time",
+       "what hour"
+      ]
+     }
+    },
+    {
+     "customer": "Красотка 😍 это точно ты на фото?",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "customer": "Ну что там? 🙂",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "confirmed",
+       "подтвер",
+       "жду",
+       "хорошо",
+       "заброни"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work",
+       "не получится"
+      ]
+     }
+    },
+    {
+     "customer": "Выезжаю, буду минут через 20",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "долго",
+       "ехать",
+       "люб"
+      ],
+      "lacks": [
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "Я у подъезда",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-04",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "Sveika! Cik maksā stunda?",
+     "expect": {
+      "has_any": [
+       "200",
+       "cikos",
+       "kad",
+       "what time",
+       "what hour",
+       "around what",
+       "hour"
+      ]
+     }
+    },
+    {
+     "customer": "Labi, 19:30 šodien?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "Kamēr gaidu, atsūti kādu bildi? 😊",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "lūdzu",
+       "mīļ",
+       "še",
+       "here",
+       "love",
+       "😘",
+       "❤️"
+      ],
+      "lacks": [
+       "rezerv",
+       "apstiprin",
+       "cikos",
+       "booked",
+       "what time",
+       "what hour"
+      ]
+     }
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "other time",
+       "sorry",
+       "neder",
+       "nesanāk",
+       "neiet",
+       "citu",
+       "cits",
+       "citā",
+       "piedod",
+       "atvaino"
+      ],
+      "lacks": [
+       "booked",
+       "rezervēts"
+      ]
+     }
+    },
+    {
+     "customer": "Žēl. Un 20:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "confirmed",
+       "apstiprin",
+       "gaidu",
+       "rezerv",
+       "labi"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work",
+       "neder"
+      ]
+     }
+    },
+    {
+     "customer": "Braucu, būšu pēc 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "love",
+       "lieliski",
+       "cik",
+       "gaidu",
+       "labi",
+       "ilgi",
+       "mīļ"
+      ],
+      "lacks": [
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "Esmu lejā pie durvīm",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-05",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "hi u free now? im near the centre",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "send me a selfie meanwhile pls",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "u look amazing, is that really u? 😍",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "taxi now, 7 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here, outside the building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-06",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "hi, saw your pics on gribu.lv 😍 are you available tomorrow evening?",
+     "expect": {
+      "has_any": [
+       "what time",
+       "what hour",
+       "around what",
+       "which time",
+       "tomorrow"
+      ],
+      "lacks": [
+       "gribu"
+      ]
+     },
+     "photos": false
+    },
+    {
+     "customer": "tomorrow 19:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "do u have any other pics apart from the ones on the site?",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "thanks 😘",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "tomorrow"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "perfect, see you tomorrow then",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "😘",
+       "❤️",
+       "see you",
+       "tomorrow",
+       "perfect",
+       "15"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-07",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "hey sexy, pics first?",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "hour",
+       "time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "ok you're my type. 23:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "any more pics while i wait? 😏",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "nikol??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "coming, ~25 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-08",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "good evening, 21:45 for 30 min?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "u there? if ur busy at least send a pic or two",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time",
+       "around what",
+       "busy",
+       "sorry"
+      ]
+     }
+    },
+    {
+     "customer": "mmm 😍😍",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "on the way, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "at the entrance now",
+     "booking": "arrived"
+    },
+    {
+     "customer": "the code isnt working",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-09",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "hi beautiful, 30 min is 100?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "100",
+       "30",
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "ok, can i come at 18:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "do u have a pic in a dress? 😏",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "that red dress 🔥 you wearing it today?",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving work now, 30 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "parked outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-10",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "hi nikol ❤️",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "can i come at 20:15?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "got a short video while i wait? 🎥",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "no video? ok the pics are nice too 😊",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "other time",
+       "another time",
+       "sorry"
+      ],
+      "lacks": [
+       "booked"
+      ]
+     }
+    },
+    {
+     "customer": "ah. 21:15 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-11",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "hey, where are you located?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "what hour",
+       "what time",
+       "around what",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "ok 19:00 works for me",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "can you send a photo of the building so i know which one",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "customer": "fine. a pic of you then? 😊",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here now",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which entrance, left or right?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-12",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "Привет! Сколько за час?",
+     "expect": {
+      "has_any": [
+       "200",
+       "во сколько",
+       "когда",
+       "what time",
+       "what hour",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "Ок, давай в 22:30",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "Скинь фото с листком, где написано Артём, хочу убедиться что ты реальная",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "customer": "Ладно, тогда просто пришли пару фоток",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "вот",
+       "держи",
+       "люб",
+       "мил",
+       "here",
+       "love",
+       "😘",
+       "❤️"
+      ],
+      "lacks": [
+       "заброни",
+       "подтвер",
+       "во сколько",
+       "booked",
+       "what time",
+       "what hour"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "confirmed",
+       "подтвер",
+       "жду",
+       "хорошо",
+       "заброни"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work",
+       "не получится"
+      ]
+     }
+    },
+    {
+     "customer": "Отлично, выезжаю через полчаса",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "долго",
+       "ехать",
+       "люб"
+      ],
+      "lacks": [
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "Я на месте",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-13",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "Labvakar, šovakar 22:00 var?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "cikos",
+       "kurā laikā"
+      ]
+     }
+    },
+    {
+     "customer": "Atvaino, labāk 22:30, sastrēgums",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "Un atsūti bildes, lūdzu 🙏",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "lūdzu",
+       "mīļ",
+       "še",
+       "here",
+       "love",
+       "😘",
+       "❤️"
+      ],
+      "lacks": [
+       "rezerv",
+       "apstiprin",
+       "cikos",
+       "booked",
+       "what time",
+       "what hour"
+      ]
+     }
+    },
+    {
+     "customer": "Skaista 🔥",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "confirmed",
+       "apstiprin",
+       "gaidu",
+       "rezerv",
+       "labi"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work",
+       "neder"
+      ]
+     }
+    },
+    {
+     "customer": "Izbraucu, būšu pēc 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "love",
+       "lieliski",
+       "cik",
+       "gaidu",
+       "labi",
+       "ilgi",
+       "mīļ"
+      ],
+      "lacks": [
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "Esmu klāt",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-14",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "hi, can you come to my hotel tonight at 23:00? radisson blu, room 512",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "send me a pic so i know who's coming 😉",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "ok 👍",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "yes love",
+       "there"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love",
+       "text me 15",
+       "15 mins before"
+      ]
+     }
+    },
+    {
+     "customer": "great, room 512 then. see you 😊",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "love",
+       "see you",
+       "😘",
+       "ok"
+      ],
+      "lacks": [
+       "hi my love",
+       "text me 15",
+       "15 mins before"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-15",
+   "category": "more photos",
+   "steps": [
+    {
+     "customer": "hi pics?",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "hour",
+       "time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "more? 😏",
+     "expect": {
+      "has_any": [
+       "all",
+       "in person",
+       "person",
+       "only",
+       "see me",
+       "what time",
+       "what hour",
+       "around what",
+       "when",
+       "sorry",
+       "don't"
+      ]
+     }
+    },
+    {
+     "customer": "ok fair. 20:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "omw 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-16",
+   "category": "more photos",
+   "steps": [
+    {
+     "customer": "hey how much for an hour",
+     "expect": {
+      "has_any": [
+       "200",
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "ok, show me a pic of yourself first",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "hour",
+       "time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "got a video?",
+     "expect": {
+      "has_any": [
+       "all",
+       "in person",
+       "person",
+       "only",
+       "see me",
+       "what time",
+       "what hour",
+       "around what",
+       "when",
+       "sorry",
+       "don't"
+      ]
+     }
+    },
+    {
+     "customer": "different angle maybe? 😏",
+     "expect": {
+      "has_any": [
+       "all",
+       "in person",
+       "person",
+       "only",
+       "see me",
+       "what time",
+       "what hour",
+       "around what",
+       "when",
+       "sorry",
+       "don't"
+      ]
+     }
+    },
+    {
+     "customer": "hmm idk yet, maybe later",
+     "expect": {
+      "has_any": [
+       "ready",
+       "text me",
+       "what time",
+       "what hour",
+       "around what",
+       "when",
+       "hour",
+       "time",
+       "thinking"
+      ]
+     }
+    },
+    {
+     "customer": "ok ok 21:30",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-17",
+   "category": "more photos",
+   "steps": [
+    {
+     "customer": "Привет, покажи фото",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "вот",
+       "держи",
+       "во сколько",
+       "когда",
+       "люб",
+       "here",
+       "hour",
+       "time",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "Ещё есть?",
+     "expect": {
+      "has_any": [
+       "все",
+       "всё",
+       "лично",
+       "вживую",
+       "увидишь",
+       "во сколько",
+       "когда",
+       "all",
+       "in person",
+       "what time",
+       "what hour",
+       "только"
+      ]
+     }
+    },
+    {
+     "customer": "А видео?",
+     "expect": {
+      "has_any": [
+       "все",
+       "всё",
+       "лично",
+       "вживую",
+       "увидишь",
+       "во сколько",
+       "когда",
+       "all",
+       "in person",
+       "what time",
+       "what hour",
+       "только"
+      ]
+     }
+    },
+    {
+     "customer": "Ладно, в 22:00 можно?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "confirmed",
+       "подтвер",
+       "жду",
+       "хорошо",
+       "заброни"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work",
+       "не получится"
+      ]
+     }
+    },
+    {
+     "customer": "Выезжаю, минут 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "долго",
+       "ехать",
+       "люб"
+      ],
+      "lacks": [
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "Я внизу",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-18",
+   "category": "more photos",
+   "steps": [
+    {
+     "customer": "Čau, var redzēt kā tu izskaties?",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "lūdzu",
+       "še",
+       "mīļ",
+       "cikos",
+       "kad",
+       "here",
+       "love",
+       "😘",
+       "hour",
+       "time"
+      ]
+     }
+    },
+    {
+     "customer": "Vēl kādu bildi?",
+     "expect": {
+      "has_any": [
+       "visas",
+       "viss",
+       "visi",
+       "klātienē",
+       "dzīvē",
+       "redzēsi",
+       "cikos",
+       "kad",
+       "all",
+       "in person",
+       "what time",
+       "what hour"
+      ]
+     }
+    },
+    {
+     "customer": "Labi, 18:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "confirmed",
+       "apstiprin",
+       "gaidu",
+       "rezerv",
+       "labi"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work",
+       "neder"
+      ]
+     }
+    },
+    {
+     "customer": "Esmu ceļā, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "love",
+       "lieliski",
+       "cik",
+       "gaidu",
+       "labi",
+       "ilgi",
+       "mīļ"
+      ],
+      "lacks": [
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "Esmu pie ieejas",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-19",
+   "category": "more photos",
+   "steps": [
+    {
+     "customer": "21:00 tonight?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "can i see some pics before i come?",
+     "booking": "confirmed",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "one more from another angle? 😏",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "all",
+       "in person",
+       "person",
+       "only",
+       "sorry",
+       "don't",
+       "see me"
+      ],
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "haha ok. leaving now, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "outside",
+     "booking": "arrived"
+    },
+    {
+     "customer": "lift doesnt work",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "stairs",
+       "above",
+       "message",
+       "floor",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-20",
+   "category": "more photos",
+   "steps": [
+    {
+     "customer": "hey cutie, send me a photo",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "hour",
+       "time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "can you send one blowing me a kiss? 😘",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "dont",
+       "all",
+       "person"
+      ]
+     }
+    },
+    {
+     "customer": "ok then one where i can see your face better?"
+    },
+    {
+     "customer": "alright, 19:45?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "other time",
+       "another time",
+       "sorry"
+      ],
+      "lacks": [
+       "booked"
+      ]
+     }
+    },
+    {
+     "customer": "20:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-21",
+   "category": "more photos",
+   "steps": [
+    {
+     "customer": "hi, rates and pics or a video pls",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "hour",
+       "time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "so no video? 🙁",
+     "expect": {
+      "has_any": [
+       "all",
+       "in person",
+       "person",
+       "only",
+       "video",
+       "what time",
+       "what hour",
+       "around what",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "fine. are those pics recent?",
+     "photos": false
+    },
+    {
+     "customer": "ok can i come at 17:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 25 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4o-22",
+   "category": "more photos",
+   "steps": [
+    {
+     "customer": "hi, 1 hour tonight, show me some pics first",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "hour",
+       "time",
+       "love"
+      ]
+     }
+    },
+    {
+     "customer": "nice 😍 22:15 then",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way 20 min, send another pic to keep me going 😏",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "arrive",
+       "love",
+       "all",
+       "person"
+      ],
+      "lacks": [
+       "hi my love",
+       "what hour",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "im outside the door",
+     "booking": "arrived"
+    },
+    {
+     "customer": "door code?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-23",
+   "category": "photos in first message",
+   "steps": [
+    {
+     "customer": "22:00 tonight? can i see a pic of you first?",
+     "booking": "requested",
+     "intent": "book",
+     "photos": true,
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "booked"
+      ]
+     }
+    },
+    {
+     "customer": "wow 😍 gorgeous",
+     "booking": "pending",
+     "photos": false
+    },
+    {
+     "customer": "nikol you there?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 25 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which floor?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-24",
+   "category": "photos not sent",
+   "steps": [
+    {
+     "customer": "hey, where exactly are you? send me a photo of the building so i find it",
+     "photos": false
+    },
+    {
+     "customer": "ok. and a pic of you? 😏",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "can you send one holding a paper with my name, Max?",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "dont",
+       "all",
+       "person"
+      ]
+     }
+    },
+    {
+     "customer": "ok fine. 20:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "taxi 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here, in front of the house",
+     "booking": "arrived"
+    },
+    {
+     "customer": "i cant find the door, send a pic of it pls",
+     "booking": "way_in_sent",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up",
+       "sorry",
+       "don't",
+       "dont"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-25",
+   "category": "under 18",
+   "steps": [
+    {
+     "customer": "hi, can i see some pics?",
+     "photos": true
+    },
+    {
+     "customer": "im 16 btw, can i come over?",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18"
+      ],
+      "lacks": [
+       "30 minutes 100",
+       "kissing +50",
+       "what time",
+       "what hour",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "pls just one more pic, no one will know",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry",
+       "only"
+      ],
+      "lacks": [
+       "what time",
+       "what hour",
+       "around what",
+       "here love"
+      ]
+     }
+    },
+    {
+     "customer": "or a short video? 🙏",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry",
+       "only"
+      ],
+      "lacks": [
+       "what time",
+       "what hour",
+       "around what",
+       "here love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-26",
+   "category": "photos after booking",
+   "steps": [
+    {
+     "customer": "hi, can i come at 21:30? 1 hour",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "great. leaving in 10 min, send me a pic of you on the way? 😏",
+     "booking": "confirmed",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "perfect",
+       "😘"
+      ],
+      "lacks": [
+       "hi my love",
+       "what hour",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "mmm 😍 20 min then",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im parked in front of the building",
+     "booking": "arrived"
+    },
+    {
+     "customer": "code isnt opening",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4o-27",
+   "category": "photos while waiting",
+   "steps": [
+    {
+     "customer": "hi, 1 hour at 20:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what"
+      ]
+     }
+    },
+    {
+     "customer": "actually make it 20:30, and send me a pic of you meanwhile 😊",
+     "booking": "requested",
+     "intent": "book",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time",
+       "around what",
+       "20:30"
+      ]
+     }
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "other time",
+       "another time",
+       "sorry"
+      ],
+      "lacks": [
+       "booked"
+      ]
+     }
+    },
+    {
+     "customer": "hmm ok. 22:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "perfect, on my way in 40 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-01",
+   "category": "photos not sent",
+   "steps": [
+    {
+     "customer": "hi"
+    },
+    {
+     "customer": "can u send a pic of the door or entrance? so i know where to go",
+     "intent": "none",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "arrive",
+       "address",
+       "map",
+       "here",
+       "code",
+       "text me"
+      ]
+     }
+    },
+    {
+     "customer": "ok. and some pics of you then?",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "22:00 then",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "👍",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-02",
+   "category": "photos not sent",
+   "steps": [
+    {
+     "customer": "Hi, are you free tonight?"
+    },
+    {
+     "customer": "before i come i need verification. send a pic holding a paper with my name Marc on it",
+     "intent": "none",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "no",
+       "can't",
+       "only"
+      ],
+      "lacks": [
+       "here love"
+      ]
+     }
+    },
+    {
+     "customer": "ok no problem. can i just see your pics then?",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "21:15?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "i can wait",
+     "booking": "pending"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ]
+     }
+    },
+    {
+     "customer": "22:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok thanks 🙏",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "thank",
+       "❤️",
+       "😘",
+       "see",
+       "perfect"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4s-03",
+   "category": "photos not sent",
+   "steps": [
+    {
+     "customer": "привет, ты свободна сегодня?"
+    },
+    {
+     "customer": "а можно фото подъезда и лестницы? хочу заранее посмотреть",
+     "intent": "none",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "arrive",
+       "address",
+       "map",
+       "here",
+       "code",
+       "text me",
+       "прости",
+       "извини",
+       "не делаю",
+       "не могу",
+       "на месте",
+       "приед",
+       "напиши",
+       "карт",
+       "код"
+      ]
+     }
+    },
+    {
+     "customer": "ок. а твои фотки есть?",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘",
+       "вот",
+       "держи"
+      ]
+     }
+    },
+    {
+     "customer": "20:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "а можно я там сфоткаю тебя? 😏",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ок, выезжаю, буду через 20 минут",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘",
+       "отлично",
+       "хорошо",
+       "супер",
+       "жду",
+       "❤️"
+      ]
+     }
+    },
+    {
+     "customer": "я у подъезда",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-04",
+   "category": "photos not sent",
+   "steps": [
+    {
+     "customer": "hey beautiful"
+    },
+    {
+     "customer": "can i see more of you?",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "wow nice pics 😍",
+     "intent": "none",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "love",
+       "thank",
+       "❤️",
+       "😘",
+       "see",
+       "perfect",
+       "time",
+       "hour"
+      ]
+     }
+    },
+    {
+     "customer": "are those pics recent?",
+     "intent": "none",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "love",
+       "yes",
+       "recent",
+       "me",
+       "❤️",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "ok 23:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "23",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "perfect thanks",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "thank",
+       "❤️",
+       "😘",
+       "see",
+       "perfect"
+      ]
+     }
+    },
+    {
+     "customer": "im here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-05",
+   "category": "photos not sent",
+   "steps": [
+    {
+     "customer": "Hi Nikol, 22:00 tonight?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "can i take some photos of you there? just for me 😏",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "customer": "send me pics while i wait",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "nice 😍 you are gorgeous",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "great 🙏 u didnt answer before, can i take a few pics of u there? 😅",
+     "booking": "confirmed",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "no",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "on my way 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-06",
+   "category": "photos not sent",
+   "steps": [
+    {
+     "customer": "sveika, vai esi brīva šovakar?"
+    },
+    {
+     "customer": "es gribu pārliecināties, ka tu esi īsta. vari atsūtīt foto ar roku pie sejas un uzrakstītu manu vārdu uz lapas?",
+     "intent": "none",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "no",
+       "can't",
+       "atvainojos",
+       "piedod",
+       "nedaru",
+       "nevaru"
+      ],
+      "lacks": [
+       "here love"
+      ]
+     }
+    },
+    {
+     "customer": "labi. vari atsūtīt savas bildes?",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘",
+       "lūdzu",
+       "te",
+       "šeit",
+       "mīļ"
+      ]
+     }
+    },
+    {
+     "customer": "19:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "nu kā, 19:00 der? 🙏",
+     "booking": "pending"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ]
+     }
+    },
+    {
+     "customer": "20:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "labi, braucu, būšu pēc 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘",
+       "labi",
+       "lieliski",
+       "gaidu"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4s-07",
+   "category": "photos not sent",
+   "steps": [
+    {
+     "customer": "hi, send pics?",
+     "photos": true
+    },
+    {
+     "customer": "wow 😍 can u also send a pic of the house from the street so the taxi finds it?",
+     "intent": "none",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "arrive",
+       "address",
+       "map",
+       "here",
+       "code",
+       "text me"
+      ]
+     }
+    },
+    {
+     "customer": "ok. 22:30 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok leaving in a sec, 20 min by car",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "almost there. can u send a pic of the door so i find it?",
+     "booking": "confirmed",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "arrive",
+       "address",
+       "map",
+       "here",
+       "code",
+       "text me"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-08",
+   "category": "photos not sent",
+   "steps": [
+    {
+     "customer": "21:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok, heading out now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "here now",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which door? can u send a pic of the entrance and the stairs",
+     "booking": "way_in_sent",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "code",
+       "floor",
+       "flat",
+       "above",
+       "message",
+       "come up"
+      ]
+     }
+    },
+    {
+     "customer": "ok found it, coming up 🙏",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "love",
+       "😘",
+       "❤️",
+       "see",
+       "come",
+       "up",
+       "wait",
+       "perfect",
+       "ok"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4s-09",
+   "category": "under 18",
+   "steps": [
+    {
+     "customer": "hi im 17, can i see your pics?",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry"
+      ],
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "here love"
+      ]
+     }
+    },
+    {
+     "customer": "pls just one photo, i wont tell anyone",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry"
+      ],
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "here love"
+      ]
+     }
+    },
+    {
+     "customer": "i can pay cash, 22:00 ok?",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry"
+      ],
+      "lacks": [
+       "booked",
+       "text me 15",
+       "what hour",
+       "here love"
+      ]
+     }
+    },
+    {
+     "customer": "fine, can i at least see the pics? 🥺",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry"
+      ],
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "here love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4s-10",
+   "category": "under 18",
+   "steps": [
+    {
+     "customer": "привет, мне 16, скинь фотки",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry",
+       "взросл",
+       "совершеннолет"
+      ],
+      "lacks": [
+       "what hour",
+       "what time",
+       "here love"
+      ]
+     }
+    },
+    {
+     "customer": "ну пожалуйста, хоть одну",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry",
+       "взросл",
+       "совершеннолет"
+      ],
+      "lacks": [
+       "what hour",
+       "what time",
+       "here love"
+      ]
+     }
+    },
+    {
+     "customer": "я могу заплатить, сколько стоит час?",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry",
+       "взросл",
+       "совершеннолет"
+      ],
+      "lacks": [
+       "200",
+       "100"
+      ]
+     }
+    },
+    {
+     "customer": "ладно, тогда просто фото подъезда, чтобы знать куда идти",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "adult",
+       "18",
+       "sorry",
+       "взросл",
+       "совершеннолет"
+      ],
+      "lacks": [
+       "what hour",
+       "what time",
+       "here love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4s-11",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "good evening 🙂"
+    },
+    {
+     "customer": "i'd like to come at 22:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "great thanks. before i come can u send a pic? pls",
+     "booking": "confirmed",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "text me 15"
+      ]
+     }
+    },
+    {
+     "customer": "thanks 🔥 so pretty",
+     "booking": "confirmed",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "love",
+       "thank",
+       "❤️",
+       "😘",
+       "see",
+       "perfect"
+      ]
+     }
+    },
+    {
+     "customer": "leaving in 10, 15 min to u",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "im outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-12",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "hi, can i come now? free?",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "today"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'm in a taxi, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "send foto while im in the taxi 😅",
+     "booking": "confirmed",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "text me 15"
+      ]
+     }
+    },
+    {
+     "customer": "taxi just dropped me, im outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-13",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "hi, are you free tomorrow evening?"
+    },
+    {
+     "customer": "20:00 tomorrow",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "tomorrow",
+       "20",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "perfect. cant wait till tomorrow 😍 send me some pics to dream about",
+     "booking": "confirmed",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "15 min"
+      ]
+     }
+    },
+    {
+     "customer": "any more? 😏",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "that's all",
+       "all my photos",
+       "in person"
+      ]
+     }
+    },
+    {
+     "customer": "ok see you tomorrow 😘",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "thank",
+       "❤️",
+       "😘",
+       "see",
+       "perfect"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4s-14",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "hi, 21:00 tonight?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "sorry, something came up, i cant come tonight",
+     "booking": "cancelled_news",
+     "state_note": "confirmed",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "text me",
+       "another time",
+       "ok",
+       "love"
+      ],
+      "lacks": [
+       "15 min"
+      ]
+     }
+    },
+    {
+     "customer": "tomorrow 20:00 instead?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "send me some pics while i wait, pls",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "tomorrow",
+       "20",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "thanks love, see u tomorrow",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "thank",
+       "❤️",
+       "😘",
+       "see",
+       "perfect"
+      ]
+     }
+    },
+    {
+     "customer": "any more pix? 😅",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "that's all",
+       "all my photos",
+       "in person"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4s-15",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "привет, можно сегодня в 22:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "алло, ты тут?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "супер, спасибо. скинь фото пожалуйста",
+     "booking": "confirmed",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘",
+       "вот",
+       "держи"
+      ],
+      "lacks": [
+       "booked",
+       "text me 15"
+      ]
+     }
+    },
+    {
+     "customer": "красивая 😍",
+     "booking": "confirmed",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "love",
+       "thank",
+       "❤️",
+       "😘",
+       "see",
+       "спасибо",
+       "жду"
+      ]
+     }
+    },
+    {
+     "customer": "еду к тебе, минут 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘",
+       "отлично",
+       "хорошо",
+       "супер",
+       "жду",
+       "❤️"
+      ]
+     }
+    },
+    {
+     "customer": "я на месте, внизу",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-16",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "sveiki! vai šovakar vari satikties? plkst 20:00",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "atsūti lūdzu foto",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘",
+       "lūdzu",
+       "te",
+       "šeit",
+       "mīļ"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20",
+       "15",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "paldies, tu esi skaista 😍",
+     "booking": "confirmed",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "love",
+       "thank",
+       "❤️",
+       "😘",
+       "see",
+       "perfect",
+       "paldies"
+      ]
+     }
+    },
+    {
+     "customer": "izbraucu, pēc 15 min būšu",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘",
+       "labi",
+       "lieliski",
+       "gaidu"
+      ]
+     }
+    },
+    {
+     "customer": "esmu klāt",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-17",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "hey, got any pix?",
+     "photos": true
+    },
+    {
+     "customer": "damn. ok 22:15?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "nice pix btw 😏",
+     "booking": "pending",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "omw 🚗 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "outside, at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-18",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "hey u there?"
+    },
+    {
+     "customer": "pics pls, wanna see before i decide",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "damn 🔥 ok 21:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "any more foto? 😏",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "tnx. any more pix? 😅",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "that's all",
+       "all my photos",
+       "in person"
+      ]
+     }
+    },
+    {
+     "customer": "ok leaving now, be there in 20",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-19",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "hi, can i come at 22:00? and send pics pls",
+     "booking": "requested",
+     "intent": "book",
+     "photos": true,
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "perfect. can you send one more selfie? im impatient",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "that's all",
+       "all my photos",
+       "in person"
+      ]
+     }
+    },
+    {
+     "customer": "taxi, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "here, at the entrance",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-20",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "hi"
+    },
+    {
+     "customer": "23:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "can i see u first? 😏",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "23",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok going now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "im at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-21",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "привет, сегодня в 21:00 можно?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "а можно сдвинуть на 22:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "скинь фото пока жду, пожалуйста",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘",
+       "вот",
+       "держи"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ок, выезжаю, 15 минут",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘",
+       "отлично",
+       "хорошо",
+       "супер",
+       "жду",
+       "❤️"
+      ]
+     }
+    },
+    {
+     "customer": "я приехал, у двери",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-22",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "can i come at 22:00? 🙏",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ]
+     }
+    },
+    {
+     "customer": "damn ok. can u send a pic anyway? 😅",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "23:30 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "tnx for the pics 😍",
+     "booking": "pending",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "23",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "perfect. in the car, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "parked outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-23",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "hi, can u come to radisson tonight at 23:00?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "how do u look? send smth",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "23",
+       "address",
+       "there"
+      ]
+     }
+    },
+    {
+     "customer": "room 714, 7th floor",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you",
+       "23",
+       "love",
+       "😘",
+       "ok"
+      ]
+     }
+    },
+    {
+     "customer": "and one more pic while i wait for u? 😏",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "that's all",
+       "all my photos",
+       "in person",
+       "here",
+       "love",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "ok see u at 23 🔥",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "thank",
+       "❤️",
+       "😘",
+       "see",
+       "perfect"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4s-24",
+   "category": "photos not sent",
+   "steps": [
+    {
+     "customer": "hey, 22:00 free?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "pics? 🙏",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked",
+       "confirmed",
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "nice 😍 can u do one blowing me a kiss, just for me?",
+     "booking": "confirmed",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "that's all",
+       "in person",
+       "no",
+       "can't"
+      ]
+     }
+    },
+    {
+     "customer": "ok ok. quick video call then? 1 min just to be sure",
+     "booking": "confirmed",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "voice",
+       "sorry",
+       "don't",
+       "no",
+       "in person",
+       "can't"
+      ]
+     }
+    },
+    {
+     "customer": "fine 😅 leaving, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "im downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-25",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "hey, is 69 included? and got pics?",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "69",
+       "50",
+       "hour",
+       "time"
+      ]
+     }
+    },
+    {
+     "customer": "cool. u look the same in person? no surprises 😄",
+     "intent": "none",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "yes",
+       "same",
+       "love",
+       "person",
+       "😘",
+       "time",
+       "hour",
+       "me"
+      ]
+     }
+    },
+    {
+     "customer": "ok 21:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "whats the address again? didnt save it",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "great. and the address pls? i asked before",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘",
+       "above"
+      ]
+     }
+    },
+    {
+     "customer": "in a bolt, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘"
+      ]
+     }
+    },
+    {
+     "customer": "just parked outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "p4s-26",
+   "category": "photos not sent",
+   "steps": [
+    {
+     "customer": "čau, vai šovakar 19:00 var?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "atsūti bildi ar māju, lai zinu, kur braukt",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "19",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "paldies 🙏 un to mājas foto vari? lai taksis atrod",
+     "booking": "confirmed",
+     "photos": false,
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "arrive",
+       "address",
+       "map",
+       "here",
+       "code",
+       "text me",
+       "piedod",
+       "nedaru",
+       "nevaru",
+       "kart",
+       "adres"
+      ]
+     }
+    },
+    {
+     "customer": "labi. braucu, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "love",
+       "ok",
+       "😘",
+       "labi",
+       "lieliski",
+       "gaidu"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie mājas",
+     "booking": "arrived"
+    },
+    {
+     "customer": "kurš stāvs? un kods?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "code",
+       "floor",
+       "flat",
+       "above",
+       "message",
+       "come up",
+       "stāv",
+       "kods",
+       "augš",
+       "ziņ"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "p4s-27",
+   "category": "photos at any point",
+   "steps": [
+    {
+     "customer": "hi, 20:00 tonight ok?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "stuck in traffic, gonna be 20 min late, still ok?",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "love",
+       "😘",
+       "fine"
+      ]
+     }
+    },
+    {
+     "customer": "ok thx. send a pic meanwhile so i dont fall asleep in this jam 😅",
+     "booking": "confirmed",
+     "photos": true,
+     "expect": {
+      "has_any": [
+       "here",
+       "love",
+       "😘"
+      ],
+      "lacks": [
+       "booked"
+      ]
+     }
+    },
+    {
+     "customer": "finally. im outside ur building",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which entrance? there are two",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "code",
+       "floor",
+       "flat",
+       "above",
+       "message",
+       "come up"
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

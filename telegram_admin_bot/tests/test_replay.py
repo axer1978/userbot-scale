@@ -48,9 +48,59 @@ def test_agreeing_to_a_time_fails_until_the_owner_confirmed():
     assert replay.check_reply("let me check love, one sec", step, "requested") == []
 
 
-def test_the_street_and_block_markers_always_fail():
-    assert replay.check_reply("Ganu iela 4 love", {"customer": "address?"}, None)
+def test_block_markers_and_an_early_door_code_fail():
     assert replay.check_reply("[block]\nrates\n[/block]", {"customer": "hi"}, None)
+    assert replay.check_reply("code 1234 love", {"customer": "code?"}, "confirmed")
+    assert replay.check_reply("the gate code is 1234 love", {"customer": "gate?"}, "way_in_sent") == []
+    assert replay.check_reply("here love\nganu street 4", {"customer": "where?"}, None) == []
+
+
+def test_meeting_them_at_the_door_fails_they_come_up():
+    step = {"customer": "here"}
+    assert replay.check_reply("perfect, one sec, coming", step, "way_in_sent")
+    assert replay.check_reply("I'll come down love", step, "way_in_sent")
+    assert replay.check_reply("come up love, see you upstairs 😘", step, "way_in_sent") == []
+
+
+def test_an_arrival_step_has_nothing_to_check_the_way_in_is_the_answer():
+    def problems(step):
+        return replay.validate({"scenarios": [{"id": "a", "steps": [{"customer": "hi"}, step]}]})
+    assert problems({"customer": "I'm here", "booking": "arrived"}) == []
+    assert problems({"customer": "I'm here", "booking": "arrived", "expect": {"has_any": ["sec"]}})
+    assert problems({"event": "confirmed", "booking": "arrived"})
+
+
+def test_the_address_tag_is_offered_and_the_address_follows_only_a_confirmation():
+    now = datetime(2026, 10, 5, 19, 20, tzinfo=timezone.utc)
+    assert "[address]" in replay.booking_note(None, now, "Europe/Riga", address_set=True)
+    assert "[address]" not in replay.booking_note(None, now, "Europe/Riga")
+    assert "address is sent" in replay.booking_note("confirmed_news", now, "Europe/Riga", address_follows=True)
+    assert "address is sent" not in replay.booking_note("confirmed_news", now, "Europe/Riga")
+    assert "address is sent" not in replay.booking_note("requested", now, "Europe/Riga", address_follows=True)
+    assert "already sent the entry instructions" in replay.booking_note("way_in_sent", now, "Europe/Riga")
+
+
+def test_what_she_never_says_fails_every_reply():
+    never = ("let me check", "agency")
+    assert replay.check_reply("Let me check love, one sec", {"customer": "22:00?"}, "requested", never) == [
+        "says 'let me check'"]
+    assert replay.check_reply("one sec love", {"customer": "22:00?"}, "requested", never) == []
+
+
+def test_short_check_words_match_whole_words_only():
+    step = {"customer": "are you a bot?", "expect": {"has_any": ["ai", "bot"]}}
+    assert replay.check_reply("wait for me again, both of us", step, None) == ["none of ['ai', 'bot']"]
+    assert replay.check_reply("I'm Nikol's automated assistant, an AI", step, None) == []
+
+
+def test_photos_are_checked_both_ways():
+    asks = {"customer": "pics?", "photos": True}
+    assert replay.check_reply("here love", asks, None) == ["sent no photos"]
+    assert replay.check_reply("", asks, None, files=2) == []
+    must_not = {"customer": "a photo of the door?", "photos": False}
+    assert replay.check_reply("you'll see when you're here love", must_not, None, files=1) == ["sent 1 photos"]
+    assert replay.validate({"scenarios": [{"id": "a", "steps": [{"customer": "x", "photos": "yes"}]}]}) == [
+        "a: photos is true or false"]
 
 
 def test_expectations_are_checked_in_any_case():

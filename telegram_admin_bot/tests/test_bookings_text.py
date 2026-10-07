@@ -175,3 +175,14 @@ def test_the_reply_is_always_told_only_the_owner_confirms():
     # Even with nothing booked yet, the reply may not say "booked".
     text = bookings.context_for_reply([])
     assert text.startswith("APPOINTMENTS:") and bookings.ONLY_OWNER_CONFIRMS_RULE in text
+
+
+def test_the_address_goes_where_the_reply_wrote_the_tag_as_a_message_of_its_own():
+    reply = "hi love\n[block]\nRATES\n[/block]\n[address]"
+    filled = bookings.fill_address(reply, "Brivibas iela 1, Riga")
+    assert filled == "hi love\n[block]\nRATES\n[/block]\n[block]\nBrivibas iela 1, Riga\n[/block]"
+    # Any spelling of the tag, once per reply; without an address it is dropped.
+    assert bookings.fill_address("here love [ Address ] [address]", "X").count("X") == 1
+    assert bookings.fill_address("here love\n[address]", "") == "here love"
+    assert bookings.fill_address("no tag here", "X") == "no tag here"
+    assert bookings.take_address_tag("hi\n[address]\nwhat time?") == ("hi\n\nwhat time?", True)
