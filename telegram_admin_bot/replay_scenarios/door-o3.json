@@ -2234,7 +2234,8 @@
     {
      "customer": "send some pics while i wait",
      "booking": "pending",
-     "intent": "none"
+     "intent": "none",
+     "photos": true
     },
     {
      "event": "confirmed",
@@ -4535,7 +4536,8 @@
     {
      "customer": "send a pic of the building so i recognise it",
      "booking": "pending",
-     "intent": "none"
+     "intent": "none",
+     "photos": false
     },
     {
      "event": "confirmed",
@@ -4572,7 +4574,8 @@
        "white building",
        "grey building"
       ]
-     }
+     },
+     "photos": false
     },
     {
      "customer": "ok fine, the taxi will find it. 15 min",

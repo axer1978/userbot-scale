@@ -5084,7 +5084,8 @@
     {
      "customer": "can i see more pics?",
      "intent": "none",
-     "expect": {}
+     "expect": {},
+     "photos": true
     },
     {
      "customer": "video?",
@@ -6510,6 +6511,10 @@
   "i will ask",
   "my manager",
   "the agency",
-  "our girls"
+  "our girls",
+  "check with",
+  "i'll check",
+  "i will check",
+  "let you know"
  ]
 }

@@ -286,7 +286,8 @@
        "what time",
        "when"
       ]
-     }
+     },
+     "photos": true
     },
     {
      "customer": "nice 😍 when can i come?",
@@ -3692,7 +3693,8 @@
        "person",
        "see"
       ]
-     }
+     },
+     "photos": true
     },
     {
      "customer": "ok 22:00?",

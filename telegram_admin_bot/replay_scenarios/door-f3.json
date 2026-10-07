@@ -2656,7 +2656,8 @@
     {
      "customer": "could you send a pic while i wait?",
      "booking": "pending",
-     "intent": "none"
+     "intent": "none",
+     "photos": true
     },
     {
      "event": "confirmed",
@@ -5656,7 +5657,8 @@
        "voice message",
        "text me"
       ]
-     }
+     },
+     "photos": true
     },
     {
      "customer": "i want to see your energy first, can we video call?",

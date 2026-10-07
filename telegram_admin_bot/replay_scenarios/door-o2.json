@@ -4133,7 +4133,8 @@
        "here is a photo",
        "here's the entrance"
       ]
-     }
+     },
+     "photos": false
     },
     {
      "customer": "fine, heading over, 15ish",

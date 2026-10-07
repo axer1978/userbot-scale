@@ -93,6 +93,16 @@ def test_short_check_words_match_whole_words_only():
     assert replay.check_reply("I'm Nikol's automated assistant, an AI", step, None) == []
 
 
+def test_photos_are_checked_both_ways():
+    asks = {"customer": "pics?", "photos": True}
+    assert replay.check_reply("here love", asks, None) == ["sent no photos"]
+    assert replay.check_reply("", asks, None, files=2) == []
+    must_not = {"customer": "a photo of the door?", "photos": False}
+    assert replay.check_reply("you'll see when you're here love", must_not, None, files=1) == ["sent 1 photos"]
+    assert replay.validate({"scenarios": [{"id": "a", "steps": [{"customer": "x", "photos": "yes"}]}]}) == [
+        "a: photos is true or false"]
+
+
 def test_expectations_are_checked_in_any_case():
     step = {"customer": "kiss?", "expect": {"has_all": ["Kissing"], "has_any": ["50", "fifty"], "lacks": ["SORRY"]}}
     assert replay.check_reply("kissing is +50 love", step, None) == []

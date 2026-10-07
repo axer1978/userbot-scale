@@ -2645,7 +2645,8 @@
     {
      "customer": "send me one more pic while i wait? 😏",
      "booking": "pending",
-     "intent": "none"
+     "intent": "none",
+     "photos": true
     },
     {
      "customer": "hello",
@@ -4137,7 +4138,8 @@
        "only",
        "no photo"
       ]
-     }
+     },
+     "photos": false
     },
     {
      "customer": "ok no photos. now? i'm close",

@@ -3664,7 +3664,8 @@
    "steps": [
     {
      "customer": "hiii 😍 send pics?",
-     "intent": "none"
+     "intent": "none",
+     "photos": true
     },
     {
      "customer": "mmm nice. one more in lingerie pls 🙏",
@@ -4425,14 +4426,18 @@
        "when",
        "hour",
        "voice",
-       "see"
+       "see",
+       "sorry",
+       "don't",
+       "dont"
       ],
       "lacks": [
        "here you go",
        "ok i send",
        "ok i'll do"
       ]
-     }
+     },
+     "photos": false
     },
     {
      "customer": "cops always refuse that lol. so ur a cop",
