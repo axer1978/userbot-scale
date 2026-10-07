@@ -363,8 +363,11 @@ EXTRACT_SYSTEM_PROMPT = (
     "ok?', 'hello?'), thanks, a plain 'ok', or a question with no time in it. "
     "A length alone ('1 hour?', '30 min incall?') is not a time. A time "
     "already in 'Their bookings' is never a new request unless they ask to "
-    "change it. A message that does name a time ('tonight 22:00 ok?', "
-    "'tomorrow at 14:00?') is book, question mark or not.\n"
+    "change it: their latest message following up on a request that is "
+    "already there (a nudge, a question, thanks, 'already on my way') is none, "
+    "also when the request was 'now' or 'in 30 min'. A message that does name "
+    "a time ('tonight 22:00 ok?', 'tomorrow at 14:00?') is book, question mark "
+    "or not.\n"
     "outcall: true when they want the business to come to them (their hotel, "
     "their place, 'outcall'), false otherwise.\n"
     "Resolve relative dates from the current date and time given; an offset "
@@ -377,12 +380,14 @@ EXTRACT_SYSTEM_PROMPT = (
 
 
 def extraction_prompt(
-    transcript: str, tz_name: str, now: Optional[datetime] = None, state_note: str = "",
+    transcript: str, tz_name: str, now: Optional[datetime] = None, state_note: str = "", latest: str = "",
 ) -> str:
     now = now or datetime.now(tzinfo_for(tz_name))
     parts = [f"Current date and time: {now:%A %Y-%m-%d %H:%M} ({tz_name})."]
     parts.append("Their bookings: " + (state_note or "none."))
     parts.append("Conversation, oldest first:\n\n" + transcript)
+    if latest:
+        parts.append("\nTheir latest message, the one to decide on: " + " ".join(latest.split()))
     return "\n".join(parts)
 
 

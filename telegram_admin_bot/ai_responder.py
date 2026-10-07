@@ -624,6 +624,7 @@ async def extract_booking(
     transcript = render_transcript(history)
     if not transcript.strip():
         return None
+    latest = next((m.get("content") or "" for m in reversed(history) if m.get("role") == "user"), "")
     extract_config = {
         **ai_config,
         "max_tokens": 200,
@@ -633,7 +634,8 @@ async def extract_booking(
         api_key=api_key,
         messages=[
             {"role": "system", "content": bookings.EXTRACT_SYSTEM_PROMPT},
-            {"role": "user", "content": bookings.extraction_prompt(transcript, tz_name, state_note=state_note)},
+            {"role": "user", "content": bookings.extraction_prompt(transcript, tz_name, state_note=state_note,
+                                                                   latest=latest)},
         ],
         ai_config=extract_config,
         client=client,
