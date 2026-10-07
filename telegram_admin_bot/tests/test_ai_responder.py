@@ -198,3 +198,9 @@ async def test_a_reply_to_them_ends_with_their_message(monkeypatch):
         {"role": "user", "content": "22:00 ok?"},
     ])
     assert messages[-1] == {"role": "user", "content": "22:00 ok?"}
+
+
+def test_the_no_reply_marker_never_goes_out_as_text():
+    assert ai_responder.is_no_reply(" [no_reply] ")
+    assert ai_responder.without_no_reply("here love 😘|||[NO_REPLY]") == "here love 😘|||"
+    assert ai_responder.split_burst(ai_responder.without_no_reply("here love 😘|||[NO_REPLY]"), 4) == ["here love 😘"]

@@ -226,6 +226,58 @@ async def test_quiet_until_answered_says_nothing_until_the_owner_answers(world):
     assert "has just been CONFIRMED" in w.script["notes"][-1]
 
 
+async def test_quiet_until_answered_still_sends_photos_they_ask_for(world, monkeypatch):
+    w = world
+    w.app.config["booking"]["quiet_until_answered"] = True
+    library = w.app.media_library
+    library.dir.mkdir(parents=True, exist_ok=True)
+    (library.dir / "me.jpg").write_bytes(b"\xff\xd8\xff me")
+    photo = library.add_file("me.jpg", "me in a red dress")
+    files = []
+    file_ids = iter(range(9000, 9100))
+
+    async def fake_deliver_file(peer, chat_id, item, path):
+        files.append(item["id"])
+        return SimpleNamespace(id=next(file_ids))
+
+    check = {"says": False, "calls": 0}
+
+    async def fake_photo_check(**kw):
+        check["calls"] += 1
+        return check["says"]
+
+    monkeypatch.setattr(w.app, "deliver_file", fake_deliver_file)
+    monkeypatch.setattr(ai_responder, "extract_photo_request", fake_photo_check)
+    w.script["reply"] = "hi love, prices"
+    await customer(w, "hi")
+    await customer(w, "tomorrow at 15?", book())
+    calls = w.script["calls"]
+
+    # Talk that only mentions photos waits like anything else, unchecked.
+    await customer(w, "nice pics 😍")
+    assert check["calls"] == 0 and files == []
+
+    # The photo check says it is no request for her photos: nothing.
+    await customer(w, "a pic of the building?")
+    assert check["calls"] == 1 and files == [] and w.sent[CUSTOMER] == ["hi love, prices"]
+
+    # It says it is: the photos he has not had go out on their own, with
+    # no text and no reply written.
+    check["says"] = True
+    await customer(w, "can I see a photo first?")
+    assert files == [photo["id"]] and w.sent[CUSTOMER] == ["hi love, prices"]
+    assert w.script["calls"] == calls
+
+    # Once he has had them all, nothing more goes out while it waits.
+    await customer(w, "more pics?")
+    assert check["calls"] == 2 and files == [photo["id"]]
+
+    # The owner's answer still comes next.
+    w.script["reply"] = "yes love, booked for tomorrow 15:00"
+    await owner(w, "YES 1")
+    assert w.sent[CUSTOMER][-1] == "yes love, booked for tomorrow 15:00"
+
+
 async def test_quiet_until_answered_still_answers_a_first_message_with_a_time(world):
     w = world
     w.app.config["booking"]["quiet_until_answered"] = True

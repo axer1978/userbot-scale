@@ -478,6 +478,15 @@ def is_no_reply(text: str) -> bool:
     return (text or "").strip().strip("`\"'").upper().startswith(NO_REPLY_MARKER)
 
 
+_NO_REPLY_ANYWHERE = re.compile(re.escape(NO_REPLY_MARKER), re.IGNORECASE)
+
+
+def without_no_reply(text: str) -> str:
+    """A reply that also carries the marker (say, as a second message of the
+    burst): the marker is taken out, it never goes out as text."""
+    return _NO_REPLY_ANYWHERE.sub("", text or "").strip()
+
+
 async def generate_opener(
     *,
     api_key: str,
@@ -669,6 +678,33 @@ async def extract_arrival(
         **_sink(usage_sink),
     )
     return bookings.parse_arrival(text)
+
+
+async def extract_photo_request(
+    *,
+    api_key: str,
+    history: list[dict[str, str]],
+    ai_config: dict[str, Any],
+    client: Optional[httpx.AsyncClient] = None,
+    usage_sink: Optional[UsageSink] = None,
+) -> bool:
+    """Whether the client's messages since our last one ask to see our photos."""
+    import media
+
+    transcript = render_transcript(history[-8:])
+    if not transcript.strip():
+        return False
+    text = await _complete(
+        api_key=api_key,
+        messages=[
+            {"role": "system", "content": media.PHOTO_REQUEST_SYSTEM_PROMPT},
+            {"role": "user", "content": "Conversation, oldest first:\n\n" + transcript},
+        ],
+        ai_config={**ai_config, "max_tokens": 30, "temperature": 0.0},
+        client=client,
+        **_sink(usage_sink),
+    )
+    return media.parse_photo_request(text)
 
 
 async def _complete(

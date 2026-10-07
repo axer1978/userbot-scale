@@ -343,7 +343,7 @@ def prompt_section(items: list[dict[str, Any]], ask_before_video: bool = True) -
         f"{MAX_ATTACHMENTS_PER_REPLY} per reply. The history shows which ones "
         "you have already sent as [sent photo #N: ...] — that is a record, "
         "never write it yourself; to send a file again use its [send N] tag. "
-        "Do not send the same file again unless they ask for it once more. "
+        "Never send a file they already have, unless they ask for that same one again. "
         "If nothing you have "
         "matches what they want, say so naturally instead of sending something "
         "else. Never mention tags, files, or a library — to them it is just "
@@ -372,3 +372,76 @@ def split_attachments(text: str) -> tuple[str, list[int]]:
     # A tag torn out of the middle of a line leaves a double space behind.
     cleaned = "\n".join(_TAG_GAP.sub(" ", line).strip() for line in cleaned.splitlines())
     return cleaned.strip(), ids[:MAX_ATTACHMENTS_PER_REPLY]
+
+
+# ------------------------------------------------------------- photos while quiet
+
+# A message that may be asking to see photos: a photo word and a word that
+# asks. Only a first sieve — the photo check (PHOTO_REQUEST_SYSTEM_PROMPT)
+# decides.
+_PHOTO_WORD = re.compile(
+    r"(?i)(photo|\bpics?\b|\bpix\b|picture|selfie|\bfoto|фото|фотк|fotogr|attēl|bild|video|видео"
+    r"|\b(you|u) look\b|look like|выгляд|покажи себя|покажись|izskat"
+    # "can I see you first?", not "see you soon"
+    r"|\b(see|show)( me)? (you|u|yourself)\b(?! (soon|then|later|there|tonight|tomorrow|at)))"
+)
+_ASK_WORD = re.compile(
+    r"(?i)(\?|\b(send|show|see|have|got|share|more|another|other|any|new|pls|plz|please|can|could|"
+    r"want|wanna|give|drop|let me|how)\b|скин|пришли|присл|покажи|отправ|есть|ещё|еще|как|sūti|parād|vēl"
+    r"|\bir\b|kā)"
+)
+
+PHOTO_REQUEST_SYSTEM_PROMPT = (
+    "You read the end of a private chat between a business ('me') and a "
+    "customer ('them'). Decide whether any of the customer's messages after my "
+    "last message asks to see photos or a video of me — for example 'pics?', "
+    "'send a photo', 'a selfie?', 'how do you look?', 'one more pic while I "
+    "wait', 'скинь фото', 'atsūti bildi'. It is NOT such a request when the "
+    "photo is of something else (the building, the entrance, the door, the "
+    "stairs), when it is a photo made just for them (holding their name or a "
+    "date, a pose, what I will wear), when they only comment on or ask about "
+    "photos they have seen ('nice pics', 'are those recent?', 'is that really "
+    "you?'), or when they want to take photos themselves. Answer with a single "
+    'JSON object and nothing else: {"photos": true|false}'
+)
+
+_SENT = re.compile(r"\[sent (?:photo|video) #(\d+)", re.IGNORECASE)
+
+
+def unsent(items: list[dict[str, Any]], history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The items the chat does not show as sent ([sent photo #N: ...])."""
+    had = {int(n) for message in history if message.get("role") == "assistant"
+           for n in _SENT.findall(message.get("content") or "")}
+    return [item for item in items if item["id"] not in had]
+
+
+def parse_photo_request(text: str) -> bool:
+    match = re.search(r"\{.*\}", (text or "").strip(), re.DOTALL)
+    if not match:
+        return False
+    try:
+        return bool(json.loads(match.group(0)).get("photos"))
+    except (json.JSONDecodeError, AttributeError):
+        return False
+
+
+def asks_for_photos(text: str) -> bool:
+    """Whether a message might be asking to see photos (or a video)."""
+    text = text or ""
+    return bool(_PHOTO_WORD.search(text) and _ASK_WORD.search(text))
+
+
+def latest_from_them(history: list[dict[str, Any]]) -> list[str]:
+    """Their messages since our last one, oldest first."""
+    tail: list[str] = []
+    for message in reversed(history):
+        if message.get("role") != "user":
+            break
+        tail.append(message.get("content") or "")
+    return tail[::-1]
+
+
+def they_ask_for_photos(history: list[dict[str, Any]]) -> bool:
+    """Whether one of their messages since our last one may ask for photos —
+    each on its own: "22:00?" and then "nice pics" is no request."""
+    return any(asks_for_photos(text) for text in latest_from_them(history))
