@@ -1,0 +1,5847 @@
+{
+ "every_chat_sends": {
+  "rates message": "1 time 💦💦\n30 minutes 100 euro\n\n2 times 💦💦\n1 hour 200 euro\nIncall 200\nOutcall 200+ 🚕\n\nBest company in Latvia 🇱🇻🔥",
+  "extras message": "Kissing +50\nUnprotected oral sex/OWP +50\nDomination +50\nRole-play +50\nThreesome (with a couple) +100\n69 +50"
+ },
+ "except_categories": [
+  "under 18"
+ ],
+ "never_says": [
+  "let me check",
+  "checking",
+  "i'll ask",
+  "i will ask",
+  "my manager",
+  "the agency",
+  "our girls"
+ ],
+ "scenarios": [
+  {
+   "id": "f3-01",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "evening nikol, could i come by at 21:30 tonight? one hour",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "21:30"
+      ]
+     }
+    },
+    {
+     "customer": "ok no rush, i'll wait for your answer 🙂",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:30"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "great, leaving in 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im downstairs",
+     "booking": "arrived"
+    },
+    {
+     "customer": "the lift is out of order, which floor was it?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-02",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi, do you do 30 min?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "ok cool, 20:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok on my way, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok im at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-03",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey nikol 🙂 are you free tonight?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "22:00 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "ok and the hour is 200 right?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "22:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "perfect, taxi in 10",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im at the entrance",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which floor was it?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-04",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi love, can i come at 19:30?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "19:30"
+      ]
+     }
+    },
+    {
+     "customer": "hello??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ok i'll find another girl then",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "19:30"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "oh ok. fine, still coming. 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "just got here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-05",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi there",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "is 21:00 tonight possible?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "actually can we make it 21:30? traffic",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:30"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "on the way",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "outside the building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-06",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi, are you working today?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "1 hour at 20:30 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "so?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "forget it, something came up, can't come tonight",
+     "booking": "cancelled_news",
+     "state_note": "pending",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "no worries",
+       "another time",
+       "next time",
+       "text me",
+       "of course",
+       "it's ok",
+       "its ok",
+       "that's ok",
+       "okay love",
+       "ok love"
+      ]
+     }
+    },
+    {
+     "customer": "ok thanks, maybe tomorrow 20:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "tomorrow",
+       "20:30"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-07",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hello, can i come today?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "18:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "doesn't work",
+       "doesnt work",
+       "other time",
+       "another"
+      ],
+      "lacks": [
+       "booked",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "ok, 19:30 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "19:30"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "coming, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im here, in front of the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-08",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "добрый вечер) хотел бы прийти сегодня в 20:00, на час",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "20:00"
+      ]
+     }
+    },
+    {
+     "customer": "хорошо, жду ответа, не тороплюсь",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:00",
+       "заброни",
+       "подтвер",
+       "записа",
+       "жду",
+       "хорошо",
+       "договор"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "выезжаю, буду через 15 мин",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "супер",
+       "понял"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "я внизу у двери",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-09",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "sveiki, vai šovakar 21:00 ir brīvs? uz stundu",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "21:00"
+      ]
+     }
+    },
+    {
+     "customer": "??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "vai ir ok vai nav?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:00",
+       "rezerv",
+       "apstiprin",
+       "gaidu",
+       "labi",
+       "pierakst"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "izbraucu, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "lieliski",
+       "cik",
+       "gaidu",
+       "labi",
+       "super",
+       "mīļ",
+       "ok"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "esmu lejā",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-10",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey nikol 🙂 do you take cash only or card as well?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ],
+      "has_all": [
+       "cash"
+      ]
+     }
+    },
+    {
+     "customer": "ok. 23:00 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "no rush, just let me know",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "23:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "made it, standing outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-11",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey, how far are you from the old town?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ],
+      "lacks": [
+       "km",
+       "meters",
+       "metres",
+       "min walk",
+       "minutes walk",
+       "min from",
+       "minutes from",
+       "tram",
+       "trolley",
+       "next to",
+       "near the old town",
+       "close to the old town",
+       "in the old town"
+      ]
+     }
+    },
+    {
+     "customer": "ok. 20:00 tonight, 30 min?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "is there a bus or tram near you?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "walking, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im outside",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which entrance?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-12",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey nikol, are you there?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "can i come now? im close",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "customer": "u there?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok 5 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here, at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-13",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "yo, when are you free today?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "22:30 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "is it ok or not? i dont have all night",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "doesn't work",
+       "doesnt work",
+       "other time",
+       "another"
+      ],
+      "lacks": [
+       "booked",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "pff ok. 23:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "23:30"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "fine. in the taxi",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "arrived",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-14",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi nikol, how are you?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "good 🙂 can i come at 21:00 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "take your time, no hurry",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok leaving now",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here, 5 min early hope that's ok",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-15",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "здравствуйте",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "во сколько",
+       "когда",
+       "к скольки",
+       "в какое время",
+       "в котором часу",
+       "какое время",
+       "примерно во",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "сегодня в 19:00 можно?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "ну что?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "извините, не получится сегодня, отменяю",
+     "booking": "cancelled_news",
+     "state_note": "pending",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "no worries",
+       "another time",
+       "next time",
+       "text me",
+       "of course",
+       "it's ok",
+       "its ok",
+       "that's ok",
+       "okay love",
+       "ok love",
+       "без проблем",
+       "ничего",
+       "напиши",
+       "другой раз",
+       "ладно",
+       "хорошо",
+       "не страшно"
+      ]
+     }
+    },
+    {
+     "customer": "а завтра в 19:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "19:00",
+       "заброни",
+       "подтвер",
+       "записа",
+       "жду",
+       "хорошо",
+       "договор"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "уже еду, минут 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "супер",
+       "понял"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "я у подъезда",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-16",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "labvakar, vai varētu atnākt 20:30? uz stundu",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "20:30"
+      ]
+     }
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "doesn't work",
+       "doesnt work",
+       "other time",
+       "another",
+       "atvaino",
+       "piedod",
+       "neder",
+       "diemžēl",
+       "cit",
+       "nevaru"
+      ],
+      "lacks": [
+       "booked",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "labi, tad 22:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "22:00",
+       "rezerv",
+       "apstiprin",
+       "gaidu",
+       "labi",
+       "pierakst"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "esmu ceļā, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "lieliski",
+       "cik",
+       "gaidu",
+       "labi",
+       "super",
+       "mīļ",
+       "ok"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie ieejas durvīm",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-17",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "do you do kissing? how much extra?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ],
+      "has_all": [
+       "50"
+      ]
+     }
+    },
+    {
+     "customer": "ok, 21:15 tonight for an hour?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "so with kissing the hour is 250 total?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:15"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok so 250. leaving, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-18",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "привет, в 21:00 свободна?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "21:00"
+      ]
+     }
+    },
+    {
+     "customer": "слушай, давай лучше в 22:00, не успеваю",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "22:00",
+       "заброни",
+       "подтвер",
+       "записа",
+       "жду",
+       "хорошо",
+       "договор"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "выхожу, минут 20",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "супер",
+       "понял"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "я на месте",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-19",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey 🙂",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "20:00 tonight, is that ok?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "ugh meeting overran, 21:00 instead?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im at the building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-20",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi, 22:00 tonight? and how much for 30 min",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "22:00"
+      ]
+     }
+    },
+    {
+     "customer": "ok 100 for 30 min then, thanks",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "22:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "nice. ill be there in 20",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-21",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hello, 1 hour at 19:00 today?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "19:00"
+      ]
+     }
+    },
+    {
+     "customer": "are you there?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "???",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ok i guess you're busy",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "19:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "oh great 😊 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "i'm outside now 🙂",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-22",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey babe, can i come at 21:00? 1 hr",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "21:00"
+      ]
+     }
+    },
+    {
+     "customer": "hello??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "this is taking forever lol",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ok whatever, i found another girl, dont bother",
+     "booking": "cancelled_news",
+     "state_note": "pending",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "no worries",
+       "another time",
+       "next time",
+       "text me",
+       "of course",
+       "it's ok",
+       "its ok",
+       "that's ok",
+       "okay love",
+       "ok love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-23",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "sveiki, vai rīt vakarā esi brīva?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cikos",
+       "kurā laikā",
+       "kad nāc",
+       "kad tu",
+       "kad vēlies",
+       "pulksten",
+       "kādā laikā",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "rīt 18:30 ir iespējams? viena stunda",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "un vai skaidrā naudā? eiro?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "tomorrow",
+       "18:30",
+       "rezerv",
+       "apstiprin",
+       "gaidu",
+       "labi",
+       "pierakst"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "braucu, būšu pēc 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "lieliski",
+       "cik",
+       "gaidu",
+       "labi",
+       "super",
+       "mīļ",
+       "ok"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "esmu klāt, pie durvīm",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-24",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi, saw your ad on euro girls, you look amazing",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ],
+      "lacks": [
+       "euro girls",
+       "eurogirls",
+       "gribu",
+       "http",
+       "www."
+      ]
+     }
+    },
+    {
+     "customer": "yo 23:00 work?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "how long u usually take to answer? just asking",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "k",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "23:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "sweet, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-25",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey nikol, is 30 min incall possible today?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "17:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "doesn't work",
+       "doesnt work",
+       "other time",
+       "another"
+      ],
+      "lacks": [
+       "booked",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "18:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "doesn't work",
+       "doesnt work",
+       "other time",
+       "another"
+      ],
+      "lacks": [
+       "booked",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "ok last try, 20:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "finally 😅 on my way",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "reached, im downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-26",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "čau nikol, vai šovakar 22:15 der? pusstundu",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "22:15"
+      ]
+     }
+    },
+    {
+     "customer": "nu kā, ir ok?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "atvaino, man šodien neizdosies, atceļu",
+     "booking": "cancelled_news",
+     "state_note": "pending",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "no worries",
+       "another time",
+       "next time",
+       "text me",
+       "of course",
+       "it's ok",
+       "its ok",
+       "that's ok",
+       "okay love",
+       "ok love",
+       "nav problēm",
+       "uzraksti",
+       "citu reizi",
+       "nekas",
+       "labi"
+      ]
+     }
+    },
+    {
+     "customer": "bet rīt vakarā var?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cikos",
+       "kurā laikā",
+       "kad nāc",
+       "kad tu",
+       "kad vēlies",
+       "pulksten",
+       "kādā laikā",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "rīt 22:15 var?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "22:15",
+       "rezerv",
+       "apstiprin",
+       "gaidu",
+       "labi",
+       "pierakst"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-27",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi, how much for 1 hour?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ],
+      "has_all": [
+       "200"
+      ]
+     }
+    },
+    {
+     "customer": "ok, can i come now? im 10 min away",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "customer": "??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok coming",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im here 🙂",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-28",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "привет красотка",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "во сколько",
+       "когда",
+       "к скольки",
+       "в какое время",
+       "в котором часу",
+       "какое время",
+       "примерно во",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "сегодня в 23:00 на час получится?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "ау?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ну так да или нет?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ладно, найду другую",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "23:00",
+       "заброни",
+       "подтвер",
+       "записа",
+       "жду",
+       "хорошо",
+       "договор"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ладно, поехал",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "супер",
+       "понял"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "я внизу",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-29",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "добрый вечер, ты принимаешь сегодня?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "во сколько",
+       "когда",
+       "к скольки",
+       "в какое время",
+       "в котором часу",
+       "какое время",
+       "примерно во",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "в 20:30 на полчаса можно?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "а парковка рядом есть?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:30",
+       "заброни",
+       "подтвер",
+       "записа",
+       "жду",
+       "хорошо",
+       "договор"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "уже в машине, минут 20",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "супер",
+       "понял"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "припарковался, стою у подъезда",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-30",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi, 21:15 tonight ok? one hour",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "21:15"
+      ]
+     }
+    },
+    {
+     "customer": "and with role-play it's 250 for the hour, right?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:15"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "cash ready, leaving now",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "at your door 🚪",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-31",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hello nikol, would 22:00 tonight suit you? 1 hour",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "22:00"
+      ]
+     }
+    },
+    {
+     "customer": "could you send a pic while i wait?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "22:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "lovely. 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "at the entrance",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which flat number?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-32",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "labvakar nikol 🙂",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cikos",
+       "kurā laikā",
+       "kad nāc",
+       "kad tu",
+       "kad vēlies",
+       "pulksten",
+       "kādā laikā",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "šovakar 20:00 iespējams? 1h",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "varbūt labāk 21:00, nepaspēju",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:00",
+       "rezerv",
+       "apstiprin",
+       "gaidu",
+       "labi",
+       "pierakst"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "taksis jau ceļā, 15 minūtes",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "lieliski",
+       "cik",
+       "gaidu",
+       "labi",
+       "super",
+       "mīļ",
+       "ok"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "esmu lejā pie durvīm",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-33",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey, free?",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know"
+      ]
+     }
+    },
+    {
+     "customer": "and is it 100 for 30 min?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok leaving",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im outside the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-34",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hiya, 19:00 tonight any good?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "19:00"
+      ]
+     }
+    },
+    {
+     "customer": "so?? waiting",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "doesn't work",
+       "doesnt work",
+       "other time",
+       "another"
+      ],
+      "lacks": [
+       "booked",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "ugh. 21:00 then and pls answer faster",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok ok, coming, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here, which door?",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-35",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "evening, is 30 min enough or should i take the hour?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "ill take the hour. 21:00 tonight ok?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "so it's 200 for the hour, nothing else?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "cool, grabbing a taxi now. 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im here, front of the building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-36",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "здравствуй, можно приехать на час?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "во сколько",
+       "когда",
+       "к скольки",
+       "в какое время",
+       "в котором часу",
+       "какое время",
+       "примерно во",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "в 21:30 сегодня примешь?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "а где ты находишься, какой район?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ау, ты тут?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:30",
+       "заброни",
+       "подтвер",
+       "записа",
+       "жду",
+       "хорошо",
+       "договор"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "еду, 15 мин",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "супер",
+       "понял"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "я у двери",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-37",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey, are you free tomorrow evening?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "tomorrow 18:30 ok for u?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "doesn't work",
+       "doesnt work",
+       "other time",
+       "another"
+      ],
+      "lacks": [
+       "booked",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "when are you free then?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "tomorrow 20:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "tomorrow",
+       "20:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok here 👋",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-38",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "good evening nikol 🙂",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "20:00 tonight for an hour?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "any update?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "it's getting late, i need to know",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "sorry love, i have to cancel for tonight, work",
+     "booking": "cancelled_news",
+     "state_note": "pending",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "no worries",
+       "another time",
+       "next time",
+       "text me",
+       "of course",
+       "it's ok",
+       "its ok",
+       "that's ok",
+       "okay love",
+       "ok love"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-39",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hello nikol, i'd like to see you tonight",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "22:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "send me the door code already so i dont have to wait outside",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "22:30"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "heading out, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im at the door, code?",
+     "booking": "arrived"
+    },
+    {
+     "customer": "the code doesn't open anything, what do i do?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-40",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "čau, cik maksā stunda?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cikos",
+       "kurā laikā",
+       "kad nāc",
+       "kad tu",
+       "kad vēlies",
+       "pulksten",
+       "kādā laikā",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ],
+      "has_all": [
+       "200"
+      ]
+     }
+    },
+    {
+     "customer": "labi, tad uz pusstundu, 23:00 šovakar var?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "un par pusstundu 100, jā?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "23:00",
+       "rezerv",
+       "apstiprin",
+       "gaidu",
+       "labi",
+       "pierakst"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "labi, jau braucu, drīz būšu",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "lieliski",
+       "cik",
+       "gaidu",
+       "labi",
+       "super",
+       "mīļ",
+       "ok"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie mājas",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-41",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "привет) можно сегодня к тебе?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "во сколько",
+       "когда",
+       "к скольки",
+       "в какое время",
+       "в котором часу",
+       "какое время",
+       "примерно во",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "в 18:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ты тут?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "doesn't work",
+       "doesnt work",
+       "other time",
+       "another",
+       "извини",
+       "прости",
+       "не получится",
+       "не подходит",
+       "друго",
+       "к сожалению",
+       "не могу"
+      ],
+      "lacks": [
+       "booked",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "а в 20:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:00",
+       "заброни",
+       "подтвер",
+       "записа",
+       "жду",
+       "хорошо",
+       "договор"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "заказал такси, 10 минут",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "супер",
+       "понял"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "я у подъезда, стою",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-42",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi, in 30 min ok? im nearby",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know"
+      ]
+     }
+    },
+    {
+     "customer": "yes or no? 🙂",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "great, walking over",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "just arrived, outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-43",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi nikol, me and my girlfriend, is a threesome possible?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ],
+      "has_all": [
+       "100"
+      ]
+     }
+    },
+    {
+     "customer": "ok, 20:00 tonight for an hour?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "do we bring exactly 300 then, for the hour with the threesome?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "we're in the taxi, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "we're here, at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-44",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "čau, vai šovakar vari?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cikos",
+       "kurā laikā",
+       "kad nāc",
+       "kad tu",
+       "kad vēlies",
+       "pulksten",
+       "kādā laikā",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "tad 21:40 šovakar, var?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "nu? atbildi",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ok, meklēšu citu meiteni",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:40",
+       "rezerv",
+       "apstiprin",
+       "gaidu",
+       "labi",
+       "pierakst"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "labi, izeju, būšu pēc 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "lieliski",
+       "cik",
+       "gaidu",
+       "labi",
+       "super",
+       "mīļ",
+       "ok"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie durvīm",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-45",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey, could i come at 19:40?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "19:40"
+      ]
+     }
+    },
+    {
+     "customer": "im already heading there btw",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "19:40"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok, 10 min away",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "outside now, at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-46",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "привет, сколько стоит час?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "во сколько",
+       "когда",
+       "к скольки",
+       "в какое время",
+       "в котором часу",
+       "какое время",
+       "примерно во",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ],
+      "has_all": [
+       "200"
+      ]
+     }
+    },
+    {
+     "customer": "давай сегодня в 20:00, на час",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "ок, подожду",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:00",
+       "заброни",
+       "подтвер",
+       "записа",
+       "жду",
+       "хорошо",
+       "договор"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ок, еду",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "супер",
+       "понял"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "я тут",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-47",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "privet, segodnya prinimaesh?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "во сколько",
+       "когда",
+       "к скольки",
+       "в какое время",
+       "в котором часу",
+       "какое время",
+       "примерно во",
+       "vo skolko",
+       "skolko",
+       "kogda",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "22:00 segodnya mozhno?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "doesn't work",
+       "doesnt work",
+       "other time",
+       "another",
+       "извини",
+       "прости",
+       "не получится",
+       "не подходит",
+       "друго",
+       "к сожалению",
+       "не могу"
+      ],
+      "lacks": [
+       "booked",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "a 23:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "23:00",
+       "заброни",
+       "подтвер",
+       "записа",
+       "жду",
+       "хорошо",
+       "договор"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "edu, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "супер",
+       "понял"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ya tut, u dveri",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-48",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hello, 1 hour at 20:15 tonight?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "20:15"
+      ]
+     }
+    },
+    {
+     "customer": "👍",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ok",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:15"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "👍 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "👍 outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-49",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey, available rn? 5 min away",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know"
+      ]
+     }
+    },
+    {
+     "customer": "come on, yes or no",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ok forget it",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ah ok, coming then",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok im outside now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-50",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi, do you do incall?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "ok, 22:45 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "which floor are you on?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "22:45"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok leaving, about 15 min ride",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im here, by the door",
+     "booking": "arrived"
+    },
+    {
+     "customer": "left or right door?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-51",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "labvakar, 21:00 šovakar būtu ok? viena stunda",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "21:00"
+      ]
+     }
+    },
+    {
+     "customer": "piedod, tomēr nevarēšu šovakar, atceļu",
+     "booking": "cancelled_news",
+     "state_note": "pending",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "no worries",
+       "another time",
+       "next time",
+       "text me",
+       "of course",
+       "it's ok",
+       "its ok",
+       "that's ok",
+       "okay love",
+       "ok love",
+       "nav problēm",
+       "uzraksti",
+       "citu reizi",
+       "nekas",
+       "labi"
+      ]
+     }
+    },
+    {
+     "customer": "izdevās atbrīvoties 😅 23:00 var?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "23:00",
+       "rezerv",
+       "apstiprin",
+       "gaidu",
+       "labi",
+       "pierakst"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "pēc 15 min būšu",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "lieliski",
+       "cik",
+       "gaidu",
+       "labi",
+       "super",
+       "mīļ",
+       "ok"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "esmu klāt",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-52",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "evening, 21:50 ok? 1 hour",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "21:50"
+      ]
+     }
+    },
+    {
+     "customer": "is there a shower there? coming straight from the gym",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:50"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "great. on the tram, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "at ur place, outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-53",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "good evening, can i book 30 min for tonight?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "20:00 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "answer pls, im waiting",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "last chance or i go elsewhere",
+     "booking": "pending"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "doesn't work",
+       "doesnt work",
+       "other time",
+       "another"
+      ],
+      "lacks": [
+       "booked",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "ok, 21:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "coming",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im here, at the entrance",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-54",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "привет, сейчас можно подъехать? я в центре",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know"
+      ]
+     }
+    },
+    {
+     "customer": "наличными платить?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "заброни",
+       "подтвер",
+       "записа",
+       "жду",
+       "хорошо",
+       "договор"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ок, 5 минут",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "супер",
+       "понял"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "я у входа",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-55",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey nikol, 10pm tonight, an hour?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "22:00",
+       "10pm",
+       "10 pm"
+      ]
+     }
+    },
+    {
+     "customer": "is it ok or not?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "22:00",
+       "10pm",
+       "10 pm"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "alright, cab is on the way",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "standing in front of the building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-56",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hi nikol, could i come 22:30 tonight?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "22:30"
+      ]
+     }
+    },
+    {
+     "customer": "actually could i come earlier, 21:30? finished early",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:30"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs, by the entrance",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-57",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "sveika nikol, vai tu šodien strādā?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cikos",
+       "kurā laikā",
+       "kad nāc",
+       "kad tu",
+       "kad vēlies",
+       "pulksten",
+       "kādā laikā",
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "19:30 šodien var? uz stundu",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "vai tu esi?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "es gaidu atbildi",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "19:30",
+       "rezerv",
+       "apstiprin",
+       "gaidu",
+       "labi",
+       "pierakst"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "tūlīt braucu, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "lieliski",
+       "cik",
+       "gaidu",
+       "labi",
+       "super",
+       "mīļ",
+       "ok"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie ieejas",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-58",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hello, 20:45 tonight? 1 hour",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "20:45"
+      ]
+     }
+    },
+    {
+     "customer": "ты по-русски говоришь кстати?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:45",
+       "заброни",
+       "подтвер",
+       "записа",
+       "жду",
+       "хорошо",
+       "договор"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok, еду, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love",
+       "отлично",
+       "сколько",
+       "жду",
+       "хорошо",
+       "ок",
+       "супер",
+       "понял"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "я тут, внизу",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-59",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "hey nikol, 21:30 tonight ok? 1 hour",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "21:30"
+      ]
+     }
+    },
+    {
+     "customer": "hmm actually cancel, my friend showed up. sorry",
+     "booking": "cancelled_news",
+     "state_note": "pending",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "no worries",
+       "another time",
+       "next time",
+       "text me",
+       "of course",
+       "it's ok",
+       "its ok",
+       "that's ok",
+       "okay love",
+       "ok love"
+      ]
+     }
+    },
+    {
+     "customer": "ok he left lol. 21:30 still possible?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:30"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "coming, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "knock knock, im at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-60",
+   "category": "silent until answered",
+   "steps": [
+    {
+     "customer": "22:00 tonight? and where are you located?",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "what hour",
+       "what time",
+       "around what",
+       "one sec",
+       "one moment",
+       "a moment",
+       "a minute",
+       "let you know",
+       "22:00"
+      ]
+     }
+    },
+    {
+     "customer": "hello? are you there?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "doesn't work",
+       "doesnt work",
+       "other time",
+       "another"
+      ],
+      "lacks": [
+       "booked",
+       "yes love"
+      ]
+     }
+    },
+    {
+     "customer": "ok what about 23:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "23:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok, in the car now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok im here, downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-61",
+   "category": "outcall",
+   "steps": [
+    {
+     "customer": "hi love, can you come to my hotel tonight?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you",
+       "outcall",
+       "taxi",
+       "where"
+      ]
+     }
+    },
+    {
+     "customer": "23:00, at hotel neva",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "and the taxi is on top of the 200, i know",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "yes love",
+       "be there",
+       "address"
+      ],
+      "lacks": [
+       "text me",
+       "15 min",
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "great, room 318, i'll tell the front desk",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you"
+      ],
+      "lacks": [
+       "hi my love",
+       "text me 15"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-62",
+   "category": "cancel after confirmation",
+   "steps": [
+    {
+     "customer": "hello, are you free this evening?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "20:30 tonight, one hour?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:30"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "sorry love, my plans changed, i can't make it tonight",
+     "booking": "cancelled_news",
+     "state_note": "confirmed",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "no worries",
+       "another time",
+       "next time",
+       "text me",
+       "of course",
+       "it's ok",
+       "its ok",
+       "that's ok",
+       "okay love",
+       "ok love"
+      ]
+     }
+    },
+    {
+     "customer": "can i come tomorrow evening instead?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "tomorrow 20:30 then",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "tomorrow",
+       "20:30"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-63",
+   "category": "move after confirmation",
+   "steps": [
+    {
+     "customer": "hey, do you have time today after work?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "20:00 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "20:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "sorry love, work is running late, can we do 21:00 instead?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "thank you, sorry for the trouble",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "21:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "at the entrance",
+     "booking": "arrived"
+    },
+    {
+     "customer": "the door doesn't open, buzz me in pls",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "floor",
+       "flat",
+       "stairs",
+       "come up"
+      ],
+      "lacks": [
+       "i'll buzz",
+       "i will buzz",
+       "i'll open",
+       "i will open"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "f3-64",
+   "category": "time-waster",
+   "steps": [
+    {
+     "customer": "hey gorgeous, you look stunning in your pics",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "got any other pics? maybe a short video?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you",
+       "in person",
+       "voice message",
+       "text me"
+      ]
+     }
+    },
+    {
+     "customer": "i want to see your energy first, can we video call?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you",
+       "voice message",
+       "text me",
+       "ready",
+       "in person"
+      ]
+     }
+    },
+    {
+     "customer": "mmm maybe later then",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "text me",
+       "ready",
+       "when you"
+      ],
+      "lacks": [
+       "booked"
+      ]
+     }
+    },
+    {
+     "customer": "ok ok. 22:15 tonight then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "22:15"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "ok leaving, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "f3-65",
+   "category": "after the confirmation",
+   "steps": [
+    {
+     "customer": "hi, do you have anything for tonight?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what hour",
+       "what time",
+       "around what",
+       "which time",
+       "at what time",
+       "when do you",
+       "when would",
+       "when you"
+      ]
+     }
+    },
+    {
+     "customer": "ok 22:00 tonight, 1 hour",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "yes love",
+       "22:00"
+      ],
+      "lacks": [
+       "doesn't work",
+       "sorry",
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "can you send the address again? i can't find it above",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "here love",
+       "here"
+      ],
+      "lacks": [
+       "hi my love",
+       "code"
+      ]
+     }
+    },
+    {
+     "customer": "and can i get the door code and floor now? so i don't waste time when i come",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "when you arrive",
+       "when you're here",
+       "when you are here",
+       "text me when",
+       "arrive",
+       "when you get here"
+      ],
+      "lacks": [
+       "hi my love"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "no problem",
+       "see you",
+       "okay",
+       "ok love",
+       "great",
+       "yes love"
+      ],
+      "lacks": [
+       "hi my love",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im here",
+     "booking": "arrived"
+    }
+   ]
+  }
+ ]
+}

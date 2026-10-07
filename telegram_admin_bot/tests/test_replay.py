@@ -87,6 +87,12 @@ def test_what_she_never_says_fails_every_reply():
     assert replay.check_reply("one sec love", {"customer": "22:00?"}, "requested", never) == []
 
 
+def test_short_check_words_match_whole_words_only():
+    step = {"customer": "are you a bot?", "expect": {"has_any": ["ai", "bot"]}}
+    assert replay.check_reply("wait for me again, both of us", step, None) == ["none of ['ai', 'bot']"]
+    assert replay.check_reply("I'm Nikol's automated assistant, an AI", step, None) == []
+
+
 def test_expectations_are_checked_in_any_case():
     step = {"customer": "kiss?", "expect": {"has_all": ["Kissing"], "has_any": ["50", "fifty"], "lacks": ["SORRY"]}}
     assert replay.check_reply("kissing is +50 love", step, None) == []

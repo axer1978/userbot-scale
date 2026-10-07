@@ -51,6 +51,7 @@ import asyncio
 import inspect
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -188,18 +189,27 @@ def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[d
 
 # ------------------------------------------------------------- checks
 
+def _found(word: str, low: str) -> bool:
+    """A word of three letters or fewer counts only as a whole word ("ai" is
+    not in "wait", "bot" not in "both"); anything longer as a substring."""
+    word = word.lower()
+    if len(word) <= 3 and word.isalpha():
+        return re.search(rf"(?<!\w){re.escape(word)}(?!\w)", low) is not None
+    return word in low
+
+
 def check_reply(text: str, step: dict[str, Any], state: Optional[str],
                 never_says: tuple[str, ...] = ()) -> list[str]:
     low = text.lower()
     failed = [f"says {word!r}" for word in never_says if word.lower() in low]
     expect = step.get("expect") or {}
     for word in expect.get("has_all", []):
-        if word.lower() not in low:
+        if not _found(word, low):
             failed.append(f"missing {word!r}")
-    if expect.get("has_any") and not any(w.lower() in low for w in expect["has_any"]):
+    if expect.get("has_any") and not any(_found(w, low) for w in expect["has_any"]):
         failed.append(f"none of {expect['has_any']}")
     for word in [*expect.get("lacks", []), *ALWAYS_LACKS]:
-        if word.lower() in low:
+        if _found(word, low):
             failed.append(f"contains {word!r}")
     if state != "way_in_sent" and DOOR_CODE in low:
         failed.append("gives the door code before he arrived")
