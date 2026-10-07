@@ -71,6 +71,15 @@ def test_the_photos_he_has_not_had_are_those_not_shown_as_sent():
     assert media.unsent(items, history[1:]) == items
 
 
+def test_the_media_note_says_what_the_chat_has_had():
+    items = [{"id": 1, "kind": "photo", "description": "a"}, {"id": 2, "kind": "photo", "description": "b"}]
+    assert media.sent_line(items, []) == ""
+    one = [{"role": "assistant", "content": media.sent_placeholder(items[0])}]
+    assert media.sent_line(items, one) == "Already sent in this chat: photo #1."
+    both = one + [{"role": "assistant", "content": media.sent_placeholder(items[1])}]
+    assert "had all your photos" in media.sent_line(items, both)
+
+
 def test_the_photo_check_answer_is_read_safely():
     assert media.parse_photo_request('{"photos": true}')
     assert media.parse_photo_request('sure: {"photos": true}')

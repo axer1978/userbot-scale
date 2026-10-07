@@ -1611,6 +1611,8 @@ class SessionRuntime:
             no_reply = "" if note.has_news or photos_only else self.config["replies"]["no_reply_instruction"]
 
             media_note = self.media_prompt()
+            if media_note and (had := media.sent_line(self.media_library.for_ai(), history)):
+                media_note += "\n" + had
             prompt = self.bundle.prompt if self.bundle is not None else None
 
             if photos_only:

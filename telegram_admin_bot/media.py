@@ -396,12 +396,13 @@ PHOTO_REQUEST_SYSTEM_PROMPT = (
     "customer ('them'). Decide whether any of the customer's messages after my "
     "last message asks to see photos or a video of me — for example 'pics?', "
     "'send a photo', 'a selfie?', 'how do you look?', 'one more pic while I "
-    "wait', 'скинь фото', 'atsūti bildi'. It is NOT such a request when the "
-    "photo is of something else (the building, the entrance, the door, the "
-    "stairs), when it is a photo made just for them (holding their name or a "
-    "date, a pose, what I will wear), when they only comment on or ask about "
+    "wait', 'скинь фото', 'atsūti bildi'. Answer false when the photo is of "
+    "something else (the building, the entrance, the door, the stairs); when "
+    "it would have to be taken just for them: holding a paper with their name "
+    "or a date, a sign, a pose, a gesture, what I will wear, 'to verify' (false "
+    "even though it would show me); when they only comment on or ask about "
     "photos they have seen ('nice pics', 'are those recent?', 'is that really "
-    "you?'), or when they want to take photos themselves. Answer with a single "
+    "you?'); or when they want to take photos themselves. Answer with a single "
     'JSON object and nothing else: {"photos": true|false}'
 )
 
@@ -413,6 +414,18 @@ def unsent(items: list[dict[str, Any]], history: list[dict[str, Any]]) -> list[d
     had = {int(n) for message in history if message.get("role") == "assistant"
            for n in _SENT.findall(message.get("content") or "")}
     return [item for item in items if item["id"] not in had]
+
+
+def sent_line(items: list[dict[str, Any]], history: list[dict[str, Any]]) -> str:
+    """What this chat has had of the files, for the media note: "" if none."""
+    left = unsent(items, history)
+    had = [item for item in items if item not in left]
+    if not had:
+        return ""
+    line = "Already sent in this chat: " + ", ".join(f"{item['kind']} #{item['id']}" for item in had) + "."
+    if not any(item.get("kind") == PHOTO for item in left):
+        line += " They have had all your photos: there is no photo left to send."
+    return line
 
 
 def parse_photo_request(text: str) -> bool:

@@ -403,7 +403,8 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
             booking_note=booking_note(state, now, ctx.tz, start,
                                       address_follows=bool(address) and not outcall and not address_sent,
                                       address_set=bool(address), quiet=quiet),
-            system_prompt=ctx.prompt.text, media_note=ctx.media_note,
+            system_prompt=ctx.prompt.text,
+            media_note="\n".join(filter(None, [ctx.media_note, ctx.media_note and media.sent_line(ctx.photos, history)])),
             language_locked=ctx.config["language_policy"] != "mirror", burst_max=burst["max_messages"],
             burst_keep_together=burst.get("keep_together", True))
         known = {item["id"]: item for item in ctx.photos}
