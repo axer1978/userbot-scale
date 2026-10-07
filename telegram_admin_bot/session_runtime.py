@@ -128,6 +128,9 @@ ACK_SKIP = "the message is only an acknowledgement"
 # ... and for "I'm here" once the way in (booking.arrival_instructions) went
 # out: that was the answer. Not queued either.
 WAY_IN_SKIP = "they have arrived and the way in was sent"
+# ... and while a time they asked for waits for the owner, with
+# booking.quiet_until_answered on: the owner's answer is the reply.
+OWNER_SKIP = "their time waits for the owner's answer"
 # In staging, a chat that is not a test chat gets this note at most once an
 # hour, so a busy chat's history isn't all notes.
 STAGING_NOTE = "Staging: not answered — not a test chat."
@@ -1556,6 +1559,9 @@ class SessionRuntime:
             # has to say (taken, confirmed, offered times).
             await self.flow.wait_scan(chat_id)
             note = await self.flow.reply_note(chat_id)
+            if await self.flow.quiet_until_answered(chat_id, history):
+                await self.skip_reply(chat_id, OWNER_SKIP)
+                return
             if limit := await self.ai_limit_reason():
                 # A limit puts the client soft-off (a spend_cap hold).
                 await self.queue_unanswered(chat_id, unanswered.SOFT_OFF, limit)
@@ -1740,7 +1746,7 @@ class SessionRuntime:
         # A reply limit or the tenant's no-reply instruction left a
         # customer without an answer: queued. A bare acknowledgement
         # ("ok", "thanks") needed none, so it is not.
-        if reason not in (ACK_SKIP, WAY_IN_SKIP):
+        if reason not in (ACK_SKIP, WAY_IN_SKIP, OWNER_SKIP):
             await self.queue_unanswered(chat_id, unanswered.SKIPPED, reason)
 
     async def check_policy(

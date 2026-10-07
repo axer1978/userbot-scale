@@ -688,14 +688,22 @@ class BookingFlow:
             return ReplyNote()
         lines: list[str] = []
         with_notice = await self.store.with_notice(chat_id)
+        quiet = self.quiet()
         for booking in with_notice:
-            lines.append(bookings.notice_line(booking))
+            if quiet and booking.get("customer_notice") == bs.NOTICE_REQUESTED:
+                lines.append(bookings.quiet_request_line(booking))
+            else:
+                lines.append(bookings.notice_line(booking))
             if self.address_follows(booking) and not await self.address_in_chat(chat_id):
                 self.address_due[chat_id] = booking["id"]
                 lines.append(bookings.ADDRESS_FOLLOWS_LINE)
         told = {b["id"] for b in with_notice}
         for booking in await self.store.for_chat(chat_id):
-            if booking["id"] not in told:
+            if booking["id"] in told:
+                continue
+            if quiet and booking["state"] in (bs.REQUESTED, bs.PENDING) and booking.get("proposed_by") != bs.OWNER:
+                lines.append(bookings.quiet_request_line(booking))
+            else:
                 lines.append(bookings.standing_line(booking))
         if self.address():
             lines.append(bookings.ADDRESS_TAG_LINE)
@@ -725,6 +733,30 @@ class BookingFlow:
         if note.address_for is not None and self.address_due.get(chat_id) == note.address_for:
             self.address_due.pop(chat_id)
             await self.send_address(await self.store.get(note.address_for))
+
+    def quiet(self) -> bool:
+        return self.enabled() and bool(self.settings.get("quiet_until_answered"))
+
+    async def waiting_for_owner(self, chat_id: int) -> bool:
+        """A time they asked for is with the owner and not answered yet: a new
+        or changed request, or a move of a confirmed booking."""
+        for booking in await self.store.for_chat(chat_id):
+            if booking["state"] in (bs.REQUESTED, bs.PENDING) and booking.get("proposed_by") != bs.OWNER:
+                return True
+            if booking["state"] == bs.CONFIRMED and booking.get("proposed_by") == bs.CUSTOMER:
+                return True
+        return False
+
+    async def quiet_until_answered(self, chat_id: int, history: list[dict[str, str]]) -> bool:
+        """booking.quiet_until_answered: no reply to their messages while a
+        time they asked for waits for the owner. Their first message still
+        gets the first reply, and a message we start (the owner's answer, a
+        lapsed request) is never held."""
+        if not self.quiet() or not history or history[-1].get("role") != "user":
+            return False
+        if not any(m.get("role") == "assistant" for m in history[:-1]):
+            return False
+        return await self.waiting_for_owner(chat_id)
 
     def address(self) -> str:
         """booking.address, or "" when bookings are off or none is set."""

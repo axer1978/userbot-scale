@@ -207,13 +207,18 @@ class Booking(_Strict):
     # How long a freed slot is held for the first person on the waitlist
     # before it is offered to the next one.
     waitlist_offer_hours: int = Field(12, ge=1, le=168)
+    # Sent word for word where a reply writes [address] (with the prices in
+    # the first reply, or when they ask where), and after a confirmation if
+    # it is not in the chat yet. Keep door codes and the way in for
+    # arrival_instructions.
+    address: str = Field("", max_length=2000)
     # Sent word for word, once, when the customer has arrived. Media items
     # marked "send on arrival" go out right after it.
-    # Sent word for word right after the reply to a customer who names a
-    # free time, before the owner has confirmed it. Keep door codes and the
-    # way in for arrival_instructions.
-    address: str = Field("", max_length=2000)
     arrival_instructions: str = Field("", max_length=20_000)
+    # Write nothing to a customer while a time they asked for waits for the
+    # owner: the owner's answer is the next message they get. Their first
+    # message still gets the first reply.
+    quiet_until_answered: bool = False
     # Delete the arrival instructions and those photos from the chat, for
     # both sides, this many minutes after they were sent (door codes, the
     # flat number). 0 = keep them.

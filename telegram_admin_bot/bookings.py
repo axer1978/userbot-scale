@@ -470,9 +470,16 @@ _NOTICE_TEXT = {
     bs.NOTICE_RESCHEDULED: "the appointment has been MOVED; it is now on {when}. Tell them, restating the new day and time.",
     bs.NOTICE_CANCELLED: "the appointment on {when} has been CANCELLED. Tell them so.",
     bs.NOTICE_EXPIRED: "the request for {when} could not be confirmed in time and has lapsed. Apologise briefly and offer to find another time.",
-    bs.NOTICE_REQUESTED: "their request for {when} has been passed on; it is NOT confirmed yet. Say it is being checked.",
+    bs.NOTICE_REQUESTED: "their request for {when} has been passed on; it is NOT confirmed yet. Say you will confirm it in a moment.",
     bs.NOTICE_KEPT: "the appointment could not be moved; it stays on {when}. Tell them so.",
 }
+
+
+def quiet_request_line(booking: Mapping[str, Any]) -> str:
+    """The request notice when the business answers before anything else
+    is said (booking.quiet_until_answered)."""
+    return (f"Their request for {describe_when(booking)} has gone to the business and is NOT confirmed. "
+            "Say nothing about that time now: the answer comes in a later message.")
 
 
 def notice_line(booking: Mapping[str, Any]) -> str:
@@ -491,7 +498,7 @@ def standing_line(booking: Mapping[str, Any]) -> str:
             return (f"The business proposed {describe_proposal(booking)} instead of {when}; waiting for "
                     "their answer. Do NOT say anything is confirmed.")
         return (f"An appointment on {when} has been requested and is waiting for confirmation. Do NOT "
-                "say it is confirmed or booked. If they ask, say it is being checked.")
+                "say it is confirmed or booked. If they ask, say you will confirm it in a moment.")
     if state == bs.CONFIRMED:
         line = f"The appointment on {when} is confirmed."
         if booking.get("proposed_by") == bs.CUSTOMER:
@@ -550,7 +557,7 @@ ONLY_OWNER_CONFIRMS_RULE = (
     "Unless a line below says an appointment is CONFIRMED, do not agree to their time in "
     "any words: no 'ok', 'deal', 'booked', 'confirmed', 'see you then', 'come over', and "
     "no arrival steps such as 'text me before you come'. When they name a day and time, "
-    "say you are checking it and will confirm shortly — nothing more about the time."
+    "say only that you will confirm it in a moment — nothing more about the time."
 )
 
 ADDRESS_FOLLOWS_LINE = (

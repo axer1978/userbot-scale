@@ -179,6 +179,19 @@ async def test_the_news_itself_closes_a_message_we_start(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_news_for_a_reply_to_them_is_repeated_last(monkeypatch):
+    """Their time went unanswered until the owner confirmed: the chat ends on
+    their message, and the confirmation was answered as if it were absent."""
+    news = "NEWS TO PASS ON IN THIS REPLY: the appointment on Tue 06 Oct 23:00 has just been CONFIRMED."
+    messages = await _sent_messages(monkeypatch, [
+        {"role": "assistant", "content": "hi love"},
+        {"role": "user", "content": "at 23?"},
+    ], booking_note="APPOINTMENTS:\nOnly the business confirms appointments.\n" + news)
+    assert messages[-2] == {"role": "user", "content": "at 23?"}
+    assert messages[-1] == {"role": "system", "content": ai_responder.NEWS_NOTE + "\n" + news}
+
+
+@pytest.mark.asyncio
 async def test_a_reply_to_them_ends_with_their_message(monkeypatch):
     messages = await _sent_messages(monkeypatch, [
         {"role": "assistant", "content": "hi"},

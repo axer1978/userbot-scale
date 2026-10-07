@@ -205,6 +205,41 @@ async def test_the_address_goes_with_the_prices_and_not_again_after_the_confirma
     assert "address is sent to them automatically" not in w.script["notes"][-1]
 
 
+async def test_quiet_until_answered_says_nothing_until_the_owner_answers(world):
+    w = world
+    w.app.config["booking"]["quiet_until_answered"] = True
+    w.script["reply"] = "hi love, prices"
+    await customer(w, "hi")
+    assert w.sent[CUSTOMER] == ["hi love, prices"]
+
+    # The time goes to the owner; nothing is written, not even to a nudge.
+    replies = w.script["calls"]
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "??")
+    assert w.sent[CUSTOMER] == ["hi love, prices"] and w.script["calls"] == replies
+    assert len(w.sent[OWNER]) == 1
+
+    # The owner's answer is the next message.
+    w.script["reply"] = "yes love, booked for tomorrow 15:00"
+    await owner(w, "YES 1")
+    assert w.sent[CUSTOMER][-1] == "yes love, booked for tomorrow 15:00"
+    assert "has just been CONFIRMED" in w.script["notes"][-1]
+
+
+async def test_quiet_until_answered_still_answers_a_first_message_with_a_time(world):
+    w = world
+    w.app.config["booking"]["quiet_until_answered"] = True
+    w.script["reply"] = "hi love, prices"
+    await customer(w, "hi, tomorrow at 15?", book())
+    assert w.sent[CUSTOMER] == ["hi love, prices"]
+    assert "Say nothing about that time now" in w.script["notes"][-1]
+
+    # A cancel while it waits is answered: nothing waits any more.
+    w.script["reply"] = "no problem love"
+    await customer(w, "sorry, can't come", {"intent": "cancel"})
+    assert w.sent[CUSTOMER][-1] == "no problem love"
+
+
 async def test_no_address_for_a_time_that_is_not_free(world):
     w = world
     w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
