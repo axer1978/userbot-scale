@@ -93,14 +93,7 @@
     {
      "customer": "hi love, can I come at 19:00 today?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "customer": "send me the address meanwhile, i want to check the route from work",
@@ -178,14 +171,7 @@
     {
      "customer": "hello! 22:15 tonight possible?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -285,14 +271,7 @@
     {
      "customer": "Hey, 1h at 21:00?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -339,14 +318,7 @@
     {
      "customer": "good evening, 20:00 for 30 min?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -489,14 +461,7 @@
     {
      "customer": "hey can i come at 23:00",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "customer": "is it near the centre? i'd walk from the old town",
@@ -670,14 +635,7 @@
     {
      "customer": "hello, 30 min at 19:30? i'll come by car",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "customer": "is there parking near you or is it a nightmare like everywhere in riga",
@@ -857,18 +815,7 @@
     {
      "customer": "привет) сегодня в 22:30 можно?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment",
-       "провер",
-       "секунд",
-       "минут",
-       "момент"
-      ]
-     }
+     "intent": "book"
     },
     {
      "customer": "скинь пока адрес, посмотрю как доехать",
@@ -963,14 +910,7 @@
     {
      "customer": "hey sexy 21:20?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -1123,14 +1063,7 @@
     {
      "customer": "hi, can you come to me tonight at 22:00? hotel bergs, 1 hour",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -1188,14 +1121,7 @@
     {
      "customer": "hey nikol, landing at 20:10, can i come straight from the airport at 21:00?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "customer": "how far are you from the airport roughly?",
@@ -1270,14 +1196,7 @@
     {
      "customer": "hii 23:00 ok for 30 min?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -1417,14 +1336,7 @@
     {
      "customer": "hey its me again 😊 21:00 tonight?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -1504,14 +1416,7 @@
     {
      "customer": "good evening nikol, 1 hour at 20:15?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -1574,14 +1479,7 @@
     {
      "customer": "hi, 19:00 today 30 min?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -1654,14 +1552,7 @@
     {
      "customer": "hey it's me again from last week 😊 free in like 20 min?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "customer": "actually i'm already outside, same place as last time 😅",
@@ -1720,18 +1611,7 @@
     {
      "customer": "привет, это я снова) можно сейчас заехать?",
      "booking": "requested_now",
-     "intent": "asap",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment",
-       "провер",
-       "секунд",
-       "минут",
-       "момент"
-      ]
-     }
+     "intent": "asap"
     },
     {
      "customer": "я уже у подъезда кстати",
@@ -1806,14 +1686,7 @@
     {
      "customer": "hi, 22:00 tonight for an hour?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -1860,14 +1733,7 @@
     {
      "customer": "good evening, 19:00 ok?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -1924,14 +1790,7 @@
     {
      "customer": "yo, 20:30 tonight?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2002,14 +1861,7 @@
     {
      "customer": "can i book 21:10, 30 min?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2067,19 +1919,7 @@
     {
      "customer": "čau, vai var rīt 19:30?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment",
-       "pārbaud",
-       "mirkli",
-       "sekundi",
-       "brīdi",
-       "minūt"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2153,19 +1993,7 @@
     {
      "customer": "sveika, šodien 20:00 uz stundu?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment",
-       "pārbaud",
-       "mirkli",
-       "sekundi",
-       "brīdi",
-       "minūt"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2235,18 +2063,7 @@
     {
      "customer": "добрый вечер, на 21:00 можно? на час",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment",
-       "провер",
-       "секунд",
-       "минут",
-       "момент"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2317,14 +2134,7 @@
     {
      "customer": "hey, 22:40 ok?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2382,14 +2192,7 @@
     {
      "customer": "evening! 20:00 please, 1 hour",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2469,14 +2272,7 @@
     {
      "customer": "hi nikol, 21:00 tonight?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2538,14 +2334,7 @@
     {
      "customer": "can i come over now? i'm literally around the corner",
      "booking": "requested_now",
-     "intent": "asap",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "asap"
     },
     {
      "customer": "ok i'm standing at the building from last time",
@@ -2615,14 +2404,7 @@
     {
      "customer": "hii, 30 min at 19:15?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2681,14 +2463,7 @@
     {
      "customer": "good evening, tomorrow 17:30 for an hour?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2747,14 +2522,7 @@
     {
      "customer": "hey 😊 21:30?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2810,14 +2578,7 @@
     {
      "customer": "hello, 23:00 tonight, 30 min",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2874,14 +2635,7 @@
     {
      "customer": "hey nikol, 22:00 for an hour?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2939,14 +2693,7 @@
     {
      "customer": "hi, 20:00 ok? 1 hour",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3003,19 +2750,7 @@
     {
      "customer": "labdien, šovakar 22:30 var?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment",
-       "pārbaud",
-       "mirkli",
-       "sekundi",
-       "brīdi",
-       "minūt"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3084,18 +2819,7 @@
     {
      "customer": "здравствуйте, можно завтра в 19:00 на полчаса?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment",
-       "провер",
-       "секунд",
-       "минут",
-       "момент"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3166,14 +2890,7 @@
     {
      "customer": "hey love, 21:00 tonight?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3240,14 +2957,7 @@
     {
      "customer": "hi, 19:45 tonight possible?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3306,14 +3016,7 @@
     {
      "customer": "hey, free right now? im in town anyway",
      "booking": "requested_now",
-     "intent": "asap",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "asap"
     },
     {
      "customer": "im in the centre already, where exactly do i go?",
@@ -3374,14 +3077,7 @@
     {
      "customer": "hello nikol, i'm flying in today, can i see you at 21:00?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3439,14 +3135,7 @@
     {
      "customer": "hi, 21:00 for 1 hour?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3507,14 +3196,7 @@
     {
      "customer": "hello, 20:15 today?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3581,14 +3263,7 @@
     {
      "customer": "hey, can i come at 22:00?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3670,14 +3345,7 @@
     {
      "customer": "hi nikol 😘 tonight 23:15?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3739,14 +3407,7 @@
     {
      "customer": "hey, 1 hour at 20:00?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3808,14 +3469,7 @@
     {
      "customer": "good evening 30 min at 21:40?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3895,14 +3549,7 @@
     {
      "customer": "hi, 19:30 ok for an hour?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3973,14 +3620,7 @@
     {
      "customer": "hey nikol, 22:15 for an hour?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4052,14 +3692,7 @@
     {
      "customer": "hi, 20:45 tonight, 1 hour?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4135,14 +3768,7 @@
     {
      "customer": "hey, 21:30 tonight?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4214,14 +3840,7 @@
     {
      "customer": "hey, can i come at 20:00? im already in the area",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "customer": "just give me the flat number while you check, i'll walk over meanwhile",
@@ -4301,14 +3920,7 @@
     {
      "customer": "hello 30 min at 18:45?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4370,14 +3982,7 @@
     {
      "customer": "hi love, 22:30?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4423,14 +4028,7 @@
     {
      "customer": "hey, 21:15 tonight for 1 hour?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4497,14 +4095,7 @@
     {
      "customer": "good evening, tomorrow 20:00 for 30 min?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4589,14 +4180,7 @@
     {
      "customer": "hi, 22:00 tonight, 1 hour?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4696,14 +4280,7 @@
     {
      "customer": "hey, can you come to my apartment tonight at 21:30? 1 hour",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4763,14 +4340,7 @@
     {
      "customer": "hi love, tonight 21:00?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4853,19 +4423,7 @@
     {
      "customer": "Hallo Nikol, hast du heute um 21:30 Zeit?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment",
-       "prüf",
-       "kurz",
-       "schau",
-       "sekunde",
-       "warte"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4935,14 +4493,7 @@
     {
      "customer": "it's me again 😊 22:00 like last week?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",

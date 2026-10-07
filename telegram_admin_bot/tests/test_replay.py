@@ -80,6 +80,13 @@ def test_the_address_tag_is_offered_and_the_address_follows_only_a_confirmation(
     assert "already sent the entry instructions" in replay.booking_note("way_in_sent", now, "Europe/Riga")
 
 
+def test_what_she_never_says_fails_every_reply():
+    never = ("let me check", "agency")
+    assert replay.check_reply("Let me check love, one sec", {"customer": "22:00?"}, "requested", never) == [
+        "says 'let me check'"]
+    assert replay.check_reply("one sec love", {"customer": "22:00?"}, "requested", never) == []
+
+
 def test_expectations_are_checked_in_any_case():
     step = {"customer": "kiss?", "expect": {"has_all": ["Kissing"], "has_any": ["50", "fifty"], "lacks": ["SORRY"]}}
     assert replay.check_reply("kissing is +50 love", step, None) == []

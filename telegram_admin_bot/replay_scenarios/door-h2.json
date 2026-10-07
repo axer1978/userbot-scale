@@ -7,14 +7,7 @@
     {
      "customer": "hi, free now?",
      "booking": "requested_now",
-     "intent": "asap",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "asap"
     },
     {
      "event": "confirmed",
@@ -70,14 +63,7 @@
     {
      "customer": "hey, can i come at 20:00?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -406,17 +392,7 @@
     {
      "customer": "привет, можно в 20:30?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment",
-       "провер",
-       "секунд",
-       "минут"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -1158,14 +1134,7 @@
     {
      "customer": "hi, 30 min now?",
      "booking": "requested_now",
-     "intent": "asap",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "asap"
     },
     {
      "event": "confirmed",
@@ -1401,14 +1370,7 @@
     {
      "customer": "hello, is 19:00 possible today?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "customer": "any news love?",
@@ -1612,14 +1574,7 @@
     {
      "customer": "hey, incall at 20:00?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -1737,17 +1692,7 @@
     {
      "customer": "esmu tuvu, var tūlīt?",
      "booking": "requested_now",
-     "intent": "asap",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment",
-       "pārbaud",
-       "mirkl",
-       "minūt"
-      ]
-     }
+     "intent": "asap"
     },
     {
      "event": "confirmed",
@@ -2440,14 +2385,7 @@
     {
      "customer": "are u free rn",
      "booking": "requested_now",
-     "intent": "asap",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "asap"
     },
     {
      "event": "confirmed",
@@ -2503,14 +2441,7 @@
     {
      "customer": "hey can i come in 40 min?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2676,14 +2607,7 @@
     {
      "customer": "hi, 1h at 22:00 possible?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -2869,17 +2793,7 @@
     {
      "customer": "sveika, vai var šovakar pusdesmitos?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment",
-       "pārbaud",
-       "mirkl",
-       "minūt"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3019,14 +2933,7 @@
     {
      "customer": "hi! saw ur profile, 30 min at 20:00 possible?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3159,14 +3066,7 @@
     {
      "customer": "hi, 1 hour tonight at 21:00?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3539,14 +3439,7 @@
     {
      "customer": "hi it's Toms again 😊 same as last time, 21:00?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -3933,14 +3826,7 @@
     {
      "customer": "yo free?",
      "booking": "requested_now",
-     "intent": "asap",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "asap"
     },
     {
      "event": "confirmed",
@@ -3996,14 +3882,7 @@
     {
      "customer": "hi, can i come in 15 min? already in the area",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "customer": "im outside already 😅",
@@ -4059,14 +3938,7 @@
     {
      "customer": "evening love, 20:00 ok?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4150,14 +4022,7 @@
     {
      "customer": "22:40 possible?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4213,14 +4078,7 @@
     {
      "customer": "can i come at 19:45?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",
@@ -4277,14 +4135,7 @@
     {
      "customer": "hi, 1 hour at 21:00?",
      "booking": "requested",
-     "intent": "book",
-     "expect": {
-      "has_any": [
-       "check",
-       "sec",
-       "moment"
-      ]
-     }
+     "intent": "book"
     },
     {
      "event": "confirmed",

@@ -30,13 +30,16 @@ after a confirmation if it is not in the chat yet (not for an outcall); and
 on "arrived" the way in
 (booking.arrival_instructions) is the whole answer: the arrival check must
 read the message as arrival, and no reply is written. Later steps are
-way_in_sent.
+way_in_sent. With booking.quiet_until_answered, a customer message in a
+requested / requested_now / pending step gets no reply either (except the
+chat's first message): the owner's answer is the next one.
 
 Every reply is also checked for what must never appear (ALWAYS_LACKS), for
 agreeing to a time before the owner confirmed (UNCONFIRMED_LACKS), and by
 policy.check_outbound. Top-level "every_chat_sends" names messages
 ({"rates message": "..."}) every chat must contain word for word, as one
-message, exactly once — except in "except_categories". --candidate takes {"client": {...},
+message, exactly once — except in "except_categories" — and "never_says" lists
+phrases no reply may contain (any case). --candidate takes {"client": {...},
 "industry_boundaries": "...", "config": {...}} to try a prompt (and client
 config) before saving it.
 """
@@ -85,6 +88,8 @@ AT_THE_DOOR_LACKS = ("one sec, coming", "i'm coming down", "im coming down", "i'
 # The door code, until the system has sent the way in.
 DOOR_CODE = "1234"
 CONFIRMED_STATES = {"confirmed_news", "confirmed", "arrived", "way_in_sent"}
+# A time they asked for is with the owner.
+WAITING_STATES = {"requested", "requested_now", "pending"}
 STATES = {"requested", "requested_now", "pending", *CONFIRMED_STATES, "declined_news", "cancelled_news"}
 INTENTS = {"none", "book", "asap", "cancel"}
 
@@ -102,12 +107,13 @@ def load(path: Path) -> dict[str, Any]:
 def load_all(names: list[str]) -> dict[str, Any]:
     """Several scenario files as one: their chats, fixed messages and
     exceptions together. The ids must be unique across all of them."""
-    merged: dict[str, Any] = {"scenarios": [], "every_chat_sends": {}, "except_categories": []}
+    merged: dict[str, Any] = {"scenarios": [], "every_chat_sends": {}, "except_categories": [], "never_says": []}
     for name in names:
         data = load(SCENARIO_DIR / f"{name.strip()}.json")
         merged["scenarios"] += data["scenarios"]
         merged["every_chat_sends"].update(data.get("every_chat_sends") or {})
         merged["except_categories"] += data.get("except_categories") or []
+        merged["never_says"] += data.get("never_says") or []
     problems = validate(merged)
     if problems:
         raise ValueError("; ".join(problems))
@@ -164,11 +170,15 @@ def fake_booking(state: str, now: datetime, tz: str, start: Optional[datetime] =
 
 
 def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[datetime] = None,
-                 address_follows: bool = False, address_set: bool = False) -> str:
+                 address_follows: bool = False, address_set: bool = False, quiet: bool = False) -> str:
     lines = []
     if state:
         booking = fake_booking(state, now, tz, start)
-        lines.append(bookings.notice_line(booking) if booking["customer_notice"] else bookings.standing_line(booking))
+        if quiet and state in WAITING_STATES:
+            lines.append(bookings.quiet_request_line(booking))
+        else:
+            lines.append(bookings.notice_line(booking) if booking["customer_notice"]
+                         else bookings.standing_line(booking))
         if state == "confirmed_news" and address_follows:
             lines.append(bookings.ADDRESS_FOLLOWS_LINE)
     if address_set:
@@ -178,9 +188,10 @@ def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[d
 
 # ------------------------------------------------------------- checks
 
-def check_reply(text: str, step: dict[str, Any], state: Optional[str]) -> list[str]:
+def check_reply(text: str, step: dict[str, Any], state: Optional[str],
+                never_says: tuple[str, ...] = ()) -> list[str]:
     low = text.lower()
-    failed = []
+    failed = [f"says {word!r}" for word in never_says if word.lower() in low]
     expect = step.get("expect") or {}
     for word in expect.get("has_all", []):
         if word.lower() not in low:
@@ -264,6 +275,7 @@ class Context:
     http: httpx.AsyncClient
     must_send: dict[str, str] = field(default_factory=dict)
     except_categories: frozenset[str] = frozenset()
+    never_says: tuple[str, ...] = ()
 
 
 async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
@@ -280,6 +292,7 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
     address_sent = False
     first_reply = True
     address = (ctx.config["booking"].get("address") or "").strip()
+    quiet = bool(ctx.config["booking"].get("quiet_until_answered"))
     way_in = (ctx.config["booking"].get("arrival_instructions") or "").strip()
     for step in scenario["steps"]:
         if "bot" in step:
@@ -325,12 +338,19 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
                     start = slot[0]
         if start is None and (state or step.get("state_note")):
             start = booking_start(state or "", now)
+        if (quiet and state in WAITING_STATES and "customer" in step
+                and any(m["role"] == "assistant" for m in history)):
+            # As in the runtime: nothing is written until the owner answers.
+            result.turns.append({"said": step["customer"], "reply": [], "auto": [], "failed": failed,
+                                 "quiet": True})
+            live = "pending"
+            continue
         text = await ai_responder.generate_reply(
             api_key=ctx.key, history=[dict(m) for m in history], persona={}, ai_config=ctx.config["ai"],
             client=ctx.http, adaptive_style=ctx.config["human"]["adaptive_style"],
             booking_note=booking_note(state, now, ctx.tz, start,
                                       address_follows=bool(address) and not outcall and not address_sent,
-                                      address_set=bool(address)),
+                                      address_set=bool(address), quiet=quiet),
             system_prompt=ctx.prompt.text,
             language_locked=ctx.config["language_policy"] != "mirror", burst_max=burst["max_messages"],
             burst_keep_together=burst.get("keep_together", True))
@@ -345,7 +365,7 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
         # A step's expectations are about what was said around the fixed
         # messages (rates, extras), whose words would match anything.
         fixed = {_norm(t) for t in ctx.must_send.values()}
-        failed += check_reply("\n".join(p for p in parts if _norm(p) not in fixed), step, state)
+        failed += check_reply("\n".join(p for p in parts if _norm(p) not in fixed), step, state, ctx.never_says)
         verdict = policy.check_outbound(sent, ctx.config, ctx.prompt.business_text)
         suspends = ctx.config["anomaly"]["tripwire_suspend"]
         failed += [("policy would hold it AND SWITCH THE ACCOUNT OFF (trip-wire): " if r in verdict.tripwire and suspends
@@ -445,7 +465,8 @@ async def main(argv: Optional[list[str]] = None) -> int:
     started = time.monotonic()
     async with httpx.AsyncClient(timeout=90) as http:
         ctx = Context(key, bundle.config, prompt, bundle.config["timezone"], http,
-                      data.get("every_chat_sends") or {}, frozenset(data.get("except_categories") or ()))
+                      data.get("every_chat_sends") or {}, frozenset(data.get("except_categories") or ()),
+                      tuple(dict.fromkeys(data.get("never_says") or ())))
 
         async def one(scenario: dict[str, Any]) -> Result:
             async with gate:
