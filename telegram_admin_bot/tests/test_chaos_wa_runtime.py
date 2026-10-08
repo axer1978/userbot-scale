@@ -205,23 +205,30 @@ async def test_a_refused_send_is_red_not_dropped(wa, pg_pool, error):
     assert wa.in_flight_sends == {}
 
 
-async def test_feature_gaps_fail_cleanly(wa, pg_pool, tmp_path, monkeypatch):
-    """Not features yet on WhatsApp: no photo download, no file sends. They
-    must say so, not crash the handler."""
+async def test_photos_that_cannot_go_or_come_fail_cleanly(wa, pg_pool, tmp_path, monkeypatch):
+    """A photo with nothing to fetch (view-once: WhatsApp keeps it from
+    linked devices), a fetch the gateway refuses, an empty file: they say
+    so, never crash the handler."""
     chat_id = await a_chat(wa, pg_pool)
 
     async def peer():
         raise AssertionError("not needed")
 
-    message = Inbound(chat_id=chat_id, text="", external_id="P1", load_peer=peer, has_photo=True)
     wa.config["vision"]["enabled"] = True
     wa.config["vision"]["model"] = "m"
     monkeypatch.setattr(session_runtime.vision, "endpoint_from_env", lambda: ("http://x", "k"))
-    assert await wa.read_photo(chat_id, message) is None
+    no_media = Inbound(chat_id=chat_id, text="", external_id="P1", load_peer=peer, has_photo=True, raw={"type": "image"})
+    assert await wa.read_photo(chat_id, no_media) is None
+    wa.bus.replies["download_media"] = commands.CommandError("other: media download failed: 410", kind="other")
+    expired = Inbound(chat_id=chat_id, text="", external_id="P2", load_peer=peer, has_photo=True,
+                      raw={"type": "image", "media": {"kind": "image", "media_key": "a2V5", "direct_path": "/v/x"}})
+    assert await wa.read_photo(chat_id, expired) is None
+    empty = tmp_path / "x.jpg"
+    empty.write_bytes(b"")
     with pytest.raises(GatewayError) as info:
-        await wa.transport.send_file(ANNA_PN, chat_id, Path(tmp_path / "x.jpg"), False, False)
+        await wa.transport.send_file(ANNA_PN, chat_id, empty, False, False)
     assert info.value.kind == "bad_request"
-    assert wa.transport.can_send_files is False
+    assert wa.transport.can_send_files is True
 
 
 # ------------------------------------------------------------- inbox

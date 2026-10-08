@@ -96,6 +96,9 @@ function stubSocket(over: Partial<{ epoch: number; state: string; lost: string |
     me: null,
     calls,
     sendText: async (jid: string, text: string) => (calls.push(['send', jid, text]), { message_id: 'MID', ts: 1 }),
+    sendMedia: async (jid: string, media: { kind: string; data: Buffer; mimetype: string; viewOnce: boolean }) =>
+      (calls.push(['media', jid, media.kind, media.mimetype, media.data.length, media.viewOnce]), { message_id: 'MMID', ts: 2 }),
+    downloadMedia: async (req: { kind: string; directPath?: string }) => (calls.push(['download', req.kind, req.directPath]), Buffer.from('JPEGDATA')),
     read: async (jid: string, ids: string[]) => void calls.push(['read', jid, ids]),
     deleteMessages: async (jid: string, ids: string[]) => void calls.push(['delete', jid, ids]),
     presence: async (state: string, jid?: string) => void calls.push(['presence', state, jid]),
@@ -153,6 +156,29 @@ test('send_text / read / presence are fenced: exact epoch, open state, valid arg
   inject(gw, stubSocket({ state: 'closed', lost: 'loggedOut' }));
   assert.equal(await kindOf(gw.handle(cmd('send_text', { ...s, jid: '1@s.whatsapp.net', text: 'x' }))), 'session_lost');
   assert.equal(await kindOf(gw.handle(cmd('presence', { ...s, state: 'available' }))), 'session_lost');
+});
+
+test('send_media and download_media are fenced like send_text and check their arguments', async () => {
+  const gw = new Gateway(fakePool({}, new Set()), async () => true, quiet);
+  const s = { session_id: 'wa1', epoch: 4 };
+  const photo = { ...s, jid: '1@s.whatsapp.net', kind: 'image', mimetype: 'image/jpeg', data: Buffer.from('JPEG').toString('base64'), view_once: true };
+  const media = { kind: 'image', media_key: Buffer.alloc(32, 1).toString('base64'), direct_path: '/v/t62/a', mimetype: 'image/jpeg' };
+  assert.equal(await kindOf(gw.handle(cmd('send_media', photo))), 'not_connected');
+  assert.equal(await kindOf(gw.handle(cmd('download_media', { ...s, media }))), 'not_connected');
+
+  const stub = stubSocket();
+  inject(gw, stub);
+  assert.deepEqual(await gw.handle(cmd('send_media', photo)), { message_id: 'MMID', ts: 2 });
+  assert.deepEqual(await gw.handle(cmd('download_media', { ...s, media })),
+                   { data: Buffer.from('JPEGDATA').toString('base64'), bytes: 8, mimetype: 'image/jpeg' });
+  assert.deepEqual(stub.calls, [['media', '1@s.whatsapp.net', 'image', 'image/jpeg', 4, true], ['download', 'image', '/v/t62/a']]);
+
+  assert.equal(await kindOf(gw.handle(cmd('send_media', { ...photo, epoch: 5 }))), 'stale_epoch');
+  assert.equal(await kindOf(gw.handle(cmd('send_media', { ...photo, jid: '123@g.us' }))), 'bad_request');
+  assert.equal(await kindOf(gw.handle(cmd('send_media', { ...photo, mimetype: 'text/html' }))), 'bad_request');
+  assert.equal(await kindOf(gw.handle(cmd('download_media', { ...s, media: { ...media, url: 'http://x', direct_path: null } }))), 'bad_request');
+  inject(gw, stubSocket({ state: 'closed', lost: 'loggedOut' }));
+  assert.equal(await kindOf(gw.handle(cmd('send_media', photo))), 'session_lost');
 });
 
 test('delete is fenced like read: no socket, stale epoch, not open, lost', async () => {

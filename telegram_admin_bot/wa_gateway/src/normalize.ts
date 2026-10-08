@@ -10,6 +10,7 @@
  * phone_jid / lid so consumers never have to guess.
  */
 import { isDirectChatJid, isLidJid, isPnJid } from './jid.ts';
+import { inboxMedia, longValue, type InboxMedia } from './media.ts';
 
 export type InboxType = 'text' | 'image' | 'other';
 
@@ -29,6 +30,8 @@ export type InboxPayload = {
   quoted_id: string | null;
   /** Unix seconds as WhatsApp stamped the message. */
   ts: number;
+  /** An image the runtime can fetch with download_media (images only, when fetchable). */
+  media?: InboxMedia;
 };
 
 /** The subset of WAMessage we read. Structural so tests can pass literals. */
@@ -91,18 +94,12 @@ export function contentTypeOf(content: Record<string, unknown> | undefined): str
 }
 
 export function timestampSeconds(ts: MessageLike['messageTimestamp']): number {
-  if (ts === null || ts === undefined) return 0;
-  if (typeof ts === 'number') return Math.floor(ts);
-  if (typeof ts === 'string') return Math.floor(Number(ts)) || 0;
-  if ('toNumber' in ts && typeof ts.toNumber === 'function') return Math.floor(ts.toNumber());
-  if ('low' in ts) {
-    const low = ts.low >>> 0;
-    return ts.high * 4294967296 + low;
-  }
-  return 0;
+  return longValue(ts);
 }
 
-function textOf(kind: string | undefined, content: Record<string, unknown>): { type: InboxType; text: string | null; ctx: ContextInfo } {
+type Content = { type: InboxType; text: string | null; ctx: ContextInfo; media?: InboxMedia | null };
+
+function textOf(kind: string | undefined, content: Record<string, unknown>): Content {
   switch (kind) {
     case 'conversation':
       return { type: 'text', text: String(content.conversation ?? ''), ctx: null };
@@ -111,8 +108,8 @@ function textOf(kind: string | undefined, content: Record<string, unknown>): { t
       return { type: 'text', text: ext.text ?? '', ctx: ext.contextInfo };
     }
     case 'imageMessage': {
-      const img = content.imageMessage as { caption?: string | null; contextInfo?: ContextInfo };
-      return { type: 'image', text: img.caption ?? null, ctx: img.contextInfo };
+      const img = content.imageMessage as { caption?: string | null; contextInfo?: ContextInfo } & Parameters<typeof inboxMedia>[0];
+      return { type: 'image', text: img.caption ?? null, ctx: img.contextInfo, media: inboxMedia(img) };
     }
     default: {
       const inner = kind ? (content[kind] as { contextInfo?: ContextInfo } | undefined) : undefined;
@@ -142,7 +139,7 @@ export function normalizeMessage(msg: MessageLike, opts: NormalizeOptions): Inbo
   const alt = key.remoteJidAlt ?? null;
   const phoneJid = isPnJid(jid) ? jid : isPnJid(alt) ? alt : null;
   const lid = isLidJid(jid) ? jid : isLidJid(alt) ? alt : null;
-  const { type, text, ctx } = textOf(kind, content);
+  const { type, text, ctx, media } = textOf(kind, content);
 
   return {
     v: 1,
@@ -159,6 +156,7 @@ export function normalizeMessage(msg: MessageLike, opts: NormalizeOptions): Inbo
     text,
     quoted_id: ctx?.stanzaId ?? null,
     ts: timestampSeconds(msg.messageTimestamp),
+    ...(media ? { media } : {}),
   };
 }
 
@@ -172,5 +170,6 @@ export function describeForLog(p: InboxPayload): Record<string, unknown> {
     type: p.type,
     text_len: p.text?.length ?? 0,
     quoted: p.quoted_id !== null,
+    media: p.media !== undefined,
   };
 }
