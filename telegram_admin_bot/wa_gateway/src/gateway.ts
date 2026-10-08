@@ -9,6 +9,7 @@ import { GatewayError, type Command } from './bus.ts';
 import { hasCreds, ping, readSessionRow, wipeAuthState, type Pool } from './db.ts';
 import { decideClose, decideOpen, postgresSilentTooLong, watchdogVerdict, WATCHDOG_INTERVAL_MS, type SocketState } from './fencing.ts';
 import { InboxWriter } from './inbox.ts';
+import { parseDownloadRequest, parseOutboundMedia } from './media.ts';
 import { PairingRun, type PairEvent, type PairMethod } from './pairing.ts';
 import { PRESENCE_STATES, SessionSocket, type SessionEvent, type SessionSocketOptions } from './session.ts';
 
@@ -63,13 +64,16 @@ export class Gateway {
   private readonly log: pino.Logger;
   private readonly now: () => number;
   private readonly makeSocket: SessionSocketOptions['makeSocket'];
+  private readonly download: SessionSocketOptions['download'];
 
-  constructor(pool: Pool, publish: Publish, log: pino.Logger, now: () => number = Date.now, opts: { makeSocket?: SessionSocketOptions['makeSocket'] } = {}) {
+  constructor(pool: Pool, publish: Publish, log: pino.Logger, now: () => number = Date.now,
+              opts: { makeSocket?: SessionSocketOptions['makeSocket']; download?: SessionSocketOptions['download'] } = {}) {
     this.pool = pool;
     this.publish = publish;
     this.log = log;
     this.now = now;
     this.makeSocket = opts.makeSocket;
+    this.download = opts.download;
   }
 
   async handle(command: Command): Promise<unknown> {
@@ -88,6 +92,10 @@ export class Gateway {
         return this.status();
       case 'send_text':
         return this.sendText(args);
+      case 'send_media':
+        return this.sendMedia(args);
+      case 'download_media':
+        return this.downloadMedia(args);
       case 'read':
         return this.read(args);
       case 'delete':
@@ -179,6 +187,7 @@ export class Gateway {
       log: this.log,
       quiet,
       makeSocket: this.makeSocket,
+      download: this.download,
       emit: (event: SessionEvent) => void this.publish(`wa:ev:${sessionId}`, event),
       onMessage: (payload) => this.inboxFor(sessionId).enqueue(payload),
     });
@@ -277,6 +286,19 @@ export class Gateway {
     const jid = jidArg(args);
     const text = str(args, 'text', MAX_TEXT_LENGTH);
     return session.sendText(jid, text);
+  }
+
+  private async sendMedia(args: Record<string, unknown>): Promise<{ message_id: string; ts: number }> {
+    const session = this.fencedSocket(args);
+    const jid = jidArg(args);
+    return session.sendMedia(jid, parseOutboundMedia(args));
+  }
+
+  private async downloadMedia(args: Record<string, unknown>): Promise<{ data: string; bytes: number; mimetype: string | null }> {
+    const session = this.fencedSocket(args);
+    const request = parseDownloadRequest(args.media);
+    const data = await session.downloadMedia(request);
+    return { data: data.toString('base64'), bytes: data.length, mimetype: request.mimetype };
   }
 
   private async read(args: Record<string, unknown>): Promise<{ ok: true }> {

@@ -36,6 +36,20 @@ test('plain conversation text, phone-number addressing', () => {
   assert.ok(!('text' in logged), 'text never reaches the log');
 });
 
+test('an image carries what download_media needs, and the key never reaches the log', () => {
+  const key = new Uint8Array(32).fill(3);
+  const out = normalizeMessage(msg({ message: { imageMessage: { caption: 'here', mimetype: 'image/jpeg', url: 'https://mmg.whatsapp.net/a',
+                                                                directPath: '/v/t62/a', mediaKey: key, fileLength: 2048 } } }), opts);
+  assert.equal(out?.type, 'image');
+  assert.deepEqual(out?.media, { kind: 'image', mimetype: 'image/jpeg', url: 'https://mmg.whatsapp.net/a', direct_path: '/v/t62/a',
+                                 media_key: Buffer.from(key).toString('base64'), file_length: 2048 });
+  const logged = describeForLog(out!);
+  assert.equal(logged.media, true);
+  assert.ok(!JSON.stringify(logged).includes(Buffer.from(key).toString('base64')), 'the media key never reaches the log');
+  // Text has no media field at all.
+  assert.ok(!('media' in normalizeMessage(msg({ message: { conversation: 'hi' } }), opts)!));
+});
+
 test('extended text with a quoted message id', () => {
   const out = normalizeMessage(
     msg({ message: { extendedTextMessage: { text: 'reply', contextInfo: { stanzaId: 'Q1', participant: 'x@s.whatsapp.net' } } } }),

@@ -7,6 +7,7 @@
  * read, presence, logout) runs only when Python asks, fenced by the
  * gateway. Inbound messages go to the gateway's InboxWriter (step 5).
  */
+import { downloadContentFromMessage } from 'baileys';
 import type { WAPresence, WASocket, proto } from 'baileys';
 import type pino from 'pino';
 import { isLinked, usePostgresAuthState, type PostgresAuthState } from './authstate.ts';
@@ -19,6 +20,7 @@ import type { SocketState } from './fencing.ts';
 import { isPnJid } from './jid.ts';
 import { baileysLogger } from './log.ts';
 import { LruCache } from './lru.ts';
+import { collect, MAX_MEDIA_BYTES, type DownloadRequest, type OutboundMedia } from './media.ts';
 import { describeForLog, normalizeMessage, timestampSeconds, type InboxPayload, type MessageLike } from './normalize.ts';
 import { classifySendError } from './senderr.ts';
 import { GET_MESSAGE_CACHE_SIZE, makeGatewaySocket, type SocketDeps } from './socket.ts';
@@ -46,6 +48,8 @@ export type SessionSocketOptions = {
   quiet?: boolean;
   /** Tests: a fake in place of makeGatewaySocket (never connects). */
   makeSocket?: (deps: SocketDeps) => WASocket;
+  /** Tests: a fake in place of Baileys' media download. */
+  download?: typeof downloadContentFromMessage;
 };
 
 /** How many of our own sent message ids we remember for echo suppression. */
@@ -331,6 +335,43 @@ export class SessionSocket {
       return { message_id: id, ts };
     } catch (error) {
       this.failure(error);
+    }
+  }
+
+  /** One photo or video. Never retried here, like sendText. */
+  async sendMedia(jid: string, media: OutboundMedia): Promise<{ message_id: string; ts: number }> {
+    const sock = this.openSock();
+    try {
+      await this.assertOnWhatsApp(sock, jid);
+      const common = { mimetype: media.mimetype, viewOnce: media.viewOnce, ...(media.caption ? { caption: media.caption } : {}) };
+      const sent = await sock.sendMessage(jid, media.kind === 'image' ? { image: media.data, ...common } : { video: media.data, ...common });
+      const id = sent?.key?.id;
+      if (!id) throw new GatewayError('other', 'sendMessage returned no message id');
+      if (sent.message) this.outbox.set(id, sent.message);
+      this.sentIds.set(id, true);
+      const ts = timestampSeconds(sent.messageTimestamp as MessageLike['messageTimestamp']) || Math.floor(Date.now() / 1000);
+      this.log.info({ jid, wa_message_id: id, kind: media.kind, bytes: media.data.length, view_once: media.viewOnce }, 'sent media');
+      return { message_id: id, ts };
+    } catch (error) {
+      this.failure(error);
+    }
+  }
+
+  /** Fetches and decrypts an inbound image (its inbox descriptor). Only the
+   * session's live socket does this, so only the lease holder can. */
+  async downloadMedia(request: DownloadRequest): Promise<Buffer> {
+    this.openSock();
+    try {
+      const download = this.opts.download ?? downloadContentFromMessage;
+      const stream = await download(
+        { mediaKey: request.mediaKey, directPath: request.directPath, url: request.url }, request.kind);
+      const data = await collect(stream, MAX_MEDIA_BYTES);
+      this.log.info({ kind: request.kind, bytes: data.length }, 'downloaded media');
+      return data;
+    } catch (error) {
+      if (error instanceof GatewayError) throw error;
+      this.log.warn({ err: error }, 'media download failed');
+      throw new GatewayError('other', `media download failed: ${(error as Error)?.message ?? 'unknown error'}`);
     }
   }
 
