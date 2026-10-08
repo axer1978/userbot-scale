@@ -47,7 +47,8 @@ policy.check_outbound. Top-level "every_chat_sends" names messages
 message, exactly once — except in "except_categories" — and "never_says" lists
 phrases no reply may contain (any case). --candidate takes {"client": {...},
 "industry_boundaries": "...", "config": {...}} to try a prompt (and client
-config) before saving it.
+config) before saving it; "industry": {section: text} tries a whole industry
+template.
 """
 
 from __future__ import annotations
@@ -461,6 +462,9 @@ async def render(pool, tenant_id: int, candidate: Optional[Path]) -> tuple[tenan
         return bundle, bundle.prompt
     cand = json.loads(candidate.read_text(encoding="utf-8"))
     industry = bundle.layers["industry"]
+    if cand.get("industry"):
+        # A whole industry template to try (its sections), instead of the tenant's.
+        industry = prompt_layers.validate_industry({"sections": cand["industry"]})
     if cand.get("industry_boundaries"):
         industry = {"sections": {**industry["sections"], "boundaries": cand["industry_boundaries"]}}
     client = prompt_layers.validate_client(cand["client"]) if cand.get("client") else bundle.layers["client"]
