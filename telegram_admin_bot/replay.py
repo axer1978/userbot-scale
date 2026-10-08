@@ -47,7 +47,8 @@ policy.check_outbound. Top-level "every_chat_sends" names messages
 message, exactly once — except in "except_categories" — and "never_says" lists
 phrases no reply may contain (any case). --candidate takes {"client": {...},
 "industry_boundaries": "...", "config": {...}} to try a prompt (and client
-config) before saving it.
+config) before saving it; "industry": {section: text} tries a whole industry
+template.
 """
 
 from __future__ import annotations
@@ -67,6 +68,7 @@ from typing import Any, Optional
 
 import httpx
 
+import ai_limits
 import ai_responder
 import bookings
 import booking_states as bs
@@ -88,6 +90,11 @@ ALWAYS_LACKS = ("[block]", "[/block]", "[address]", "platform rules", "appointme
 UNCONFIRMED_LACKS = ("is booked", "you're booked", "it's booked", "booking is confirmed",
                      "text me 15", "15 mins before", "15 min before", "15 minutes before", "see you then",
                      "see you soon")
+# Never, in any words: that the bot is a real person, or that it is not a bot.
+HUMAN_CLAIMS = re.compile(
+    r"(?i)\b(i'?m|i am|im) (not a (bot|robot|machine|program)|not (an )?ai|real|human|a real (person|girl)"
+    r"|really typing|typing (this )?myself)\b(?!ly)|\bit'?s (really )?me typing\b|\bnot a bot\b"
+)
 # She never meets them at the entrance: they come up once the way in is sent.
 AT_THE_DOOR_LACKS = ("one sec, coming", "i'm coming down", "im coming down", "i'll come down", "i will come down",
                      "i'll open the door", "meet you downstairs", "meet you at the entrance",
@@ -226,6 +233,8 @@ def check_reply(text: str, step: dict[str, Any], state: Optional[str],
     for word in [*expect.get("lacks", []), *ALWAYS_LACKS]:
         if _found(word, low):
             failed.append(f"contains {word!r}")
+    if HUMAN_CLAIMS.search(text):
+        failed.append("claims to be a real person, or not a bot")
     if state != "way_in_sent" and DOOR_CODE in low:
         failed.append("gives the door code before he arrived")
     for word in AT_THE_DOOR_LACKS:
@@ -397,6 +406,13 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
             result.turns.append(turn)
             live = "pending"
             continue
+        if (ctx.config["replies"].get("skip_bot_questions") and not (state or "").endswith("_news")
+                and ai_limits.bot_question_only(history)):
+            # As in the runtime: a message that only asks whether it is a
+            # bot is not answered at all.
+            result.turns.append({"said": step.get("customer", ""), "reply": [], "auto": [], "failed": failed,
+                                 "skipped": "bot question"})
+            continue
         text = await ai_responder.generate_reply(
             api_key=ctx.key, history=[dict(m) for m in history], persona={}, ai_config=ctx.config["ai"],
             client=ctx.http, adaptive_style=ctx.config["human"]["adaptive_style"],
@@ -461,6 +477,9 @@ async def render(pool, tenant_id: int, candidate: Optional[Path]) -> tuple[tenan
         return bundle, bundle.prompt
     cand = json.loads(candidate.read_text(encoding="utf-8"))
     industry = bundle.layers["industry"]
+    if cand.get("industry"):
+        # A whole industry template to try (its sections), instead of the tenant's.
+        industry = prompt_layers.validate_industry({"sections": cand["industry"]})
     if cand.get("industry_boundaries"):
         industry = {"sections": {**industry["sections"], "boundaries": cand["industry_boundaries"]}}
     client = prompt_layers.validate_client(cand["client"]) if cand.get("client") else bundle.layers["client"]
