@@ -297,6 +297,10 @@ class Replies(_Strict):
         default_factory=lambda: ["ok", "okay", "thanks", "thank you", "paldies", "labi", "спасибо", "ок", "👍", "🙏"],
         max_length=200,
     )
+    # Don't reply when the customer's messages only ask whether they are
+    # talking to a bot, an AI or a real person (ai_limits.is_bot_question):
+    # no answer and no tokens. Their first message still gets the first reply.
+    skip_bot_questions: bool = False
     # When the bot should not answer, in your own words. Empty = it always
     # answers. When set, the reply writer may decline to answer a message
     # that matches; each time is noted in the chat and in the audit log.

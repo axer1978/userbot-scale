@@ -92,6 +92,65 @@ def is_acknowledgement(text: str, words: Sequence[str]) -> bool:
     return False
 
 
+# "Are you a bot?" in its many forms (English, Russian, Latvian).
+_WHAT = (r"(bot|robot|chat ?bot|ai|a ?i|artificial intelligence|machine|computer|program|automated|automatic"
+         r"|auto ?reply|auto ?responder|real person|real human|real girl|live person|human|a person|real)")
+_BOT_QUESTION = re.compile("|".join([
+    rf"\b(are|r|ar) (you|u|ya) (a |an |even |really |actually )?{_WHAT}\b(?! name)",
+    rf"\b(is|iz) (this|it|that) (a |an |really |actually |even )?{_WHAT}\b(?! name)",
+    r"\b(is|iz) (this|it|that) (really |actually )?(you|her) (typing|writing|texting|answering|replying)\b",
+    r"\b(am i|i am|im|i m) (talking|speaking|chatting|texting|writing) (to|with) (a |an )?"
+    r"(bot|robot|ai|machine|computer|program|real|human|person|real person|live person)\b",
+    r"\bwho (is |am i |are you |r u )?(typing|writing|texting|answering|replying|talking to)\b",
+    r"\b(you|u) (a |an )?(bot|robot|ai)\b",
+    r"\b(looks|sounds|seems) (so |very |kinda |like )?(automatic|automated|a bot|ai|an ai|a robot)\b",
+    r"\bauto ?(reply|responder|response|answer)\b",
+    r"^(a )?(bot|ai|robot|real|for real|human)$",
+    r"(ты|вы|это) (что )?(бот|робот|ии|нейросеть|автоответчик|программа|искусственный интеллект)",
+    r"(ты|вы) (реальн\w*|жив\w*|настоящ\w*)(?! имя)",
+    r"(жив\w*|реальн\w*|настоящ\w*) человек",
+    r"(ты|она) (сама )?(пишешь|отвечаешь|пишет|отвечает)",
+    r"\bбот\b",
+    r"\b(tu esi|vai tu esi|vai tas ir|vai šis ir|vai tā ir) (bots|robots|mākslīgais intelekts|ai|mi|īsta|īsts"
+    r"|reāla|reāls|dzīva|dzīvs|cilvēks)\b",
+    r"\b(bots|robots)\b",
+    r"(īsts|dzīvs|reāls) cilvēks",
+]))
+# What may be left around such a question and still be only that question.
+_FILLER = frozenset("""
+hi hey hello hii heyy hmm hm ok okay so lol haha ahah lmao xd wait btw just quick question honest honestly be
+tell me the truth pls please plz seriously really actually curious wondering or and yes no right love babe baby
+dear sweetie you u ur i a an is it this that some answering replying typing writing first before now even
+привет ну а или честно скажи мне правда серьезно серьёзно просто интересно отвечает пишет ты это
+sveiki čau nu vai godīgi saki tiešām atbild raksta tu
+""".split())
+
+
+def is_bot_question(text: str) -> bool:
+    """The whole message only asks whether they are talking to a bot, an AI
+    or a real person ("are you a bot?", "is this really you typing?",
+    "ты бот?", "vai tu esi īsta?"), with nothing else to answer."""
+    normal = " ".join(re.sub(r"[^\w\s]", " ", (text or "").lower()).split())
+    if not normal or not _BOT_QUESTION.search(normal):
+        return False
+    rest = _BOT_QUESTION.sub(" ", normal).split()
+    if any(ch.isdigit() for ch in "".join(rest)):
+        return False
+    return len([word for word in rest if word not in _FILLER]) <= 2
+
+
+def bot_question_only(history: Sequence[dict[str, Any]]) -> bool:
+    """Their messages since our last one only ask whether it is a bot, and
+    this is not their first message (that one gets the first reply)."""
+    theirs = []
+    for message in reversed(history):
+        if message.get("role") != "user":
+            break
+        theirs.append(message.get("content") or "")
+    return (bool(theirs) and any(m.get("role") == "assistant" for m in history)
+            and all(is_bot_question(text) for text in theirs))
+
+
 async def reply_limit(pool: asyncpg.Pool, tenant_id: int, chat_id: int, replies: dict[str, Any]) -> str:
     """Why the bot must not write another message in this chat now, or "".
     Windows are counted on the database clock, the one that stamped the

@@ -23,6 +23,7 @@ import booking_states as bs
 import media
 import session_runtime
 import tenants
+import unanswered
 import vision
 
 pytestmark = [pytest.mark.requires_pg, pytest.mark.asyncio]
@@ -276,6 +277,26 @@ async def test_quiet_until_answered_still_sends_photos_they_ask_for(world, monke
     w.script["reply"] = "yes love, booked for tomorrow 15:00"
     await owner(w, "YES 1")
     assert w.sent[CUSTOMER][-1] == "yes love, booked for tomorrow 15:00"
+
+
+async def test_a_question_whether_it_is_a_bot_gets_no_reply_and_no_model_call(world):
+    w = world
+    w.app.config["replies"]["skip_bot_questions"] = True
+    # A first message still gets the first reply.
+    w.script["reply"] = "hi love, prices"
+    await customer(w, "are you a bot?")
+    assert w.sent[CUSTOMER] == ["hi love, prices"]
+
+    calls = w.script["calls"]
+    await customer(w, "r u a bot?")
+    await customer(w, "ты бот?")
+    assert w.script["calls"] == calls and w.sent[CUSTOMER] == ["hi love, prices"]
+    assert await unanswered.list_items(w.app.pool, [w.app.tenant_id]) == []
+
+    # Something else to answer: the model writes the reply.
+    w.script["reply"] = "1 hour 200 love"
+    await customer(w, "and how much for an hour?")
+    assert w.sent[CUSTOMER][-1] == "1 hour 200 love"
 
 
 async def test_quiet_until_answered_still_answers_a_first_message_with_a_time(world):

@@ -128,12 +128,16 @@ ACK_SKIP = "the message is only an acknowledgement"
 # ... and for "I'm here" once the way in (booking.arrival_instructions) went
 # out: that was the answer. Not queued either.
 WAY_IN_SKIP = "they have arrived and the way in was sent"
+# ... and for a message that only asks whether it is a bot, with
+# replies.skip_bot_questions on: it is not answered at all. Not queued.
+BOT_SKIP = "the message only asks whether it is a bot"
 # ... and while a time they asked for waits for the owner, with
 # booking.quiet_until_answered on: the owner's answer is the reply.
 OWNER_SKIP = "their time waits for the owner's answer"
 # In staging, a chat that is not a test chat gets this note at most once an
 # hour, so a busy chat's history isn't all notes.
 STAGING_NOTE = "Staging: not answered — not a test chat."
+
 STAGING_NOTE_SECONDS = 3600
 # The database dropping out for a moment (a restart, a failover):
 # storing an incoming message is tried this many times, waiting
@@ -1767,6 +1771,8 @@ class SessionRuntime:
         if (replies["skip_acknowledgements"] and last.get("role") == "user"
                 and ai_limits.is_acknowledgement(last.get("content", ""), replies["acknowledgements"])):
             return ACK_SKIP
+        if replies["skip_bot_questions"] and ai_limits.bot_question_only(history):
+            return BOT_SKIP
         return await ai_limits.reply_limit(self.pool, self.tenant_id, chat_id, replies)
 
     async def skip_reply(self, chat_id: int, reason: str) -> None:
@@ -1776,7 +1782,7 @@ class SessionRuntime:
         # A reply limit or the tenant's no-reply instruction left a
         # customer without an answer: queued. A bare acknowledgement
         # ("ok", "thanks") needed none, so it is not.
-        if reason not in (ACK_SKIP, WAY_IN_SKIP, OWNER_SKIP):
+        if reason not in (ACK_SKIP, WAY_IN_SKIP, OWNER_SKIP, BOT_SKIP):
             await self.queue_unanswered(chat_id, unanswered.SKIPPED, reason)
 
     async def check_policy(
