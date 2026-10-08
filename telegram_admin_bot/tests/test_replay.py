@@ -93,6 +93,13 @@ def test_short_check_words_match_whole_words_only():
     assert replay.check_reply("I'm Nikol's automated assistant, an AI", step, None) == []
 
 
+def test_claiming_to_be_a_person_fails():
+    step = {"customer": "are you real? how much?"}
+    for text in ("yes love i'm real 😘 1 hour 200", "I'm not a bot love", "it's me typing love", "im human 😘"):
+        assert replay.check_reply(text, step, None) == ["claims to be a real person, or not a bot"], text
+    assert replay.check_reply("1 hour 200 love, you'll see me in person 😘 really", step, None) == []
+
+
 def test_photos_are_checked_both_ways():
     asks = {"customer": "pics?", "photos": True}
     assert replay.check_reply("here love", asks, None) == ["sent no photos"]

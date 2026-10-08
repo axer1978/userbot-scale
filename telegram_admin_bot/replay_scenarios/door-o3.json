@@ -4988,12 +4988,6 @@
      "intent": "none",
      "expect": {
       "has_any": [
-       "it's me",
-       "its me",
-       "me love",
-       "only me",
-       "just me",
-       "myself",
        "hour",
        "time",
        "love"
@@ -5001,9 +4995,13 @@
       "lacks": [
        "agency",
        "manager",
-       "assistant",
        "team",
-       "our girls"
+       "our girls",
+       "assistant",
+       "automated",
+       "i'm a bot",
+       "i am a bot",
+       "i'm an ai"
       ]
      }
     },
