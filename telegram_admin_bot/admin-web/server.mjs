@@ -1,6 +1,6 @@
-// The admin panel's front door: serves the Next.js app and passes /api/*,
-// /ws/* and panel.py's own pages (/owner/, /manager/, /terms/) through to
-// the FastAPI panel unchanged.
+// The admin panel's front door: serves the Next.js app (the admin panel and
+// the client dashboard at /owner) and passes /api/*, /ws/* and panel.py's
+// own pages (/manager/, /terms/) through to the FastAPI panel unchanged.
 //
 // Why not next.config rewrites: Next's rewrite proxy sets Host to the
 // upstream's address (changeOrigin), and panel.py refuses every POST/PUT/
@@ -32,9 +32,9 @@ if (panel.protocol !== "http:") {
   throw new Error(`PANEL_URL must be an http:// address, got ${panel.href}`);
 }
 
-// panel.py's own pages: the client dashboard, the moderator panel and the
-// public terms.
-const PANEL_PAGES = ["/owner", "/manager", "/terms"];
+// panel.py's own pages: the moderator panel and the public terms. (The client
+// dashboard at /owner is a Next.js page now; its API, /api/owner/*, is under /api.)
+const PANEL_PAGES = ["/manager", "/terms"];
 
 /** Routes owned by panel.py, never by Next. */
 function isPanelPath(url = "/") {

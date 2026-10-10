@@ -1,0 +1,6141 @@
+{
+ "every_chat_sends": {
+  "rates message": "1 time 💦💦\n30 minutes 100 euro\n\n2 times 💦💦\n1 hour 200 euro\nIncall 200\nOutcall 200+ 🚕\n\nBest company in Latvia 🇱🇻🔥",
+  "extras message": "Kissing +50\nUnprotected oral sex/OWP +50\nDomination +50\nRole-play +50\nThreesome (with a couple) +100\n69 +50"
+ },
+ "except_categories": [
+  "under 18"
+ ],
+ "never_says": [
+  "let me check",
+  "checking",
+  "i'll ask",
+  "i will ask",
+  "my manager",
+  "the agency",
+  "our girls"
+ ],
+ "scenarios": [
+  {
+   "id": "s3-01",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hi, are you independent or with an agency?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok good. 22:00 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-03",
+   "category": "bot or person",
+   "steps": [
+    {
+     "customer": "are you a bot? 😅",
+     "intent": "none",
+     "expect": {
+      "lacks": [
+       "not a bot",
+       "not a robot",
+       "not ai",
+       "not an ai",
+       "assistant",
+       "automated",
+       "i'm a bot",
+       "i am a bot",
+       "i'm an ai"
+      ]
+     }
+    },
+    {
+     "customer": "haha ok. can I come 21:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "you there?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "im here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-04",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "are those photos really you? or is it an agency using models",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "yes",
+       "photos",
+       "real"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok. and when i come its only you in the flat?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "yes"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "tonight at 23:00 ok?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "midnight then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "I'm at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-05",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hello, do you have other girls too?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "send another",
+       "pick a girl",
+       "choose a girl"
+      ]
+     }
+    },
+    {
+     "customer": "ok then you. 22:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "23:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok, on the way, 15 minutes",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "just arrived love",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-06",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hey. quick q, when I ask for a time who decides, you or your boss?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally"
+      ],
+      "lacks": [
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok good. today 21:15?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "sorry just nervous haha",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "taxi, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-07",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "привет, ты от агентства или сама по себе?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "сама",
+       "одна",
+       "без агентства",
+       "не агентство",
+       "нет агентства",
+       "никакого агентства",
+       "независим",
+       "только я",
+       "это я",
+       "лично"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ок. сегодня в 22:00 можно?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "алё?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love",
+       "подтвер",
+       "забронир",
+       "записан",
+       "жду",
+       "хорошо",
+       "отлично",
+       "напиши",
+       "договор",
+       "минут"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "не подходит",
+       "не получится"
+      ]
+     }
+    },
+    {
+     "customer": "выезжаю, буду минут через 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem",
+       "отлично",
+       "жду",
+       "хорошо",
+       "сколько",
+       "ок",
+       "буду",
+       "супер"
+      ]
+     }
+    },
+    {
+     "customer": "я внизу",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-08",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "sveiki, tu strādā pati vai caur aģentūru?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "pati",
+       "viena",
+       "neatkarīg",
+       "bez aģentūr",
+       "nav aģentūr",
+       "tikai es",
+       "es pati"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "labi. šovakar 21:00 der?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "vai tu tur?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love",
+       "rezerv",
+       "labi",
+       "jā",
+       "uzraksti",
+       "minūt",
+       "gaidu",
+       "apstiprin"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "neder",
+       "nesanāk"
+      ]
+     }
+    },
+    {
+     "customer": "braucu, būšu pēc 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem",
+       "labi",
+       "gaidu",
+       "cik",
+       "lieliski",
+       "jauki"
+      ]
+     }
+    },
+    {
+     "customer": "esmu klāt",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-09",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hi, is this nikol's private number or an agency line? want to come 22:00 tonight",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "on my way",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-10",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hi, how does it work with you? do i book through someone or directly with you?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "directly",
+       "with me",
+       "tell me",
+       "your time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher"
+      ]
+     }
+    },
+    {
+     "customer": "good. so i just text you the time and come?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "yes",
+       "time",
+       "exactly",
+       "right"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok 22:15",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "on my way 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "outside the building",
+     "booking": "arrived"
+    },
+    {
+     "customer": "is it you who opens the door or someone else?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "come up",
+       "flat",
+       "floor",
+       "scroll",
+       "sent",
+       "stairs"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "s3-11",
+   "category": "bot or person",
+   "steps": [
+    {
+     "customer": "hi",
+     "intent": "none"
+    },
+    {
+     "customer": "is this really you typing or some auto reply?",
+     "intent": "none",
+     "expect": {
+      "lacks": [
+       "not a bot",
+       "not a robot",
+       "not ai",
+       "not an ai",
+       "assistant",
+       "automated",
+       "i'm a bot",
+       "i am a bot",
+       "i'm an ai"
+      ]
+     }
+    },
+    {
+     "customer": "lol ok. and if she's busy, are there other girls?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "send another",
+       "pick a girl",
+       "choose a girl"
+      ]
+     }
+    },
+    {
+     "customer": "fine, just her then. 23:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok leaving now 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "at your entrance now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-13",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "price?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "100",
+       "200"
+      ]
+     }
+    },
+    {
+     "customer": "do you have a manager or a booker, or is it all you?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "no booker",
+       "all me"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "tonight 22:15?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "great, leaving in 10, so around 15 min to you",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-14",
+   "category": "bot or person",
+   "steps": [
+    {
+     "customer": "hi gorgeous 😍",
+     "intent": "none"
+    },
+    {
+     "customer": "who reads my messages, you or an assistant?",
+     "intent": "none",
+     "expect": {
+      "lacks": [
+       "not a bot",
+       "not a robot",
+       "not ai",
+       "not an ai",
+       "assistant",
+       "automated",
+       "i'm a bot",
+       "i am a bot",
+       "i'm an ai"
+      ]
+     }
+    },
+    {
+     "customer": "ok ok. what about 21:45 today",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "anyone?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "on my way 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "here, 2 min early",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-15",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hey. the last girl i booked made me wait 2 hours for an answer, some agency thing. never again",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "sorry",
+       "won't",
+       "not"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "so do you work the same way?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "no love",
+       "not",
+       "don't"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok 22:00 then",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "hello",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "standing in front of the house",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-16",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "how much for an hour",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200"
+      ]
+     }
+    },
+    {
+     "customer": "do you work alone?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "yes"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "now? im 10 min from you",
+     "booking": "requested_now",
+     "intent": "book"
+    },
+    {
+     "customer": "??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "walking",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "at the door",
+     "booking": "arrived"
+    },
+    {
+     "customer": "code doesnt work?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "come up",
+       "flat",
+       "floor",
+       "scroll",
+       "sent",
+       "stairs"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "s3-17",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hey, are you free tonight?",
+     "intent": "none"
+    },
+    {
+     "customer": "can you check your calendar and tell me the best time?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "time",
+       "when",
+       "hour"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok 21:30",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "taxi, about 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "im at your building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-18",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "are you the Nikol from Euro Girls? is that an agency profile?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "yes"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "euro girls",
+       "eurogirls"
+      ]
+     }
+    },
+    {
+     "customer": "ok. 22:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "23:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here babe",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-19",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hey",
+     "intent": "none"
+    },
+    {
+     "customer": "can you send me a quick voice message? want to hear you before i come",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "person",
+       "time",
+       "voice",
+       "see me",
+       "when",
+       "hour"
+      ],
+      "lacks": [
+       "sending now",
+       "here it is",
+       "just sent"
+      ]
+     }
+    },
+    {
+     "customer": "hmm ok. 21:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "..",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "coming, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "parked, im at the entrance",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-20",
+   "category": "questions while booking",
+   "steps": [
+    {
+     "customer": "do i need to send a deposit first? so many scammers on these sites",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash",
+       "when we meet",
+       "no deposit",
+       "in person"
+      ],
+      "lacks": [
+       "iban"
+      ]
+     }
+    },
+    {
+     "customer": "ok good. 22:00 today",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "in the car, 15 minutes",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "at the gate",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-21",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hey, 22:00 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "be honest, is this an agency? dont care, just want to know",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "hello??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "heading to you, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "here now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-22",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hi",
+     "intent": "none"
+    },
+    {
+     "customer": "ok 21:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "who decides if its ok, you or your boss?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "im waiting lol",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "so who said no, you or your boss? 😂",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "me",
+       "time"
+      ],
+      "lacks": [
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "boss said",
+       "boss says"
+      ]
+     }
+    },
+    {
+     "customer": "22:00 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "I'm outside, which way?",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-23",
+   "category": "bot or person",
+   "steps": [
+    {
+     "customer": "hello",
+     "intent": "none"
+    },
+    {
+     "customer": "now?",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "wait that message looks automatic 😳 r u a bot?",
+     "booking": "confirmed",
+     "expect": {
+      "lacks": [
+       "not a bot",
+       "not a robot",
+       "not ai",
+       "not an ai",
+       "assistant",
+       "automated",
+       "i'm a bot",
+       "i am a bot",
+       "i'm an ai"
+      ]
+     }
+    },
+    {
+     "customer": "ok whatever, walking, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "in front of the building",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which door?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "come up",
+       "flat",
+       "floor",
+       "scroll",
+       "sent",
+       "stairs"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "s3-24",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "price for 1 hour?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200"
+      ]
+     }
+    },
+    {
+     "customer": "23:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "if youre busy do you have other girls?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "any later time?",
+     "expect": {
+      "has_any": [
+       "time",
+       "when",
+       "hour"
+      ]
+     }
+    },
+    {
+     "customer": "00:30",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-25",
+   "category": "quiet while waiting",
+   "steps": [
+    {
+     "customer": "привет",
+     "intent": "none"
+    },
+    {
+     "customer": "можно в 23:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "а поцелуи входят в цену?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ау",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love",
+       "подтвер",
+       "забронир",
+       "записан",
+       "жду",
+       "хорошо",
+       "отлично",
+       "напиши",
+       "договор",
+       "минут"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "не подходит",
+       "не получится"
+      ]
+     }
+    },
+    {
+     "customer": "еду, 20 минут",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem",
+       "отлично",
+       "жду",
+       "хорошо",
+       "сколько",
+       "ок",
+       "буду",
+       "супер"
+      ]
+     }
+    },
+    {
+     "customer": "приехал, я у подъезда",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-26",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "good evening",
+     "intent": "none"
+    },
+    {
+     "customer": "22:30 possible?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "if you need to ask someone, tell them im a regular 😉",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "i asked",
+       "they said",
+       "told them"
+      ]
+     }
+    },
+    {
+     "customer": "great, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "im here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-27",
+   "category": "quiet while waiting",
+   "steps": [
+    {
+     "customer": "hi love",
+     "intent": "none"
+    },
+    {
+     "customer": "21:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "send me one more pic while i wait? 😏",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true
+    },
+    {
+     "customer": "hello",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok on my way",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "I'm at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-28",
+   "category": "quiet while waiting",
+   "steps": [
+    {
+     "customer": "sup",
+     "intent": "none"
+    },
+    {
+     "customer": "23:15?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "anyone there",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "seriously?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok ok sorry, leaving, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "just arrived love",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-29",
+   "category": "changes and cancels",
+   "steps": [
+    {
+     "customer": "hey can i come at 22:00? first time with you 🙈",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "i cant wait any longer, forget it",
+     "booking": "cancelled_news",
+     "state_note": "pending",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "another time",
+       "love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "actually sorry, tomorrow 20:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-30",
+   "category": "bot or person",
+   "steps": [
+    {
+     "customer": "hi",
+     "intent": "none"
+    },
+    {
+     "customer": "22:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "hmm is this an AI answering?",
+     "intent": "none",
+     "expect": {
+      "lacks": [
+       "not a bot",
+       "not a robot",
+       "not ai",
+       "not an ai",
+       "assistant",
+       "automated",
+       "i'm a bot",
+       "i am a bot",
+       "i'm an ai"
+      ]
+     }
+    },
+    {
+     "customer": "ok whatever. 23:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "coming, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "outside the building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-31",
+   "category": "questions while booking",
+   "steps": [
+    {
+     "customer": "20:00 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "can i pay half now to hold it?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "so can i send the half now?",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "cash",
+       "when we meet",
+       "in person"
+      ],
+      "lacks": [
+       "iban"
+      ]
+     }
+    },
+    {
+     "customer": "ok fine. leaving now, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "at your entrance now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-32",
+   "category": "questions while booking",
+   "steps": [
+    {
+     "customer": "hey",
+     "intent": "none"
+    },
+    {
+     "customer": "21:00 tomorrow?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "can you do 3 hours?",
+     "booking": "pending"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "so is 3 hours possible?",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "30",
+       "1 hour",
+       "only",
+       "don't",
+       "dont",
+       "not",
+       "max"
+      ],
+      "lacks": [
+       "600"
+      ]
+     }
+    },
+    {
+     "customer": "ok 1 hour then. 15 min to you",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "arrived",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-33",
+   "category": "questions while booking",
+   "steps": [
+    {
+     "customer": "hi, can my friend come and just watch?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "dont",
+       "not",
+       "only",
+       "couple",
+       "just you"
+      ]
+     }
+    },
+    {
+     "customer": "ok just me then. 22:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "walking, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "here, 2 min early",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-34",
+   "category": "questions while booking",
+   "steps": [
+    {
+     "customer": "i come with my wife, is a threesome possible?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "100",
+       "couple",
+       "threesome",
+       "300"
+      ]
+     }
+    },
+    {
+     "customer": "great. tomorrow 21:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "my wife is a bit shy btw 😅",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "we're leaving, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "we're here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-35",
+   "category": "questions while booking",
+   "steps": [
+    {
+     "customer": "hi do you do 69? how much with 1 hour",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "250",
+       "50"
+      ]
+     }
+    },
+    {
+     "customer": "ok 22:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "15 min, on the way",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "standing in front of the house",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-36",
+   "category": "questions while booking",
+   "steps": [
+    {
+     "customer": "hey how much for 30 min",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "100"
+      ]
+     }
+    },
+    {
+     "customer": "can i pay with card at your place?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash"
+      ],
+      "lacks": [
+       "iban"
+      ]
+     }
+    },
+    {
+     "customer": "ok no problem, ill go to the atm. 21:30",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "im at your building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-37",
+   "category": "questions while booking",
+   "steps": [
+    {
+     "customer": "hi, do you do role-play? how much extra",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "50",
+       "role-play",
+       "roleplay",
+       "role play"
+      ]
+     }
+    },
+    {
+     "customer": "nice. in 40 min possible?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok walking now",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-38",
+   "category": "questions while booking",
+   "steps": [
+    {
+     "customer": "do you do massage too?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "dont",
+       "not",
+       "only"
+      ]
+     }
+    },
+    {
+     "customer": "can you stay overnight then?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "dont",
+       "not",
+       "only",
+       "1 hour",
+       "30 min",
+       "max"
+      ]
+     }
+    },
+    {
+     "customer": "ok just 1 hour. 23:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "22:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here babe",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-39",
+   "category": "outcall",
+   "steps": [
+    {
+     "customer": "hi, can you bring a second girl?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "dont",
+       "not",
+       "only",
+       "just me"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok then just you, come to my hotel. Bergs, room 412, 23:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "anyone there?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "yes love",
+       "there",
+       "address",
+       "confirmed"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "15 mins before",
+       "15 min before"
+      ]
+     }
+    },
+    {
+     "customer": "great, ill tell reception you're coming",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you",
+       "love",
+       "there",
+       "ok"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "s3-40",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "is it your own flat or one of those agency apartments?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "my flat",
+       "my place",
+       "my apartment",
+       "mine"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok good. 22:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "on the way 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "parked, im at the entrance",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-41",
+   "category": "outcall",
+   "steps": [
+    {
+     "customer": "can you come to my hotel at 23:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "Radisson Blu Latvija",
+     "booking": "pending"
+    },
+    {
+     "customer": "are you coming alone?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "yes love",
+       "there",
+       "address",
+       "confirmed"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "15 mins before",
+       "15 min before"
+      ]
+     }
+    },
+    {
+     "customer": "room 1104",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you",
+       "love",
+       "there"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "s3-42",
+   "category": "outcall",
+   "steps": [
+    {
+     "customer": "can you come to my place tonight?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "outcall",
+       "taxi",
+       "200",
+       "where"
+      ]
+     }
+    },
+    {
+     "customer": "Elizabetes iela 12, apt 5. 22:30",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "my building has a code, ill send it before you come",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "yes love",
+       "there",
+       "address",
+       "confirmed"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "15 mins before",
+       "15 min before"
+      ]
+     }
+    },
+    {
+     "customer": "great. and the taxi i pay you in cash when you get here?",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "yes",
+       "cash",
+       "taxi",
+       "of course",
+       "sure"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "s3-43",
+   "category": "changes and cancels",
+   "steps": [
+    {
+     "customer": "hi",
+     "intent": "none"
+    },
+    {
+     "customer": "22:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "can we make it 23:30 instead?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok going now, 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "at the gate",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-44",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "150 for an hour?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "fixed",
+       "sorry",
+       "200"
+      ]
+     }
+    },
+    {
+     "customer": "is that your decision or someone elses?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "fixed",
+       "my prices",
+       "mine",
+       "my decision",
+       "i set"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher"
+      ]
+     }
+    },
+    {
+     "customer": "fine. 21:30",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "already here, a bit early",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-45",
+   "category": "questions while booking",
+   "steps": [
+    {
+     "customer": "can I take photos of you there?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "don't",
+       "dont",
+       "not",
+       "only",
+       "no photo"
+      ]
+     },
+     "photos": false
+    },
+    {
+     "customer": "ok no photos. now? i'm close",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "2 min away",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "here now",
+     "booking": "arrived"
+    },
+    {
+     "customer": "buzz me in?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "come up",
+       "flat",
+       "floor",
+       "scroll",
+       "sent",
+       "stairs"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "s3-46",
+   "category": "changes and cancels",
+   "steps": [
+    {
+     "customer": "free now? 10 min away",
+     "booking": "requested_now",
+     "intent": "book"
+    },
+    {
+     "customer": "hello? your profile says online",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ok forget now, what about 22:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok leaving at 21:40, 20 min drive",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "I'm outside, which way?",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-47",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hi love 😘",
+     "intent": "none"
+    },
+    {
+     "customer": "21:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "22:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok you say, what time works?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "time",
+       "when",
+       "hour"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "23:30",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-48",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hi",
+     "intent": "none"
+    },
+    {
+     "customer": "22:15?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "btw its really you i'll meet? not some other agency girl? just want to be sure",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "yes",
+       "photos"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "im here",
+     "booking": "arrived"
+    },
+    {
+     "customer": "who opens the door? you?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "come up",
+       "flat",
+       "floor",
+       "scroll",
+       "sent",
+       "stairs"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "s3-49",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hi love",
+     "intent": "none"
+    },
+    {
+     "customer": "now?",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "im outside",
+     "booking": "arrived"
+    },
+    {
+     "customer": "ok coming up. i pay you directly right? not some guy at the door",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "cash",
+       "yes",
+       "directly",
+       "to me",
+       "of course",
+       "sure",
+       "only me",
+       "just me"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher"
+      ]
+     }
+    },
+    {
+     "customer": "which flat again",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "come up",
+       "flat",
+       "floor",
+       "scroll",
+       "sent",
+       "stairs"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "s3-50",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hello. the girl before, her agency charged me extra at the door. will you do that?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "fixed",
+       "no extra",
+       "200",
+       "100",
+       "price",
+       "only",
+       "cash",
+       "never",
+       "not",
+       "won't",
+       "don't"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "tomorrow then",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "time",
+       "when",
+       "hour"
+      ]
+     }
+    },
+    {
+     "customer": "20:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "I'm at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-51",
+   "category": "quiet while waiting",
+   "steps": [
+    {
+     "customer": "hey free now?",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "customer": "so 30 min is 100 right?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "ok coming, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-52",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "добрый вечер",
+     "intent": "none"
+    },
+    {
+     "customer": "сегодня в 21:30 получится?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "это ты решаешь или администратор?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time",
+       "не подходит",
+       "не получится",
+       "другое время",
+       "какое время",
+       "извини",
+       "время"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "админ",
+       "менеджер"
+      ]
+     }
+    },
+    {
+     "customer": "тогда 22:30",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love",
+       "подтвер",
+       "забронир",
+       "записан",
+       "жду",
+       "хорошо",
+       "отлично",
+       "напиши",
+       "договор",
+       "минут"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "не подходит",
+       "не получится"
+      ]
+     }
+    },
+    {
+     "customer": "выехал, буду через 15 минут",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem",
+       "отлично",
+       "жду",
+       "хорошо",
+       "сколько",
+       "ок",
+       "буду",
+       "супер"
+      ]
+     }
+    },
+    {
+     "customer": "я у дома",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-53",
+   "category": "bot or person",
+   "steps": [
+    {
+     "customer": "hi, are you working tonight?",
+     "intent": "none"
+    },
+    {
+     "customer": "later",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "time",
+       "when",
+       "hour"
+      ]
+     }
+    },
+    {
+     "customer": "before i say a time, is this a real person or a bot answering?",
+     "intent": "none",
+     "expect": {
+      "lacks": [
+       "not a bot",
+       "not a robot",
+       "not ai",
+       "not an ai",
+       "assistant",
+       "automated",
+       "i'm a bot",
+       "i am a bot",
+       "i'm an ai"
+      ]
+     }
+    },
+    {
+     "customer": "ok 22:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "leaving, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "just arrived love",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-54",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hi",
+     "intent": "none"
+    },
+    {
+     "customer": "23:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "tell your manager to hurry",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "i know youre an agency",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "fine, answer me then",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "on my way 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-55",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hey, do you know Lena? shes from the same agency",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "don't know",
+       "dont know",
+       "not with",
+       "sorry"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok. 22:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "coming 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "outside the building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-56",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "sveiki, rīt vari?",
+     "intent": "none"
+    },
+    {
+     "customer": "rīt 19:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "tev ir menedžeris, kuram jāprasa, vai tu pati izlem?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love",
+       "rezerv",
+       "labi",
+       "jā",
+       "uzraksti",
+       "minūt",
+       "gaidu",
+       "apstiprin"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "neder",
+       "nesanāk"
+      ]
+     }
+    },
+    {
+     "customer": "izbraucu, būšu pēc 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem",
+       "labi",
+       "gaidu",
+       "cik",
+       "lieliski",
+       "jauki"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie durvīm",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-57",
+   "category": "bot or person",
+   "steps": [
+    {
+     "customer": "hi, are you a real person? its 5am and i cant sleep",
+     "intent": "none",
+     "expect": {
+      "lacks": [
+       "not a bot",
+       "not a robot",
+       "not ai",
+       "not an ai",
+       "assistant",
+       "automated",
+       "i'm a bot",
+       "i am a bot",
+       "i'm an ai"
+      ]
+     }
+    },
+    {
+     "customer": "can i come at 05:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "ok 22:00 tonight then",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "at your entrance now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-58",
+   "category": "changes and cancels",
+   "steps": [
+    {
+     "customer": "hello",
+     "intent": "none"
+    },
+    {
+     "customer": "21:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "sorry something came up, cant tonight",
+     "booking": "cancelled_news",
+     "state_note": "confirmed",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "another time",
+       "love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "same time tomorrow ok?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love",
+       "tomorrow"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "arrived",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-59",
+   "category": "bot or person",
+   "steps": [
+    {
+     "customer": "hi, pls tell me честно, это бот отвечает или ты?",
+     "intent": "none",
+     "expect": {
+      "lacks": [
+       "not a bot",
+       "not a robot",
+       "not ai",
+       "not an ai",
+       "не бот",
+       "не робот",
+       "assistant",
+       "automated",
+       "i'm a bot",
+       "i am a bot",
+       "i'm an ai"
+      ]
+     }
+    },
+    {
+     "customer": "ok. now? i'm near",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "customer": "и ты точно одна?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love",
+       "подтвер",
+       "забронир",
+       "записан",
+       "жду",
+       "хорошо",
+       "отлично",
+       "напиши",
+       "договор",
+       "минут"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "не подходит",
+       "не получится"
+      ]
+     }
+    },
+    {
+     "customer": "ok 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem",
+       "отлично",
+       "жду",
+       "хорошо",
+       "сколько",
+       "ок",
+       "буду",
+       "супер"
+      ]
+     }
+    },
+    {
+     "customer": "here, 2 min early",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-61",
+   "category": "bot or person",
+   "steps": [
+    {
+     "customer": "sveiki",
+     "intent": "none"
+    },
+    {
+     "customer": "godīgi, es rakstu ar dzīvu cilvēku vai ar botu?",
+     "intent": "none",
+     "expect": {
+      "lacks": [
+       "not a bot",
+       "not a robot",
+       "not ai",
+       "not an ai",
+       "neesmu bots",
+       "neesmu robots",
+       "nav bots",
+       "assistant",
+       "automated",
+       "i'm a bot",
+       "i am a bot",
+       "i'm an ai"
+      ]
+     }
+    },
+    {
+     "customer": "labi. šodien 21:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love",
+       "rezerv",
+       "labi",
+       "jā",
+       "uzraksti",
+       "minūt",
+       "gaidu",
+       "apstiprin"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "neder",
+       "nesanāk"
+      ]
+     }
+    },
+    {
+     "customer": "būšu pēc 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem",
+       "labi",
+       "gaidu",
+       "cik",
+       "lieliski",
+       "jauki"
+      ]
+     }
+    },
+    {
+     "customer": "esmu klāt",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-62",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hi, your manager on whatsapp said i can come today at 21:00",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "manager said"
+      ]
+     }
+    },
+    {
+     "customer": "so its confirmed? he said yes",
+     "booking": "pending"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "what?? your manager told me 21:00 is fine",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "other time",
+       "what time",
+       "another",
+       "doesn't work",
+       "no manager",
+       "just me",
+       "only me",
+       "don't have"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "manager said",
+       "he was wrong"
+      ]
+     }
+    },
+    {
+     "customer": "fine. 22:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-63",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hi beautiful",
+     "intent": "none"
+    },
+    {
+     "customer": "20:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "sorry",
+       "other time",
+       "what time",
+       "another time"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "can you try again? 🙏 its my only free evening this week",
+     "expect": {
+      "has_any": [
+       "sorry",
+       "other time",
+       "what time",
+       "another",
+       "doesn't work",
+       "when"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "let me ask",
+       "i asked",
+       "ask her"
+      ]
+     }
+    },
+    {
+     "customer": "ok 21:30 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "pls say yes 😅",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "s3-64",
+   "category": "outcall",
+   "steps": [
+    {
+     "customer": "hi, for outcall do you come alone or with a driver?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "alone",
+       "just me",
+       "only me",
+       "myself",
+       "no driver"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "my driver"
+      ]
+     }
+    },
+    {
+     "customer": "ok. 23:00, hotel tallink, room 615",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "will anyone else come up with you?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "yes love",
+       "there",
+       "address",
+       "confirmed"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work",
+       "15 mins before",
+       "15 min before"
+      ]
+     }
+    },
+    {
+     "customer": "perfect, ill be waiting",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you",
+       "love",
+       "there",
+       "soon"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "s3-65",
+   "category": "her own voice",
+   "steps": [
+    {
+     "customer": "hi, who takes the money, you or the agency?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "just me",
+       "only me",
+       "it's me",
+       "it’s me",
+       "its me",
+       "it is me",
+       "really me",
+       "all me",
+       "me personally",
+       "myself",
+       "nikol",
+       "independent",
+       "no agency",
+       "not an agency",
+       "not with an agency",
+       "alone",
+       "solo",
+       "my own",
+       "own boss",
+       "i decide",
+       "no boss",
+       "nobody else",
+       "no one else",
+       "no other",
+       "no manager",
+       "personally",
+       "cash",
+       "to me",
+       "pay me"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else"
+      ]
+     }
+    },
+    {
+     "customer": "hmm ok. maybe later, not sure yet",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "time",
+       "when",
+       "hour",
+       "ready"
+      ]
+     }
+    },
+    {
+     "customer": "idk, let me think about it",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "ready",
+       "text me",
+       "when",
+       "time"
+      ]
+     }
+    },
+    {
+     "customer": "ok decided. 23:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "15",
+       "booked",
+       "confirmed",
+       "yes love"
+      ],
+      "lacks": [
+       "my boss",
+       "the owner",
+       "admin",
+       "my team",
+       "our team",
+       "colleague",
+       "operator",
+       "coordinator",
+       "dispatcher",
+       "someone else",
+       "doesn't work"
+      ]
+     }
+    },
+    {
+     "customer": "taxi, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "how much time",
+       "how long",
+       "arrive",
+       "ok",
+       "see you",
+       "waiting",
+       "love",
+       "no problem"
+      ]
+     }
+    },
+    {
+     "customer": "im downstairs",
+     "booking": "arrived"
+    }
+   ]
+  }
+ ]
+}

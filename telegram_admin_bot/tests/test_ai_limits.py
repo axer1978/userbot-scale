@@ -26,6 +26,34 @@ def test_not_acknowledgements(text):
     assert not ai_limits.is_acknowledgement(text, WORDS)
 
 
+@pytest.mark.parametrize("text", [
+    "are you a bot? 😅", "is this really you typing or some auto reply?", "wait that message looks automatic 😳 r u a bot?",
+    "hmm is this an AI answering?", "am i talking to a real person?", "real?", "who am i talking to?", "ты бот?",
+    "это бот отвечает или ты?", "ты настоящая или фейк?", "vai tu esi bots?", "vai tu esi īsta?", "be honest, are you human"])
+def test_bot_questions(text):
+    assert ai_limits.is_bot_question(text)
+
+
+@pytest.mark.parametrize("text", [
+    "before i say a time, is this a real person or a bot answering?", "whats ur real name tho? nikol is fake right",
+    "how do i even know ur real then. at least the district?", "u look the same in person?",
+    "is that really you in the photos?", "are you real? 22:00 ok?", "are you real? how much for an hour?",
+    "are you free tonight?", "are those photos real?", ""])
+def test_not_only_bot_questions(text):
+    assert not ai_limits.is_bot_question(text)
+
+
+def test_a_bot_question_is_skipped_only_after_the_first_reply():
+    first = [{"role": "user", "content": "are you a bot?"}]
+    assert not ai_limits.bot_question_only(first)
+    later = [{"role": "assistant", "content": "hi"}, {"role": "user", "content": "ok"},
+             {"role": "assistant", "content": "what time?"}, {"role": "user", "content": "are you a bot?"},
+             {"role": "user", "content": "r u real"}]
+    assert ai_limits.bot_question_only(later)
+    later.append({"role": "user", "content": "and how much?"})
+    assert not ai_limits.bot_question_only(later)
+
+
 def test_periods_start_at_local_midnight_and_the_first():
     now = datetime(2026, 10, 25, 12, 0, tzinfo=ZoneInfo("Europe/Riga"))  # the clocks went back at 04:00
     day, month = ai_limits.period_starts(now)

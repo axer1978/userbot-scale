@@ -19,13 +19,17 @@ Order of things, which is the point of the design:
   its WhatsApp id and stored once.
 - A lost session (logged out, banned, replaced) is never reconnected: the
   runtime halts loudly (SessionRuntime.on_session_lost).
+- Photos and videos go to the gateway as bytes (`send_media`); an inbound
+  photo's payload carries what `download_media` needs to fetch it later.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import mimetypes
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Optional
@@ -60,6 +64,10 @@ CLOSE_TIMEOUT = 5.0
 SEND_TIMEOUT = 45.0
 ACTION_TIMEOUT = 10.0
 LOGOUT_TIMEOUT = 30.0
+# A photo or video goes up to WhatsApp's media servers before the send.
+MEDIA_TIMEOUT = 120.0
+# What the gateway takes in one send_media / gives in one download_media.
+MAX_MEDIA_BYTES = 16 * 1024 * 1024
 # How many of a chat's newest received messages a read receipt covers.
 READ_BATCH = 10
 # Baileys rc14's code for "account restricted / reach-out timelocked".
@@ -116,8 +124,8 @@ class WhatsAppTransport(Transport):
     can_send = True
     # A send WhatsApp refused is stored red in the thread, text and all.
     record_failed_sends = True
-    # Only text goes out on WhatsApp for now: no media library in replies.
-    can_send_files = False
+    # Photos and videos from the media library (send_media on the gateway).
+    can_send_files = True
 
     def __init__(self, rt: Any) -> None:
         super().__init__(rt)
@@ -480,7 +488,21 @@ class WhatsAppTransport(Transport):
 
     async def send_file(self, peer: Any, chat_id: int, path: Path, is_video: bool, show_upload: bool,
                         view_once: bool = False) -> Any:
-        raise GatewayError("bad_request", "sending files on WhatsApp is not supported")
+        """One photo or video, as WhatsApp's own image / video message.
+        `show_upload` has no WhatsApp equivalent; never retried here."""
+        data = await asyncio.to_thread(path.read_bytes)
+        if not data:
+            raise GatewayError("bad_request", f"{path.name} is empty")
+        if len(data) > MAX_MEDIA_BYTES:
+            raise GatewayError("bad_request", f"{path.name} is larger than {MAX_MEDIA_BYTES // (1024 * 1024)} MB")
+        kind = "video" if is_video else "image"
+        mimetype = mimetypes.guess_type(path.name)[0] or ""
+        if not mimetype.startswith(kind + "/"):
+            mimetype = "video/mp4" if is_video else "image/jpeg"
+        return await self._call("send_media", {
+            "jid": peer, "kind": kind, "mimetype": mimetype, "view_once": bool(view_once),
+            "data": base64.b64encode(data).decode("ascii"),
+        }, MEDIA_TIMEOUT)
 
     # WhatsApp deletes one's own messages for everyone for about two days.
     can_delete = True
@@ -557,7 +579,21 @@ class WhatsAppTransport(Transport):
         return chat_id, PeerInfo(wa_store.display_name(await wa_store.peer(rt.pool, rt.session_id, chat_id)))
 
     async def download_photo(self, message: Inbound, path: Optional[Path] = None) -> Optional[bytes]:
-        return None  # photos are not fetched from WhatsApp yet
+        """The photo of an inbound message, from WhatsApp's media servers
+        (the descriptor came with the message). None when it can't be
+        fetched: a view-once photo, say, which WhatsApp keeps from linked
+        devices. Written to `path` when one is given."""
+        media = message.raw.get("media") if isinstance(message.raw, dict) else None
+        if not media:
+            return None
+        result = await self._call("download_media", {"media": media}, MEDIA_TIMEOUT)
+        data = base64.b64decode((result or {}).get("data") or "")
+        if not data:
+            return None
+        if path is None:
+            return data
+        await asyncio.to_thread(path.write_bytes, data)
+        return None
 
     async def log_out(self) -> bool:
         """Hard-off: unlink this device on WhatsApp's side."""

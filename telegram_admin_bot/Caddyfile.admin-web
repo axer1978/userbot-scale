@@ -1,6 +1,8 @@
 # The public HTTPS front door when the Next.js admin panel (admin-web/) runs:
-# the same site as ./Caddyfile, but only the API, the websocket and the
-# client dashboard go to panel.py; every page goes to admin-web. Mounted
+# the same site as ./Caddyfile, but only the API and the websocket go to
+# panel.py; every page goes to admin-web, the client dashboard (/owner)
+# included. (admin-web's server.mjs hands panel.py's own pages, /manager/
+# and /terms/, on to it.) Mounted
 # over ./Caddyfile by admin-web/docker-compose.admin-web.yml, so
 # Caddyfile.both (BOOKING_DOMAIN) imports this one instead.
 #
@@ -20,7 +22,7 @@
 		-Via
 	}
 
-	@panel path /api /api/* /ws/* /owner /owner/*
+	@panel path /api /api/* /ws/*
 	reverse_proxy @panel panel:8787
 	reverse_proxy admin-web:3000
 }

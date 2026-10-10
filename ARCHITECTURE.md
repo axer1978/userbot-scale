@@ -91,7 +91,7 @@ Not built yet (later phases): `customer_flags`, `conversations.language`.
 
 ## Client-facing (phase 4)
 
-- **Two logins, two cookies.** The admin (`admin_token`, password + TOTP, required when `PANEL_DOMAIN` is set) reaches everything under `/api/` except `/api/owner/*`. A client (`owner_token`, `owner_auth.py`) reaches only `/api/owner/*`, and every query there is limited to the tenants in `owner_tenants`. The client page is `static/owner/`.
+- **Two logins, two cookies.** The admin (`admin_token`, password + TOTP, required when `PANEL_DOMAIN` is set) reaches everything under `/api/` except `/api/owner/*`. A client (`owner_token`, `owner_auth.py`) reaches only `/api/owner/*`, and every query there is limited to the tenants in `owner_tenants`. The client page is `/owner`: the Next.js app in `admin-web/` (`app/owner/`) when it runs, else the plain page in `static/owner/` that `panel.py` still serves.
 - **Unanswered queue** is written by `SessionRuntime.queue_unanswered()` wherever a customer message ends without a reply (see `unanswered.py` for the reasons); promoting one appends to the industry FAQ as a new template version.
 - **Staging** (`staging.enabled`): `on_incoming` answers only `staging.test_chats`, after escalation and soft-off.
 - **Digest** (`digest.py`) runs in the scheduler's platform round next to health and billing.

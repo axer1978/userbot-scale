@@ -422,10 +422,45 @@ async def generate_reply(
     messages.extend(_merge_consecutive_turns(history))
     if len(messages) == 1:
         raise AIResponderError("No conversation history to reply to.")
+    if messages[-1].get("role") == "assistant":
+        # Nothing new from them: a booking update, a reminder or a waitlist
+        # offer starts this message. Ending on our own turn, the model tends
+        # to repeat or continue it, or to answer with nothing usable.
+        messages.append({"role": "system", "content": own_initiative_note(booking_note)})
+    elif news := _news_lines(booking_note):
+        # News for a reply to them (a confirmation after their time went
+        # unanswered, a time that is taken) goes where the model reads last
+        # too: far up in the system prompt it was answered as if absent.
+        messages.append({"role": "system", "content": NEWS_NOTE + "\n" + "\n".join(news)})
 
     return await _complete(
         api_key=api_key, messages=messages, ai_config=ai_config, client=client, **_sink(usage_sink)
     )
+
+
+OWN_INITIATIVE_NOTE = (
+    "They have not written anything since your last message. Write the next message you send them now, "
+    "on your own initiative: pass on the NEWS or SEND NOW lines in the APPOINTMENTS notes, in your usual "
+    "voice. Do not repeat or continue your previous message."
+)
+NEWS_NOTE = ("This reply must pass on this news, which is current and replaces anything said earlier in "
+             "this chat:")
+
+
+def _news_lines(booking_note: str = "") -> list[str]:
+    return [line.strip() for line in (booking_note or "").splitlines()
+            if line.strip().startswith(("NEWS TO PASS ON", "SEND NOW"))]
+
+
+def own_initiative_note(booking_note: str = "") -> str:
+    """OWN_INITIATIVE_NOTE, with the news it is about repeated at the end of
+    the conversation: far up in the system prompt, a CONFIRMED after an
+    earlier "let me check" was answered "still checking"."""
+    news = _news_lines(booking_note)
+    if not news:
+        return OWN_INITIATIVE_NOTE
+    return (OWN_INITIATIVE_NOTE + " This is the news, and it is current: it replaces anything said earlier in "
+            "this chat.\n" + "\n".join(news))
 
 
 NO_REPLY_MARKER = "[NO_REPLY]"
@@ -441,6 +476,15 @@ def no_reply_section(instruction: str) -> str:
 
 def is_no_reply(text: str) -> bool:
     return (text or "").strip().strip("`\"'").upper().startswith(NO_REPLY_MARKER)
+
+
+_NO_REPLY_ANYWHERE = re.compile(re.escape(NO_REPLY_MARKER), re.IGNORECASE)
+
+
+def without_no_reply(text: str) -> str:
+    """A reply that also carries the marker (say, as a second message of the
+    burst): the marker is taken out, it never goes out as text."""
+    return _NO_REPLY_ANYWHERE.sub("", text or "").strip()
 
 
 async def generate_opener(
@@ -589,6 +633,7 @@ async def extract_booking(
     transcript = render_transcript(history)
     if not transcript.strip():
         return None
+    latest = next((m.get("content") or "" for m in reversed(history) if m.get("role") == "user"), "")
     extract_config = {
         **ai_config,
         "max_tokens": 200,
@@ -598,7 +643,8 @@ async def extract_booking(
         api_key=api_key,
         messages=[
             {"role": "system", "content": bookings.EXTRACT_SYSTEM_PROMPT},
-            {"role": "user", "content": bookings.extraction_prompt(transcript, tz_name, state_note=state_note)},
+            {"role": "user", "content": bookings.extraction_prompt(transcript, tz_name, state_note=state_note,
+                                                                   latest=latest)},
         ],
         ai_config=extract_config,
         client=client,
@@ -632,6 +678,33 @@ async def extract_arrival(
         **_sink(usage_sink),
     )
     return bookings.parse_arrival(text)
+
+
+async def extract_photo_request(
+    *,
+    api_key: str,
+    history: list[dict[str, str]],
+    ai_config: dict[str, Any],
+    client: Optional[httpx.AsyncClient] = None,
+    usage_sink: Optional[UsageSink] = None,
+) -> bool:
+    """Whether the client's messages since our last one ask to see our photos."""
+    import media
+
+    transcript = render_transcript(history[-8:])
+    if not transcript.strip():
+        return False
+    text = await _complete(
+        api_key=api_key,
+        messages=[
+            {"role": "system", "content": media.PHOTO_REQUEST_SYSTEM_PROMPT},
+            {"role": "user", "content": "Conversation, oldest first:\n\n" + transcript},
+        ],
+        ai_config={**ai_config, "max_tokens": 30, "temperature": 0.0},
+        client=client,
+        **_sink(usage_sink),
+    )
+    return media.parse_photo_request(text)
 
 
 async def _complete(

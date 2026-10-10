@@ -1,0 +1,5125 @@
+{
+ "every_chat_sends": {
+  "rates message": "1 time 💦💦\n30 minutes 100 euro\n\n2 times 💦💦\n1 hour 200 euro\nIncall 200\nOutcall 200+ 🚕\n\nBest company in Latvia 🇱🇻🔥",
+  "extras message": "Kissing +50\nUnprotected oral sex/OWP +50\nDomination +50\nRole-play +50\nThreesome (with a couple) +100\n69 +50"
+ },
+ "except_categories": [
+  "under 18"
+ ],
+ "never_says": [
+  "let me check",
+  "checking",
+  "i'll ask",
+  "i will ask",
+  "my manager",
+  "the agency",
+  "our girls"
+ ],
+ "scenarios": [
+  {
+   "id": "o3-01",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey nikol, how far are you from the old town?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min walk",
+       "mins walk",
+       "minute walk",
+       "minutes walk",
+       "minutes on foot",
+       "min on foot",
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "in the old town",
+       "near the old town",
+       "close to the old town",
+       "next to the old town",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok i see it. 21:30 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:30",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "leaving the bar now, walking over",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "hi, outside 🙂",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-02",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "just landed at RIX ✈️ how far is your place from the airport?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "near the airport",
+       "close to the airport",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok ordering a taxi now, can i come straight to you?",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "customer": "my phone is on 5% so answer quick pls 🙏",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "in the taxi, driver says 25 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "taxi just dropped me at your building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-03",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, im at the central station rn, are you close to it?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min walk",
+       "mins walk",
+       "minute walk",
+       "minutes walk",
+       "minutes on foot",
+       "min on foot",
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "near the station",
+       "close to the station",
+       "next to the station",
+       "by the station",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok found you on the map. 20:15 ok?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "does not work",
+       "other time",
+       "another",
+       "sorry",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "21:00 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "walking from the station now, ~15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-04",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, which district are you in?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "in the centre",
+       "in the center",
+       "in the old town",
+       "my district is",
+       "the district is"
+      ]
+     }
+    },
+    {
+     "customer": "ah ok i know that street. tomorrow 18:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "18:00",
+       "tomorrow",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "perfect thx 🙏 will text u tomorrow before i leave",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "😘",
+       "❤️",
+       "ok",
+       "perfect",
+       "no problem",
+       "tomorrow",
+       "see you"
+      ]
+     }
+    },
+    {
+     "customer": "hey, on my way now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-05",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, is it near me? im in Purvciems",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "also in purvciems",
+       "near purvciems",
+       "close to purvciems",
+       "not far from purvciems",
+       "next to purvciems",
+       "i'm in purvciems",
+       "im in purvciems",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "hmm bit of a trip. ok 22:00, i'll take a taxi",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "how much is a taxi usually from purvciems to you?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "taxi ordered, app says 18 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "outside your building now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-06",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "address?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ]
+     }
+    },
+    {
+     "customer": "ok. 23:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "you there?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "hello?? does it work or not",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "23:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-07",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi do you do incall or outcall? and where are you?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "200",
+       "outcall",
+       "incall",
+       "taxi"
+      ]
+     }
+    },
+    {
+     "customer": "i see. outcall to āgenskalns then, how much would the taxi be?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi",
+       "time",
+       "where",
+       "plus"
+      ],
+      "lacks": [
+       "taxi is about",
+       "taxi is around",
+       "taxi costs about",
+       "taxi costs around",
+       "taxi is usually",
+       "taxi will be about"
+      ]
+     }
+    },
+    {
+     "customer": "nah then i'll just come to you. 20:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_all": [
+       "booked",
+       "15"
+      ],
+      "lacks": [
+       "exact address",
+       "i'll be there"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 15 min by bolt",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here love",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-08",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, 20:30 tonight possible?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "ok waiting for ur answer",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:30",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "my friend is driving me, he needs the street name, can you send it again?",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "ok he put it in waze, 12 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "we're here, he's dropping me off now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-09",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi nikol, saw your ad. 1 hour possible today?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "time",
+       "hour",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "21:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "sorry switched to my laptop and the old messages don't load. what's the address?",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "got it, screenshot taken. leaving in 10",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm at the building now",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which floor was it",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "come up",
+       "flat"
+      ],
+      "lacks": [
+       "1st floor",
+       "2nd floor",
+       "3rd floor",
+       "4th floor",
+       "5th floor",
+       "6th floor",
+       "7th floor",
+       "8th floor",
+       "9th floor",
+       "ground floor",
+       "first floor",
+       "second floor",
+       "third floor"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-10",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey can you send me a location pin instead of the address? easier for me",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "map"
+      ],
+      "lacks": [
+       "sent you the pin",
+       "sent you a pin",
+       "sending you the pin",
+       "sending you a pin"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'll copy it into google maps. 30 min at 18:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "18:30",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "google says 22 min by car, leaving",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "parked, i'm here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-11",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi where are you located?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ]
+     }
+    },
+    {
+     "customer": "oh thats far from me, im in imanta. can you come to me instead?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi",
+       "outcall",
+       "time",
+       "where"
+      ]
+     }
+    },
+    {
+     "customer": "22:30, anniņmuižas bulvāris 38, flat 51",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22:30",
+       "there"
+      ],
+      "lacks": [
+       "text me 15",
+       "before to come"
+      ]
+     }
+    },
+    {
+     "customer": "great 😊 intercom is broken so just call me when you're downstairs",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you",
+       "love",
+       "ok"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-12",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "send me where you are first, i'll check how long it takes me and tell you the time",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ]
+     }
+    },
+    {
+     "customer": "ok its 25 min from my office by taxi. can i come at 19:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "19:30",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ordering the taxi now",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm at your address",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-13",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "привет, ты в каком районе?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "во сколько",
+       "время",
+       "когда",
+       "вот",
+       "адрес",
+       "час",
+       "приед",
+       "придёшь",
+       "придешь",
+       "приход"
+      ],
+      "lacks": [
+       "в центре",
+       "в старой риге",
+       "в вецриге"
+      ]
+     }
+    },
+    {
+     "customer": "понял, далековато, но ок. в 21:00 сможешь?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "адрес точно этот? скинь ещё раз на всякий",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:00",
+       "15",
+       "запис",
+       "брон",
+       "подтвер",
+       "жду"
+      ]
+     }
+    },
+    {
+     "customer": "напомни адрес ещё раз пожалуйста, хочу в такси вбить",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "вот",
+       "адрес",
+       "выше",
+       "держи",
+       "лови",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "еду, минут 20",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting",
+       "отлично",
+       "жду",
+       "сколько",
+       "хорошо",
+       "ок",
+       "супер",
+       "любим",
+       "милый"
+      ]
+     }
+    },
+    {
+     "customer": "я на месте",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-14",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "sveika! cik tālu tu esi no centrālās stacijas?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "cikos",
+       "laik",
+       "kad",
+       "šeit",
+       "lūk",
+       "adres",
+       "nāc",
+       "nāks",
+       "stund",
+       "atbrauk"
+      ],
+      "lacks": [
+       "minūtes kājām",
+       "min kājām",
+       "netālu no stacijas",
+       "blakus stacijai",
+       "tuvu stacijai",
+       "pie stacijas"
+      ]
+     }
+    },
+    {
+     "customer": "labi, redzu. 20:00 var?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:00",
+       "15",
+       "rezerv",
+       "apstiprin",
+       "gaid",
+       "pierakst"
+      ]
+     }
+    },
+    {
+     "customer": "braucu ar tramvaju, būšu pēc 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting",
+       "lieliski",
+       "perfekti",
+       "gaid",
+       "cik ilgi",
+       "labi",
+       "super",
+       "mīļ"
+      ]
+     }
+    },
+    {
+     "customer": "esmu klāt",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-15",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi beautiful 😍",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ]
+     }
+    },
+    {
+     "customer": "sorry where did you say you are? i only see the prices",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "ah ok scrolled, there it is. 22:15?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22:15",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "downstairs now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-16",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey, my bus from tallinn gets in at 20:00, how far are you from the bus station?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min walk",
+       "mins walk",
+       "minute walk",
+       "minutes walk",
+       "minutes on foot",
+       "min on foot",
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "near the bus station",
+       "close to the bus station",
+       "next to the bus station",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "so maybe 20:45 at yours?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "still on the bus, wifi is terrible lol",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:45",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "just got off the bus, walking over",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here! 👋",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-17",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "are you in the centre? i don't want to go out to the suburbs",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "in the centre",
+       "in the center",
+       "city centre",
+       "city center",
+       "suburb"
+      ]
+     }
+    },
+    {
+     "customer": "ok whatever i'll come anyway lol. 1 hour at 21:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "taxi, 12 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "arrived",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-18",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "my flight is at 6am, how far are you from the airport? want to see you tonight and go straight there",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "near the airport",
+       "close to the airport",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "23:30 for 1 hour?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "does not work",
+       "other time",
+       "another",
+       "sorry",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "ok 22:00 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on my way with my backpack, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-19",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey, are you on the old town side or pārdaugava?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "pārdaugava side",
+       "old town side",
+       "other side of the river",
+       "this side of the river",
+       "left bank",
+       "right bank",
+       "in pārdaugava",
+       "in the old town"
+      ]
+     }
+    },
+    {
+     "customer": "ok. tomorrow 20:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "tomorrow ok right? 🙏",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:00",
+       "tomorrow",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "crossing the bridge now, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "just got here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-20",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "where do you receive? i'm staying at radisson blu latvija",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min walk",
+       "mins walk",
+       "minute walk",
+       "minutes walk",
+       "minutes on foot",
+       "min on foot",
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "near your hotel",
+       "close to your hotel",
+       "near the radisson",
+       "close to the radisson",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "hmm too far to walk at night. can you come to my hotel instead? room 1408",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi",
+       "outcall",
+       "time",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "23:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "23",
+       "there"
+      ],
+      "lacks": [
+       "text me 15",
+       "before to come"
+      ]
+     }
+    },
+    {
+     "customer": "great, i'll tell reception you're coming",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you",
+       "love",
+       "ok"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-21",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, 19:00 for an hour?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "19:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "does the taxi drop me right at your door or do i walk from the main road?",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "map",
+       "here",
+       "arrive",
+       "text me",
+       "love",
+       "address",
+       "above"
+      ],
+      "lacks": [
+       "main road",
+       "walk from",
+       "turn left",
+       "turn right",
+       "on the left",
+       "on the right",
+       "straight ahead"
+      ]
+     }
+    },
+    {
+     "customer": "ok, taxi ordered, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "in front of the building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-22",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey there, what time are you free today?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "time",
+       "hour",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "21:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "wait i just looked at the address properly, thats across town from me. sorry, forget it",
+     "booking": "cancelled_news",
+     "state_note": "pending",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "another time",
+       "text me",
+       "love",
+       "❤️"
+      ]
+     }
+    },
+    {
+     "customer": "maybe another day when i'm in the centre 🙂",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "love",
+       "😘",
+       "❤️",
+       "ok",
+       "perfect",
+       "no problem",
+       "text me",
+       "time"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-23",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "im in jurmala, how long to get to you by car?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "half an hour",
+       "an hour drive",
+       "hour drive",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'll drive in. 20:30",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "is there somewhere to park?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:30",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on the highway, 25 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "parked right in front, i'm here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-24",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "привет, я в риге проездом на пару часов. ты далеко от автовокзала?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "во сколько",
+       "время",
+       "когда",
+       "вот",
+       "адрес",
+       "час",
+       "приед",
+       "придёшь",
+       "придешь",
+       "приход"
+      ],
+      "lacks": [
+       "минут пешком",
+       "минут на такси",
+       "минут езды",
+       " км",
+       "недалеко",
+       "близко к автовокзалу",
+       "рядом с автовокзалом",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "можно прямо сейчас приехать?",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "customer": "ну?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "does not work",
+       "other time",
+       "another",
+       "sorry",
+       "what time",
+       "не получится",
+       "не подходит",
+       "другое время",
+       "во сколько"
+      ]
+     }
+    },
+    {
+     "customer": "тогда через час?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15",
+       "запис",
+       "брон",
+       "подтвер",
+       "жду"
+      ]
+     }
+    },
+    {
+     "customer": "еду, минут 15",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting",
+       "отлично",
+       "жду",
+       "сколько",
+       "хорошо",
+       "ок",
+       "супер",
+       "любим",
+       "милый"
+      ]
+     }
+    },
+    {
+     "customer": "я внизу",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-25",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi nikol 😊 can i come at 22:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "is there a shop or something near you so i find it easier?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "so whats near you? a shop, a cafe?",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "arrive",
+       "text me",
+       "message",
+       "map"
+      ],
+      "lacks": [
+       "next to",
+       "across from",
+       "opposite",
+       "rimi",
+       "maxima",
+       "narvesen",
+       "there's a shop",
+       "there is a shop",
+       "there's a cafe",
+       "there is a cafe"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'll find it. on the way, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "found it, i'm here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-26",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "čau, var šodien 21:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "nu kā?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:30",
+       "15",
+       "rezerv",
+       "apstiprin",
+       "gaid",
+       "pierakst"
+      ]
+     }
+    },
+    {
+     "customer": "atsūti vēlreiz adresi lūdzu, nevaru atrast čatā",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "lūk",
+       "šeit",
+       "adres",
+       "augstāk",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "paldies, braucu, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting",
+       "lieliski",
+       "perfekti",
+       "gaid",
+       "cik ilgi",
+       "labi",
+       "super",
+       "mīļ"
+      ]
+     }
+    },
+    {
+     "customer": "esmu pie durvīm",
+     "booking": "arrived"
+    },
+    {
+     "customer": "kurš stāvs?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "come up",
+       "flat",
+       "augstāk",
+       "ziņ",
+       "kod",
+       "nāc augšā",
+       "dzīvok"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-27",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey, im at hotel bergs. are you walking distance from there?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min walk",
+       "mins walk",
+       "minute walk",
+       "minutes walk",
+       "minutes on foot",
+       "min on foot",
+       "yes walking",
+       "yes it's walking",
+       "yes, walking",
+       "near bergs",
+       "close to bergs",
+       "near your hotel",
+       "close to your hotel",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'll walk then. 19:00 ok?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "already walking lol",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "19:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "almost there, 5 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here, a bit sweaty from the walk lol",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-28",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, im in teika. better if you come to me or i come to you?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "200",
+       "taxi",
+       "outcall",
+       "incall"
+      ]
+     }
+    },
+    {
+     "customer": "ok saw your address, i'll come to you. 20:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_all": [
+       "booked",
+       "15"
+      ],
+      "lacks": [
+       "exact address",
+       "i'll be there"
+      ]
+     }
+    },
+    {
+     "customer": "leaving teika now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "at your place",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-29",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "first the address. then we talk",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ]
+     }
+    },
+    {
+     "customer": "ok i know where that is. 30 min at 17:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "send some pics while i wait",
+     "booking": "pending",
+     "intent": "none",
+     "photos": true
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "17:30",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on my way",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "at the door now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-30",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "where are you?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ]
+     }
+    },
+    {
+     "customer": "and how far is that from spice? im shopping there",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "time",
+       "hour",
+       "when",
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map"
+      ],
+      "lacks": [
+       "min walk",
+       "mins walk",
+       "minute walk",
+       "minutes walk",
+       "minutes on foot",
+       "min on foot",
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "near spice",
+       "close to spice",
+       "next to spice",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok 20:00 then",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "leaving spice now 🚕",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "taxi stopped at your house",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-31",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, 1 hour 200?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "hour",
+       "time"
+      ]
+     }
+    },
+    {
+     "customer": "great. 21:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "can you send the street again as text? want to copy it into bolt",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "ok bolt found it, 9 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "bolt dropped me off, im at the entrance",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-32",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "privet, ya v ziepniekkalns, ty daleko ot menya?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "во сколько",
+       "время",
+       "когда",
+       "вот",
+       "адрес",
+       "час",
+       "приед",
+       "придёшь",
+       "придешь",
+       "приход",
+       "kogda",
+       "vo skolko"
+      ],
+      "lacks": [
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "nedaleko",
+       "недалеко",
+       "near ziepniek",
+       "close to ziepniek"
+      ]
+     }
+    },
+    {
+     "customer": "ok, togda v 22:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "skoro otvetish?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22:00",
+       "15",
+       "запис",
+       "брон",
+       "подтвер",
+       "жду"
+      ]
+     }
+    },
+    {
+     "customer": "edu, 15 minut",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting",
+       "отлично",
+       "жду",
+       "сколько",
+       "хорошо",
+       "ок",
+       "супер",
+       "любим",
+       "милый",
+       "zhdu",
+       "otlichno"
+      ]
+     }
+    },
+    {
+     "customer": "ya na meste",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-33",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "can you come to me in mežciems?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi",
+       "outcall",
+       "time",
+       "where"
+      ]
+     }
+    },
+    {
+     "customer": "actually where are you? maybe i come to you",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "ok thats close enough, i'll come to you. 20:30",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_all": [
+       "booked",
+       "15"
+      ],
+      "lacks": [
+       "exact address",
+       "i'll be there"
+      ]
+     }
+    },
+    {
+     "customer": "leaving mežciems now, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "standing at your door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-34",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi 19:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "can i pay by card btw?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "hellooo",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "19:30",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok and card is fine right? or revolut",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "cash"
+      ],
+      "lacks": [
+       "card is fine",
+       "card works",
+       "revolut is fine",
+       "yes love, card",
+       "send it to"
+      ]
+     }
+    },
+    {
+     "customer": "ok no problem, on my way, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im outside",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-35",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey are you free tonight?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "time",
+       "hour",
+       "when"
+      ]
+     }
+    },
+    {
+     "customer": "21:15 ok?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:15",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "my telegram auto-deletes chats lol, the address is gone. where was it?",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "found it, sorry. 5 min away",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'm here now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-36",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "can i walk to you from vecrīga or do i need a taxi?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min walk",
+       "mins walk",
+       "minute walk",
+       "minutes walk",
+       "minutes on foot",
+       "min on foot",
+       "you can walk",
+       "you can easily walk",
+       "need a taxi",
+       "no need for a taxi",
+       "walking distance",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'll check google. 20:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "google says 18 min walk, leaving now",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "made it, at your door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-37",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, which tram stop is closest to you? i don't have a car",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "take tram",
+       "take the tram",
+       "tram nr",
+       "tram number",
+       "tram no",
+       "stop is",
+       "tram 1",
+       "tram 2",
+       "tram 3",
+       "tram 5",
+       "tram 6",
+       "tram 7"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'll figure it out. 18:00 today",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "18:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on the tram, 12 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "got off, i'm at your house",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-38",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "how far from pļavnieki? dont want to spend a lot on taxi",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "taxi is about",
+       "taxi is around",
+       "taxi costs about",
+       "taxi costs around",
+       "taxi is usually",
+       "taxi will be about",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok its fine. 22:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "does not work",
+       "other time",
+       "another",
+       "sorry",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "22:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22:30",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "taxi coming, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm at your building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-39",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "can i come now? where are you?",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "customer": "ok i see the address 👍",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "in the taxi 🚕",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "im here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-40",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hello, 30 min at 20:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "pls answer soon, i need to plan",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "coming, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm on your street, at the number you sent",
+     "booking": "arrived"
+    },
+    {
+     "customer": "there are two buildings with the same number?? which one",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "come up",
+       "flat",
+       "address",
+       "here"
+      ],
+      "lacks": [
+       "turn left",
+       "turn right",
+       "go left",
+       "go right",
+       "straight ahead",
+       "on the left",
+       "on the right",
+       "the left one",
+       "the right one"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-41",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, are you near the freedom monument?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min walk",
+       "mins walk",
+       "minute walk",
+       "minutes walk",
+       "minutes on foot",
+       "min on foot",
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "near the monument",
+       "close to the monument",
+       "next to the monument",
+       "near freedom",
+       "close to freedom",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok cool. tonight at 22:45?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "are you there?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "should i order a taxi already or wait for you?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22:45",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now, 10 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm here 🙂",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-42",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "arriving on the ferry from stockholm tomorrow morning, how far is the port from you?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "min walk",
+       "mins walk",
+       "minute walk",
+       "minutes walk",
+       "minutes on foot",
+       "min on foot",
+       "near the port",
+       "close to the port",
+       "next to the port",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok so 11:30 tomorrow?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "11:30",
+       "tomorrow",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "off the ferry, taxi now, driver says 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "at your door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-43",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey, are you still on brīvības iela like last year?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "still on brīvības",
+       "yes brīvības",
+       "yes, brīvības",
+       "same place",
+       "still there",
+       "yes love, still"
+      ]
+     }
+    },
+    {
+     "customer": "oh you moved, ok. 21:00 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on the way to the new place, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "found the new place 😄 i'm downstairs",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-44",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, where are you and what floor? i have a bad knee lol",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "arrive",
+       "when you"
+      ],
+      "lacks": [
+       "1st floor",
+       "2nd floor",
+       "3rd floor",
+       "4th floor",
+       "5th floor",
+       "6th floor",
+       "7th floor",
+       "8th floor",
+       "9th floor",
+       "ground floor",
+       "first floor",
+       "second floor",
+       "third floor",
+       "no stairs",
+       "there's a lift",
+       "there is a lift",
+       "no lift"
+      ]
+     }
+    },
+    {
+     "customer": "ok. 30 min at 19:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "19:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "so is there a lift or not? 😅",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "arrive",
+       "here",
+       "text me",
+       "when you",
+       "message",
+       "love"
+      ],
+      "lacks": [
+       "there's a lift",
+       "there is a lift",
+       "no lift",
+       "has a lift"
+      ]
+     }
+    },
+    {
+     "customer": "ok, leaving now, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "arrived at the building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-45",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, can you meet me at the station and we walk to yours together? i get lost easily",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "map",
+       "arrive"
+      ],
+      "lacks": [
+       "meet you at the station",
+       "i'll come to the station",
+       "pick you up",
+       "walk together",
+       "walk with you",
+       "wait for you at"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'll use the map then. 20:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:30",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "leaving the station now, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i think i'm at your building, the number matches",
+     "booking": "arrived"
+    },
+    {
+     "customer": "ok im in, going up",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "love",
+       "😘",
+       "❤️",
+       "ok",
+       "perfect",
+       "no problem"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-46",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "привет, в 20:00 можно?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "ну что?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:00",
+       "15",
+       "запис",
+       "брон",
+       "подтвер",
+       "жду"
+      ]
+     }
+    },
+    {
+     "customer": "я случайно удалил переписку, напомни адрес",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "вот",
+       "адрес",
+       "выше",
+       "держи",
+       "лови",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "спасибо, выезжаю",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting",
+       "отлично",
+       "жду",
+       "сколько",
+       "хорошо",
+       "ок",
+       "супер",
+       "любим",
+       "милый"
+      ]
+     }
+    },
+    {
+     "customer": "подъехал, стою у дома",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-47",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "привет, где находишься?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "во сколько",
+       "время",
+       "когда",
+       "вот",
+       "адрес",
+       "час",
+       "приед",
+       "придёшь",
+       "придешь",
+       "приход"
+      ]
+     }
+    },
+    {
+     "customer": "далеко, я в кенгарагсе. приедешь ко мне?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi",
+       "outcall",
+       "time",
+       "where",
+       "такси",
+       "во сколько",
+       "куда",
+       "адрес",
+       "выезд"
+      ]
+     }
+    },
+    {
+     "customer": "в 22:00, маскавас 300, квартира 17",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "does not work",
+       "other time",
+       "another",
+       "sorry",
+       "what time",
+       "не получится",
+       "не подходит",
+       "другое время",
+       "во сколько"
+      ]
+     }
+    },
+    {
+     "customer": "а в 23:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "23",
+       "there",
+       "буду",
+       "приеду",
+       "запис",
+       "подтвер"
+      ],
+      "lacks": [
+       "text me 15",
+       "before to come"
+      ]
+     }
+    },
+    {
+     "customer": "жду 😊 домофон 17",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you",
+       "love",
+       "ok",
+       "отлично",
+       "до встречи",
+       "скоро",
+       "хорошо",
+       "любим"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-48",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "sveika, kurā rajonā tu esi? es dzīvoju Juglā",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "cikos",
+       "laik",
+       "kad",
+       "šeit",
+       "lūk",
+       "adres",
+       "nāc",
+       "nāks",
+       "stund",
+       "atbrauk"
+      ],
+      "lacks": [
+       "arī juglā",
+       "netālu no juglas",
+       "tuvu juglai",
+       "blakus juglai"
+      ]
+     }
+    },
+    {
+     "customer": "tālu... vai tu vari atbraukt pie manis?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi",
+       "outcall",
+       "time",
+       "where",
+       "taksi",
+       "cikos",
+       "kur",
+       "adres",
+       "izbrauk"
+      ]
+     }
+    },
+    {
+     "customer": "21:00 derēs?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21",
+       "address",
+       "there",
+       "adres",
+       "būšu",
+       "atbrauk",
+       "rezerv",
+       "apstiprin"
+      ],
+      "lacks": [
+       "text me 15",
+       "before to come"
+      ]
+     }
+    },
+    {
+     "customer": "Juglas iela 20, dz. 8, trešais stāvs",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you",
+       "21",
+       "love",
+       "lieliski",
+       "tiekamies",
+       "redzamies",
+       "super",
+       "labi"
+      ]
+     }
+    },
+    {
+     "customer": "lieliski, gaidīšu 😊",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you",
+       "love",
+       "ok",
+       "lieliski",
+       "līdz",
+       "gaid",
+       "tiekamies",
+       "mīļ",
+       "😘",
+       "❤️"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-49",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey im in mārupe, are you close?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "close to mārupe",
+       "near mārupe",
+       "close to marupe",
+       "near marupe",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok, 19:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "does not work",
+       "other time",
+       "another",
+       "sorry",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "what about 20:15 then",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:15",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "driving in now, 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "parked outside, here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-50",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, me and my gf want to try the threesome option. where are you?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "100"
+      ]
+     }
+    },
+    {
+     "customer": "ok 22:00 for 1 hour",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "can you send the address again? i want to forward it to her, she comes from work separately",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "she's on the way, i'm leaving too, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "we're both here now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-51",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hello, can i come at 21:45?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "hello?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:45",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "google maps says that address doesn't exist?? did you send it right?",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map",
+       "number",
+       "street"
+      ],
+      "lacks": [
+       "wrong address",
+       "typo",
+       "sorry wrong"
+      ]
+     }
+    },
+    {
+     "customer": "ah i typed it wrong, found it now. 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-52",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey which bus do i take from the airport to you?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "bus 22",
+       "22 bus",
+       "take bus",
+       "take the bus",
+       "bus number",
+       "bus nr",
+       "bus no.",
+       "minibus"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'll figure it out with google. can i come at 16:00?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "my plane lands an hour before so should be fine",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "16:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on the bus now, 25 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "made it from the airport, at your building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-53",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, im walking around near the centre, which house are you in?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ]
+     }
+    },
+    {
+     "customer": "oh im actually not far from that. can i come now?",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "customer": "its raining, waiting in a cafe, let me know 🙏",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "ok walking over, 5 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm at your entrance",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-54",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "where are you? i'm planning for tomorrow",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "tomorrow"
+      ]
+     }
+    },
+    {
+     "customer": "ok. tomorrow 13:00, 30 min",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "13:00",
+       "tomorrow",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "and send the address one more time pls, i'll save it for tomorrow",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "great, saved. see you tomorrow 😘",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "😘",
+       "❤️",
+       "ok",
+       "perfect",
+       "no problem",
+       "tomorrow",
+       "see you"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-55",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey, 20:00 today?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "declined",
+     "booking": "declined_news",
+     "expect": {
+      "has_any": [
+       "doesn't work",
+       "does not work",
+       "other time",
+       "another",
+       "sorry",
+       "what time"
+      ]
+     }
+    },
+    {
+     "customer": "ok 21:00 then. and remind me where you are?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "you didn't send the address 😅",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "ok got it. leaving in 10",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here now",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-56",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, are you near arena riga? the hockey game finishes around 21:30",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min walk",
+       "mins walk",
+       "minute walk",
+       "minutes walk",
+       "minutes on foot",
+       "min on foot",
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "near the arena",
+       "close to the arena",
+       "next to the arena",
+       "near arena",
+       "close to arena",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "so 22:15 at yours?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "we scored 🏒🔥",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22:15",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "game over, getting a taxi, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here, still in my jersey lol",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-57",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "labdien, vai tu esi Rīgā vai ārpus Rīgas?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come",
+       "cikos",
+       "laik",
+       "kad",
+       "šeit",
+       "lūk",
+       "adres",
+       "nāc",
+       "nāks",
+       "stund",
+       "atbrauk",
+       "rīg",
+       "riga"
+      ]
+     }
+    },
+    {
+     "customer": "labi, tad rīt 19:00",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "19:00",
+       "rīt",
+       "tomorrow",
+       "15",
+       "rezerv",
+       "apstiprin",
+       "gaid",
+       "pierakst"
+      ]
+     }
+    },
+    {
+     "customer": "paldies! rīt uzrakstīšu pirms braucu",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "😘",
+       "❤️",
+       "ok",
+       "perfect",
+       "no problem",
+       "arrive",
+       "how much time",
+       "how long",
+       "see you",
+       "waiting",
+       "lieliski",
+       "perfekti",
+       "gaid",
+       "cik ilgi",
+       "labi",
+       "super",
+       "mīļ"
+      ]
+     }
+    },
+    {
+     "customer": "čau, esmu ceļā, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting",
+       "lieliski",
+       "perfekti",
+       "gaid",
+       "cik ilgi",
+       "labi",
+       "super",
+       "mīļ"
+      ]
+     }
+    },
+    {
+     "customer": "esmu ārā pie mājas",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-58",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey 22:30?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "send a pic of the building so i recognise it",
+     "booking": "pending",
+     "intent": "none",
+     "photos": false
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "22:30",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "so can you send a photo of the house? im bad with addresses",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "arrive",
+       "text me",
+       "map",
+       "message"
+      ],
+      "lacks": [
+       "green door",
+       "blue door",
+       "red door",
+       "brick",
+       "yellow building",
+       "white building",
+       "grey building"
+      ]
+     },
+     "photos": false
+    },
+    {
+     "customer": "ok fine, the taxi will find it. 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "taxi says this is it, i'm outside your building",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-59",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi nikol, 21:00 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "oh no i only now looked at the address, that's 40 min from me 😩 have to cancel, sorry",
+     "booking": "cancelled_news",
+     "state_note": "confirmed",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "another time",
+       "text me",
+       "love",
+       "❤️"
+      ]
+     }
+    },
+    {
+     "customer": "can you do outcall another time? i'm in bolderāja",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi",
+       "outcall",
+       "time",
+       "where"
+      ]
+     }
+    },
+    {
+     "customer": "saturday 20:00 then, bolderājas iela 50 flat 3",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20",
+       "there",
+       "saturday"
+      ],
+      "lacks": [
+       "text me 15",
+       "before to come"
+      ]
+     }
+    },
+    {
+     "customer": "perfect, see you saturday 😘",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "love",
+       "😘",
+       "❤️",
+       "ok",
+       "perfect",
+       "no problem",
+       "see you",
+       "saturday"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-60",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, how far are you from origo? i'm there now",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "when",
+       "here",
+       "address",
+       "come"
+      ],
+      "lacks": [
+       "min walk",
+       "mins walk",
+       "minute walk",
+       "minutes walk",
+       "minutes on foot",
+       "min on foot",
+       "min drive",
+       "mins drive",
+       "minute drive",
+       "minutes drive",
+       "min by taxi",
+       "mins by taxi",
+       "minutes by taxi",
+       "min by car",
+       "minutes by car",
+       " km",
+       "near origo",
+       "close to origo",
+       "next to origo",
+       "not far"
+      ]
+     }
+    },
+    {
+     "customer": "ok 19:15?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "19:15",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "walking now, map says 20 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "ok i'm at the address",
+     "booking": "arrived"
+    },
+    {
+     "customer": "wait the street sign on the corner says something else? am i in the right place",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "come up",
+       "flat",
+       "address",
+       "here",
+       "right"
+      ],
+      "lacks": [
+       "turn left",
+       "turn right",
+       "go left",
+       "go right",
+       "straight ahead",
+       "on the left",
+       "on the right",
+       "the left one",
+       "the right one"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-61",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, can you come to the radisson blu latvija at 23:00 tonight?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "room 1408 btw, just say my name at reception",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "23",
+       "there"
+      ],
+      "lacks": [
+       "text me 15",
+       "before to come"
+      ]
+     }
+    },
+    {
+     "customer": "great, i'll be in the room from 22:30",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "see you",
+       "love",
+       "ok",
+       "23"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "o3-62",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey, where exactly are you? and 20:30 tonight, possible?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "hello??",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "customer": "ok you're not answering, forget it",
+     "booking": "cancelled_news",
+     "state_note": "pending",
+     "intent": "cancel",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "another time",
+       "text me",
+       "love",
+       "❤️"
+      ]
+     }
+    },
+    {
+     "customer": "ok sorry, i'm back. 21:30 then?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:30",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "i'm here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-63",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hi, 20:00 today?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "20:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "actually can we make it 21:00 instead? and send me the address again pls",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "and the address pls, you didn't send it",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "21:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "you still didn't send the address 😅",
+     "booking": "confirmed",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "here",
+       "ganu",
+       "address",
+       "above",
+       "map"
+      ]
+     }
+    },
+    {
+     "customer": "thx, on my way, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "at the door",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-64",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "hey, is it really you writing or some agency / manager?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "hour",
+       "time",
+       "love"
+      ],
+      "lacks": [
+       "agency",
+       "manager",
+       "team",
+       "our girls",
+       "assistant",
+       "automated",
+       "i'm a bot",
+       "i am a bot",
+       "i'm an ai"
+      ]
+     }
+    },
+    {
+     "customer": "ok 😄 i can be there in half an hour",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "customer": "?",
+     "booking": "pending",
+     "intent": "none"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "leaving now",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "here",
+     "booking": "arrived"
+    }
+   ]
+  },
+  {
+   "id": "o3-65",
+   "category": "address with the offer",
+   "steps": [
+    {
+     "customer": "evening 🙂 19:00 today ok?",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "booked",
+       "19:00",
+       "15"
+      ]
+     }
+    },
+    {
+     "customer": "on my way, 15 min",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "perfect",
+       "arrive",
+       "how much time",
+       "how long",
+       "love",
+       "ok",
+       "see you",
+       "waiting"
+      ]
+     }
+    },
+    {
+     "customer": "ugh stuck in traffic, gonna be like 20 min late, still ok?",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "no problem",
+       "ok",
+       "fine",
+       "love",
+       "how much time",
+       "arrive"
+      ],
+      "lacks": [
+       "doesn't work",
+       "another time",
+       "text me when you want"
+      ]
+     }
+    },
+    {
+     "customer": "finally, i'm downstairs",
+     "booking": "arrived"
+    },
+    {
+     "customer": "which flat was it again?",
+     "booking": "way_in_sent",
+     "expect": {
+      "has_any": [
+       "above",
+       "message",
+       "code",
+       "come up",
+       "flat"
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

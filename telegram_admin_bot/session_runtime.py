@@ -125,9 +125,19 @@ log = logging.getLogger("session_runtime")
 # reply_skip_reason's answer for a bare "ok" / "thanks". It is skipped like
 # the others but not queued as unanswered: it needed no answer.
 ACK_SKIP = "the message is only an acknowledgement"
+# ... and for "I'm here" once the way in (booking.arrival_instructions) went
+# out: that was the answer. Not queued either.
+WAY_IN_SKIP = "they have arrived and the way in was sent"
+# ... and for a message that only asks whether it is a bot, with
+# replies.skip_bot_questions on: it is not answered at all. Not queued.
+BOT_SKIP = "the message only asks whether it is a bot"
+# ... and while a time they asked for waits for the owner, with
+# booking.quiet_until_answered on: the owner's answer is the reply.
+OWNER_SKIP = "their time waits for the owner's answer"
 # In staging, a chat that is not a test chat gets this note at most once an
 # hour, so a busy chat's history isn't all notes.
 STAGING_NOTE = "Staging: not answered — not a test chat."
+
 STAGING_NOTE_SECONDS = 3600
 # The database dropping out for a moment (a restart, a failover):
 # storing an incoming message is tried this many times, waiting
@@ -1153,6 +1163,22 @@ class SessionRuntime:
             self.media_library.for_ai(), ask_before_video=self.config["media"].get("ask_before_video", True)
         )
 
+    async def photos_they_asked_for(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The photos (no videos) to send because their messages since our
+        last one ask to see them: those this chat has not had. A cheap
+        word sieve first, then the photo check."""
+        if not self.media_prompt() or not media.they_ask_for_photos(history) or await self.ai_limit_reason():
+            return []
+        unsent = media.unsent([i for i in self.media_library.for_ai() if i.get("kind") == media.PHOTO], history)
+        if not unsent:
+            return []
+        async with self.ai_gate():
+            asked = await ai_responder.extract_photo_request(
+                api_key=self.deepseek_key, history=history, ai_config=self.config["ai"],
+                client=self.http_client, usage_sink=self.usage_sink("photo_check"),
+            )
+        return unsent if asked else []
+
     def contact_overrides(self, chat_id: Optional[int]) -> dict[str, Any]:
         if chat_id is None:
             return {}
@@ -1553,6 +1579,15 @@ class SessionRuntime:
             # has to say (taken, confirmed, offered times).
             await self.flow.wait_scan(chat_id)
             note = await self.flow.reply_note(chat_id)
+            # While their time waits for the owner nothing is said — except
+            # that photos they ask to see still go out: those they have not
+            # had, on their own, with no text.
+            photos_only: list[dict[str, Any]] = []
+            if await self.flow.quiet_until_answered(chat_id, history):
+                photos_only = await self.photos_they_asked_for(history)
+                if not photos_only:
+                    await self.skip_reply(chat_id, OWNER_SKIP)
+                    return
             if limit := await self.ai_limit_reason():
                 # A limit puts the client soft-off (a spend_cap hold).
                 await self.queue_unanswered(chat_id, unanswered.SOFT_OFF, limit)
@@ -1569,7 +1604,7 @@ class SessionRuntime:
             await self.go_online_for(chat_id)
             await self.mark_read(chat_id)
 
-            background = await self.borrowed_context(chat_id)
+            background = "" if photos_only else await self.borrowed_context(chat_id)
             if background:
                 log.info("[%s]   drawing on a linked chat for context.", self.session_id)
 
@@ -1577,36 +1612,43 @@ class SessionRuntime:
                 log.info("[%s]   this reply carries booking news.", self.session_id)
             # The tenant's "when not to answer" instruction is only offered
             # when there is nothing the reply must pass on.
-            no_reply = "" if note.has_news else self.config["replies"]["no_reply_instruction"]
+            no_reply = "" if note.has_news or photos_only else self.config["replies"]["no_reply_instruction"]
 
             media_note = self.media_prompt()
+            if media_note and (had := media.sent_line(self.media_library.for_ai(), history)):
+                media_note += "\n" + had
             prompt = self.bundle.prompt if self.bundle is not None else None
 
-            async with self.ai_gate():
-                text = await ai_responder.generate_reply(
-                    api_key=self.deepseek_key,
-                    history=history,
-                    persona={},
-                    ai_config=self.config["ai"],
-                    client=self.http_client,
-                    adaptive_style=self.config["human"]["adaptive_style"],
-                    contact=overrides,
-                    background=background,
-                    booking_note=note.text,
-                    media_note=media_note,
-                    system_prompt=self.transport.adapt_prompt(prompt.text) if prompt else None,
-                    language_locked=self.config["language_policy"] != "mirror",
-                    burst_max=self.config["burst"]["max_messages"],
-                    burst_keep_together=self.config["burst"].get("keep_together", True),
-                    usage_sink=self.usage_sink("reply"),
-                    no_reply_instruction=no_reply,
-                )
+            if photos_only:
+                text = "\n".join(f"[send {item['id']}]" for item in photos_only[:media.MAX_ATTACHMENTS_PER_REPLY])
+            else:
+                async with self.ai_gate():
+                    text = await ai_responder.generate_reply(
+                        api_key=self.deepseek_key,
+                        history=history,
+                        persona={},
+                        ai_config=self.config["ai"],
+                        client=self.http_client,
+                        adaptive_style=self.config["human"]["adaptive_style"],
+                        contact=overrides,
+                        background=background,
+                        booking_note=note.text,
+                        media_note=media_note,
+                        system_prompt=self.transport.adapt_prompt(prompt.text) if prompt else None,
+                        language_locked=self.config["language_policy"] != "mirror",
+                        burst_max=self.config["burst"]["max_messages"],
+                        burst_keep_together=self.config["burst"].get("keep_together", True),
+                        usage_sink=self.usage_sink("reply"),
+                        no_reply_instruction=no_reply,
+                    )
 
             if no_reply and ai_responder.is_no_reply(text):
                 await self.skip_reply(chat_id, "the no-reply instruction applies to this message")
                 return
+            text = ai_responder.without_no_reply(text)
 
             text, attachments = media.split_attachments(text)
+            text = self.flow.fill_address(text)
             # Only what the AI was offered: never an arrival item (the way in).
             attachments = [i for i in attachments
                            if (item := self.media_library.get(i)) is not None and not item.get("send_on_arrival")]
@@ -1661,7 +1703,9 @@ class SessionRuntime:
                     await self.queue_unanswered(chat_id, unanswered.POLICY_HOLD, "; ".join(verdict.reasons))
             if fallback:
                 await self.queue_unanswered(chat_id, unanswered.FALLBACK, f"the reply contains “{fallback}”")
-            await self.flow.delivered(chat_id, note)
+            if not photos_only:
+                # Photos alone pass on no booking news.
+                await self.flow.delivered(chat_id, note)
             await scheduler.clear_deferred(self.pool, self.tenant_id, chat_id)
             self.schedule_go_offline(chat_id)
 
@@ -1721,10 +1765,14 @@ class SessionRuntime:
     async def reply_skip_reason(self, chat_id: int, history: list[dict[str, str]]) -> str:
         """Why this message should get no reply (replies.* in the config), or ""."""
         replies = self.config["replies"]
+        if self.flow.answered_by_way_in(chat_id):
+            return WAY_IN_SKIP
         last = history[-1] if history else {}
         if (replies["skip_acknowledgements"] and last.get("role") == "user"
                 and ai_limits.is_acknowledgement(last.get("content", ""), replies["acknowledgements"])):
             return ACK_SKIP
+        if replies["skip_bot_questions"] and ai_limits.bot_question_only(history):
+            return BOT_SKIP
         return await ai_limits.reply_limit(self.pool, self.tenant_id, chat_id, replies)
 
     async def skip_reply(self, chat_id: int, reason: str) -> None:
@@ -1734,7 +1782,7 @@ class SessionRuntime:
         # A reply limit or the tenant's no-reply instruction left a
         # customer without an answer: queued. A bare acknowledgement
         # ("ok", "thanks") needed none, so it is not.
-        if reason != ACK_SKIP:
+        if reason not in (ACK_SKIP, WAY_IN_SKIP, OWNER_SKIP, BOT_SKIP):
             await self.queue_unanswered(chat_id, unanswered.SKIPPED, reason)
 
     async def check_policy(

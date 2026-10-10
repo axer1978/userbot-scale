@@ -8,6 +8,7 @@ Postgres (the pg_pool fixture skips without PG_TEST_DSN).
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
 
@@ -24,6 +25,7 @@ import session_runtime
 import wa_device_profiles
 import wa_store
 from conftest import FakeHub, seed_session
+from transport import Inbound
 from database import DIR_OUT, STATUS_ERROR, STATUS_PENDING, STATUS_RECEIVED, STATUS_SENT
 from whatsapp_transport import GATEWAY, GatewayError, WhatsAppTransport, gateway_error
 
@@ -42,6 +44,9 @@ class FakeBus:
         self.replies: dict[str, Any] = {
             "open": {"state": "open"}, "close": {"closed": True}, "presence": {"ok": True},
             "read": {"ok": True}, "delete": {"ok": True}, "logout": {"logged_out": True}, "send_text": self._sent,
+            "send_media": self._sent,
+            "download_media": {"data": base64.b64encode(b"\xff\xd8\xff door").decode(), "bytes": 8,
+                               "mimetype": "image/jpeg"},
         }
 
     def _sent(self, args):
@@ -297,9 +302,55 @@ async def test_presence_online_and_offline(wa, pg_pool):
 
 
 @pytest.mark.asyncio
-async def test_no_media_library_in_whatsapp_replies(wa):
+async def test_the_media_library_is_offered_in_whatsapp_replies(wa):
     wa.config["media"]["enabled"] = True
-    assert wa.media_prompt() == ""
+    library = wa.media_library
+    library.dir.mkdir(parents=True, exist_ok=True)
+    (library.dir / "me.jpg").write_bytes(b"\xff\xd8\xff me")
+    item = library.add_file("me.jpg", "me in a red dress")
+    assert f"[send {item['id']}]" in wa.media_prompt()
+
+
+@pytest.mark.asyncio
+async def test_a_library_photo_goes_out_as_a_whatsapp_photo(wa, pg_pool):
+    library = wa.media_library
+    library.dir.mkdir(parents=True, exist_ok=True)
+    (library.dir / "me.jpg").write_bytes(b"\xff\xd8\xff me")
+    item = library.add_file("me.jpg", "me in a red dress")
+    library.set_flags(item["id"], view_once=True)
+    chat_id = await a_chat(wa, pg_pool)
+    row = await wa.send_media_as_me(chat_id, item["id"], guard=False)
+    [(target, action, args)] = [c for c in wa.bus.calls if c[1] == "send_media"]
+    assert (target, args["session_id"], args["epoch"], args["jid"]) == (GATEWAY, SID, 7, ANNA_PN)
+    assert (args["kind"], args["mimetype"], args["view_once"]) == ("image", "image/jpeg", True)
+    assert base64.b64decode(args["data"]) == b"\xff\xd8\xff me"
+    assert (row["status"], row["wa_message_id"]) == (STATUS_SENT, "3EB0OUT1")
+    assert row["text"].startswith("[sent photo #")
+
+
+@pytest.mark.asyncio
+async def test_an_inbound_photo_is_fetched_through_the_gateway(wa, pg_pool, tmp_path):
+    chat_id = await a_chat(wa, pg_pool)
+    media = {"kind": "image", "mimetype": "image/jpeg", "url": None, "direct_path": "/v/t62/a",
+             "media_key": base64.b64encode(b"k" * 32).decode(), "file_length": 8}
+
+    async def peer():
+        raise AssertionError("not needed")
+
+    photo = Inbound(chat_id=chat_id, text="", external_id="P1", load_peer=peer, has_photo=True,
+                    raw={"type": "image", "media": media})
+    assert await wa.transport.download_photo(photo) == b"\xff\xd8\xff door"
+    assert wa.bus.calls[-1] == (GATEWAY, "download_media", {"session_id": SID, "epoch": 7, "media": media})
+    target = tmp_path / "entrance.jpg"
+    assert await wa.transport.download_photo(photo, target) is None
+    assert target.read_bytes() == b"\xff\xd8\xff door"
+
+    # A view-once photo comes without a descriptor: nothing to fetch, no call.
+    calls = len(wa.bus.calls)
+    view_once = Inbound(chat_id=chat_id, text="", external_id="P2", load_peer=peer, has_photo=True,
+                        raw={"type": "image"})
+    assert await wa.transport.download_photo(view_once) is None
+    assert len(wa.bus.calls) == calls
 
 
 @pytest.mark.asyncio

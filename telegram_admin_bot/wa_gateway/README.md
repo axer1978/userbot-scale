@@ -95,6 +95,8 @@ Envelope is `commands.py`'s, so Python calls
 | `close` | `session_id`, `epoch` | `{"closed": bool}`; `false` when nothing to close or `epoch` < the socket's | `bad_request` |
 | `status` | | `[{session_id, epoch, state, lost, me, inbox_pending}]` | |
 | `send_text` | `session_id`, `epoch`, `jid`, `text` | `{"message_id": "<wa id>", "ts": <unix seconds>}` | `not_connected`, `stale_epoch`, `session_lost`, `rate_limited`, `not_on_whatsapp`, `blocked`, `bad_request`, `other` |
+| `send_media` | `session_id`, `epoch`, `jid`, `kind: "image"\|"video"`, `mimetype` (`image/…` / `video/…`), `data` (the file, base64, at most 16 MB), `view_once?`, `caption?` | `{"message_id": "<wa id>", "ts": <unix seconds>}` | as `send_text` |
+| `download_media` | `session_id`, `epoch`, `media` (an inbox payload's `media`) | `{"data": "<base64>", "bytes": <n>, "mimetype": <str\|null>}` | fencing as `send_text`; `bad_request` (bad descriptor, over 16 MB), `other` (the fetch failed, e.g. an expired link) |
 | `read` | `session_id`, `epoch`, `jid`, `message_ids: [..]` | `{"ok": true}` (keys `{remoteJid: jid, id, fromMe: false}` via `readMessages`) | same fencing/mapping as `send_text` |
 | `presence` | `session_id`, `epoch`, `state`, `jid?` | `{"ok": true}`; `composing`/`paused` need `jid`, `available`/`unavailable` take none | same |
 | `logout` | `session_id`, `epoch` | `{"logged_out": bool}` | `stale_epoch`, `not_found`, `busy`, `other` (timeout 25 s) |
@@ -155,8 +157,13 @@ existing chats keep working; rc14 also tries to fetch a privacy token) and
 
 ```
 {"v":1, "session_id", "epoch", "wa_message_id", "jid", "jid_alt", "phone_jid", "lid",
- "push_name", "from_me", "type":"text"|"image"|"other", "text", "quoted_id", "ts"}
+ "push_name", "from_me", "type":"text"|"image"|"other", "text", "quoted_id", "ts", "media"?}
 ```
+`media` (images only, when fetchable) is what `download_media` needs:
+`{"kind":"image", "mimetype", "url", "direct_path", "media_key" (base64), "file_length"}`.
+The key decrypts the file: it lives only in the wa_inbox row (deleted once the
+runtime takes it) and on the bus, and is never logged. A view-once photo sent
+to the account has no key on a linked device, so it has no `media`.
 `jid` is `key.remoteJid` as WhatsApp addressed the chat (PN or LID),
 `jid_alt` is `key.remoteJidAlt`; `phone_jid` (`…@s.whatsapp.net`) and `lid`
 (`…@lid`) are the two forms split out whichever way they arrived. `text` is

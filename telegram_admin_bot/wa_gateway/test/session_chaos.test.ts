@@ -8,6 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { Readable } from 'node:stream';
 import { Boom } from '@hapi/boom';
 import { DisconnectReason, initAuthCreds } from 'baileys';
 import type { WASocket } from 'baileys';
@@ -18,7 +19,7 @@ import { encrypt, keyringFromContent, resetKeyringCache } from '../src/crypto.ts
 import type { Pool } from '../src/db.ts';
 import { Gateway } from '../src/gateway.ts';
 import { INSERT_SQL } from '../src/inbox.ts';
-import type { SessionEvent } from '../src/session.ts';
+import type { SessionEvent, SessionSocketOptions } from '../src/session.ts';
 
 const KEY_B64 = 'MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=';
 process.env.USERBOT_MASTER_KEY = KEY_B64;
@@ -274,6 +275,49 @@ test('offline redelivery ("append") is accepted, anything else on messages.upser
   await tick();
   assert.deepEqual(pool.inserted.map(([, id]) => id), ['OFF1', 'OK2', 'PHONE1']);
   await gw.handle(cmd('close', { session_id: 'wa1', epoch: 4 }));
+});
+
+test('send_media sends a WhatsApp image, its echo is ours; download_media fetches and joins the file', async () => {
+  const fetched: unknown[] = [];
+  const download = (async (descriptor: unknown, kind: unknown) => {
+    fetched.push([descriptor, kind]);
+    return Readable.from([Buffer.from('JPEG'), Buffer.from('DATA')]);
+  }) as unknown as NonNullable<SessionSocketOptions['download']>;
+  const creds = { wa1: credsBlob('wa1') };
+  const pool = fakePool(creds);
+  const factory = socketFactory();
+  const gw = new Gateway(pool, async () => true, quiet, Date.now, { makeSocket: factory.makeSocket, download });
+  await gw.handle(cmd('open', { session_id: 'wa1', epoch: 4, browser }));
+  const sock = factory.last();
+  open(sock);
+  const sent: Array<[string, Record<string, unknown>]> = [];
+  (sock as unknown as { sendMessage: unknown }).sendMessage = async (jid: string, content: Record<string, unknown>) => {
+    sent.push([jid, content]);
+    return { key: { id: 'IMG1', remoteJid: jid, fromMe: true }, message: { imageMessage: {} }, messageTimestamp: 5 };
+  };
+  const s = { session_id: 'wa1', epoch: 4 };
+  const jid = '34611111111@s.whatsapp.net';
+  const data = Buffer.from([0xff, 0xd8, 0xff, 1]).toString('base64');
+
+  assert.deepEqual(await gw.handle(cmd('send_media', { ...s, jid, kind: 'image', mimetype: 'image/jpeg', data, view_once: false })),
+                   { message_id: 'IMG1', ts: 5 });
+  assert.equal(sent.length, 1);
+  const content = sent[0]![1];
+  assert.ok(Buffer.isBuffer(content.image));
+  assert.equal(content.mimetype, 'image/jpeg');
+  assert.equal(content.viewOnce, false);
+  // The server echoing our own photo back is not an inbox row.
+  sock.ev.emit('messages.upsert', { type: 'notify', messages: [{ key: { remoteJid: jid, fromMe: true, id: 'IMG1' }, message: { imageMessage: {} }, messageTimestamp: 5 }] });
+  await tick();
+  assert.deepEqual(pool.inserted, []);
+
+  const media = { kind: 'image', media_key: Buffer.alloc(32, 2).toString('base64'), direct_path: '/v/t62/a', url: 'https://mmg.whatsapp.net/a' };
+  assert.deepEqual(await gw.handle(cmd('download_media', { ...s, media })),
+                   { data: Buffer.from('JPEGDATA').toString('base64'), bytes: 8, mimetype: null });
+  const [descriptor, kind] = fetched[0] as [{ mediaKey: Buffer; directPath: string; url: string }, string];
+  assert.equal(kind, 'image');
+  assert.equal(descriptor.mediaKey.length, 32);
+  assert.equal(descriptor.directPath, '/v/t62/a');
 });
 
 test('delete revokes each of our own messages with one sendMessage, and maps socket errors like send_text', async () => {

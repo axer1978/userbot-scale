@@ -80,6 +80,12 @@ def test_extraction_needs_an_intent_and_a_time_to_book():
     assert bookings.parse_extraction('{"intent": "cancel"}')["intent"] == "cancel"
 
 
+def test_right_now_books_without_a_start():
+    found = bookings.parse_extraction('{"intent": "book", "asap": true, "start": null}')
+    assert found["asap"] is True
+    assert bookings.parse_extraction('{"intent": "book", "asap": false, "start": null}') is None
+
+
 def test_a_requested_slot_lasts_real_minutes_across_the_clock_change():
     # Riga goes back an hour at 04:00 on 25 Oct 2026.
     start, end = bookings.requested_slot({"start": "2026-10-25T02:30", "duration_minutes": 120},
@@ -87,6 +93,31 @@ def test_a_requested_slot_lasts_real_minutes_across_the_clock_change():
     assert end.astimezone(timezone.utc) - start.astimezone(timezone.utc) == timedelta(hours=2)
     start, end = bookings.requested_slot({"start": "2026-10-04T15:00"}, tz_name="Europe/Riga", default_duration=45)
     assert end - start == timedelta(minutes=45)
+
+
+def test_now_is_the_next_five_minute_mark_at_least_two_minutes_ahead():
+    at = lambda h, m, s=0: datetime(2026, 10, 5, h, m, s, tzinfo=timezone.utc)  # noqa: E731
+    assert bookings.soonest_start(at(22, 12, 51)) == at(22, 15)
+    assert bookings.soonest_start(at(22, 15, 40)) == at(22, 20)   # the model said 22:15: already past
+    assert bookings.soonest_start(at(22, 13)) == at(22, 15)
+    assert bookings.soonest_start(at(22, 14, 59)) == at(22, 20)
+    assert bookings.soonest_start(at(23, 58, 30)) == datetime(2026, 10, 6, 0, 5, tzinfo=timezone.utc)
+
+
+def test_asap_and_a_time_that_just_passed_both_mean_now():
+    now = datetime(2026, 10, 5, 19, 20, 40, tzinfo=timezone.utc)   # 22:20:40 in Riga
+    soon = datetime(2026, 10, 5, 19, 25, tzinfo=timezone.utc)
+    start, end = bookings.requested_slot({"asap": True, "start": None}, tz_name="Europe/Riga",
+                                         default_duration=60, now=now)
+    assert start == soon and end - start == timedelta(minutes=60)
+    start, _ = bookings.requested_slot({"start": "2026-10-05T22:20"}, tz_name="Europe/Riga",
+                                       default_duration=60, now=now)
+    assert start == soon
+    # Long past is left alone: the slot check says so, as before.
+    start, _ = bookings.requested_slot({"start": "2026-10-05T20:00"}, tz_name="Europe/Riga",
+                                       default_duration=60, now=now)
+    assert start.hour == 20
+    assert bookings.requested_slot({"asap": True}, tz_name="Europe/Riga", default_duration=60) is None
 
 
 def test_reminder_answers_are_only_bare_1_or_2():
@@ -138,3 +169,20 @@ def test_the_reminder_line_asks_for_1_or_2_and_uses_the_instruction():
     line = bookings.reminder_line(_b(state=bs.CONFIRMED), "Mention parking is free.", now, "https://x/b/tok")
     assert "Mention parking is free." in line and "reply 1" in line and "https://x/b/tok" in line
     assert "in about 24 hours" in line
+
+
+def test_the_reply_is_always_told_only_the_owner_confirms():
+    # Even with nothing booked yet, the reply may not say "booked".
+    text = bookings.context_for_reply([])
+    assert text.startswith("APPOINTMENTS:") and bookings.ONLY_OWNER_CONFIRMS_RULE in text
+
+
+def test_the_address_goes_where_the_reply_wrote_the_tag_as_a_message_of_its_own():
+    reply = "hi love\n[block]\nRATES\n[/block]\n[address]"
+    filled = bookings.fill_address(reply, "Brivibas iela 1, Riga")
+    assert filled == "hi love\n[block]\nRATES\n[/block]\n[block]\nBrivibas iela 1, Riga\n[/block]"
+    # Any spelling of the tag, once per reply; without an address it is dropped.
+    assert bookings.fill_address("here love [ Address ] [address]", "X").count("X") == 1
+    assert bookings.fill_address("here love\n[address]", "") == "here love"
+    assert bookings.fill_address("no tag here", "X") == "no tag here"
+    assert bookings.take_address_tag("hi\n[address]\nwhat time?") == ("hi\n\nwhat time?", True)

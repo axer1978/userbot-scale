@@ -207,9 +207,18 @@ class Booking(_Strict):
     # How long a freed slot is held for the first person on the waitlist
     # before it is offered to the next one.
     waitlist_offer_hours: int = Field(12, ge=1, le=168)
+    # Sent word for word where a reply writes [address] (with the prices in
+    # the first reply, or when they ask where), and after a confirmation if
+    # it is not in the chat yet. Keep door codes and the way in for
+    # arrival_instructions.
+    address: str = Field("", max_length=2000)
     # Sent word for word, once, when the customer has arrived. Media items
     # marked "send on arrival" go out right after it.
     arrival_instructions: str = Field("", max_length=20_000)
+    # Write nothing to a customer while a time they asked for waits for the
+    # owner: the owner's answer is the next message they get. Their first
+    # message still gets the first reply.
+    quiet_until_answered: bool = False
     # Delete the arrival instructions and those photos from the chat, for
     # both sides, this many minutes after they were sent (door codes, the
     # flat number). 0 = keep them.
@@ -288,6 +297,10 @@ class Replies(_Strict):
         default_factory=lambda: ["ok", "okay", "thanks", "thank you", "paldies", "labi", "спасибо", "ок", "👍", "🙏"],
         max_length=200,
     )
+    # Don't reply when the customer's messages only ask whether they are
+    # talking to a bot, an AI or a real person (ai_limits.is_bot_question):
+    # no answer and no tokens. Their first message still gets the first reply.
+    skip_bot_questions: bool = False
     # When the bot should not answer, in your own words. Empty = it always
     # answers. When set, the reply writer may decline to answer a message
     # that matches; each time is noted in the chat and in the audit log.

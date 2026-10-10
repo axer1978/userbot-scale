@@ -80,7 +80,7 @@ function MediaCard({ item }: { item: MediaItem }) {
         </label>
       )}
       <FlagBox item={item} flag="view_once"
-               title="Telegram: the client can open it once, then it disappears. Not on WhatsApp.">
+               title="The client can open it once, then it disappears (Telegram and WhatsApp).">
         View once</FlagBox>
       <FlagBox item={item} flag="send_on_arrival"
                title="Sent right after the arrival instructions and deleted with them. The AI never sends it.">
