@@ -5,13 +5,14 @@ unanswered, review, onboarding, client logins), rewritten from
 `../static/index.html` + `../static/js/*` as a Next.js 16 App Router app in
 TypeScript. It talks to the same FastAPI panel (`panel.py`) over the same
 `/api/*` routes and `/ws/{session_id}` socket; nothing in the Python code
-changed. `panel.py`'s own pages — the client dashboard (`/owner/`), the moderator panel (`/manager/`)
-and the public terms (`/terms/`) — are still served by `panel.py`.
+changed. The business owners' dashboard (`/owner`) is in this app too (see
+below); `panel.py`'s own pages — the moderator panel (`/manager/`) and the
+public terms (`/terms/`) — are still served by `panel.py`.
 
 ## How it fits
 
 ```
-browser ──▶ server.mjs (:3000) ──┬─ /api/*, /ws/*, /owner/, /manager/, /terms/ ──▶ panel.py (:8787), unchanged
+browser ──▶ server.mjs (:3000) ──┬─ /api/*, /ws/*, /manager/, /terms/ ──▶ panel.py (:8787), unchanged
                                  └─ everything else ──────────▶ Next.js (pages)
 ```
 
@@ -63,7 +64,7 @@ panel (Caddy preserves `Host`, so the origin check passes):
 ```caddy
 {$PANEL_DOMAIN} {
 	# … the existing tls / header blocks …
-	@panel path /api/* /ws/* /owner /owner/* /manager /manager/* /terms /terms/*
+	@panel path /api/* /ws/* /manager /manager/* /terms /terms/*
 	reverse_proxy @panel panel:8787
 	reverse_proxy admin-web:3000
 }
@@ -78,8 +79,9 @@ step (update the file and that test together).
 | Path | What |
 |---|---|
 | `server.mjs` | Gateway: Next.js + pass-through to `panel.py` |
-| `proxy.ts` | CSP nonce and page headers; sign-in redirect |
+| `proxy.ts` | CSP nonce and page headers; admin sign-in redirect (not for `/owner`, which has its own sign-in) |
 | `app/login/` | Sign-in: the admin (password, plus a code when `ADMIN_TOTP_SECRET` is set), or a moderator whose role includes the admin panel (username, password and authenticator code) |
+| `app/owner/`, `components/owner/`, `lib/owner/` | The business owners' dashboard (`/owner`, was `../static/owner/`): sign-in, sign-up, approval, terms, identity video, bookings, numbers, unanswered messages, photos, settings. Its own cookie (`owner_token`) and API (`/api/owner/*`); styled with a CSS Module so it never touches the panel's styles |
 | `app/(panel)/layout.tsx` | Shell: header, live state, dialogs |
 | `app/(panel)/page.tsx` | Conversations (was `conversations.js`) |
 | `app/(panel)/{bookings,clients,safety,unanswered,review,onboarding,owners}/` | One route per former full-screen sheet |
