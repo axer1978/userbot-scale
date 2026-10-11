@@ -51,6 +51,17 @@ def test_an_industry_with_its_own_default_gets_it():
     assert "GREEN bubbles = the business" in escort and "BLUE bubbles = the business" in escort
 
 
+def test_the_escort_business_layer_holds_only_services_and_costs():
+    # Every escort business shares the voice and pipeline (the standard); the
+    # business layer the template asks for is services, hours_location and
+    # appended boundaries only, with no addendum.
+    lines = finetune.default_template("Escort").splitlines()
+    example = json.loads(lines[lines.index("=== BUSINESS LAYER ===") + 1])
+    layer = finetune.check_business_layer(example)
+    assert set(layer["overrides"]) == {"services", "hours_location", "boundaries"}
+    assert layer["overrides"]["boundaries"]["mode"] == "append" and layer["addendum"] == ""
+
+
 def test_any_other_industry_gets_the_generic_default_with_its_name():
     hair = finetune.default_template("Hair salons")
     assert "Hair salons industry" in hair and "=== INDUSTRY STANDARD (Hair salons) ===" in hair
