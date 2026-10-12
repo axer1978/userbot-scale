@@ -21,6 +21,7 @@ import commands
 import controls
 import crypto
 import health
+import media
 import session_runtime
 import wa_device_profiles
 import wa_store
@@ -326,6 +327,22 @@ async def test_a_library_photo_goes_out_as_a_whatsapp_photo(wa, pg_pool):
     assert base64.b64decode(args["data"]) == b"\xff\xd8\xff me"
     assert (row["status"], row["wa_message_id"]) == (STATUS_SENT, "3EB0OUT1")
     assert row["text"].startswith("[sent photo #")
+
+
+@pytest.mark.asyncio
+async def test_view_once_turned_off_in_the_panel_applies_to_the_next_send(wa, pg_pool):
+    library = wa.media_library
+    library.dir.mkdir(parents=True, exist_ok=True)
+    (library.dir / "me.jpg").write_bytes(b"\xff\xd8\xff me")
+    item = library.add_file("me.jpg", "me in a red dress")
+    library.set_flags(item["id"], view_once=True)
+    # The panel is another process with its own copy of the library.
+    panel = media.MediaLibrary(library.dir)
+    panel.set_flags(item["id"], view_once=False)
+    chat_id = await a_chat(wa, pg_pool)
+    await wa.send_media_as_me(chat_id, item["id"], guard=False)
+    [(_, _, args)] = [c for c in wa.bus.calls if c[1] == "send_media"]
+    assert args["view_once"] is False
 
 
 @pytest.mark.asyncio
