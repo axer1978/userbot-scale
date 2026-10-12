@@ -1407,6 +1407,9 @@ class SessionRuntime:
         self, chat_id: int, item_id: int, draft_id: Optional[int] = None, guard: bool = True,
         *, actor: str = audit.BOT, reason: str = "",
     ) -> dict[str, Any]:
+        # The panel edits the library (view once, removals) in another
+        # process: a file sent by hand must go out as it is set now.
+        self.media_library.refresh()
         item = self.media_library.get(item_id)
         path = self.media_library.path(item_id)
         if item is None or path is None:
