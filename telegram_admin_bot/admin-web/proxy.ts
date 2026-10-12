@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-// Page headers, the same policy panel.py sends for its own pages
+// Page headers (the admin panel's and the client dashboard's), the same policy panel.py sends for its own pages
 // (panel.SECURITY_HEADERS), except that scripts are allowed by a fresh
 // nonce instead of 'self' alone: Next.js inlines its bootstrap scripts and
 // tags every script it emits with the nonce it finds in this header.
@@ -29,6 +29,13 @@ function contentSecurityPolicy(nonce: string, host: string): string {
   ].join("; ");
 }
 
+// The client dashboard has its own sign-in screens and its own cookie
+// (owner_token, checked by panel.py on every /api/owner call): an admin
+// cookie is neither needed for it nor does it open it.
+function isOwnerPage(pathname: string): boolean {
+  return pathname === "/owner" || pathname.startsWith("/owner/");
+}
+
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
@@ -36,7 +43,7 @@ export function proxy(request: NextRequest) {
   // that is there is still valid only the panel knows; a 401 from the API
   // sends the browser to /login as well (lib/api.ts).
   const signedIn = COOKIE_NAMES.some((name) => request.cookies.has(name));
-  if (!signedIn && pathname !== "/login") {
+  if (!signedIn && pathname !== "/login" && !isOwnerPage(pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.search = pathname === "/" ? "" : `?next=${encodeURIComponent(pathname + search)}`;
@@ -66,7 +73,7 @@ export const config = {
     {
       // Pages only: not Next's static files, not the routes server.mjs hands
       // to panel.py, and not prefetches (they get the page's headers anyway).
-      source: "/((?!_next/static|_next/image|icon.svg|api/|ws/|owner(?:/|$)|manager(?:/|$)|terms(?:/|$)).*)",
+      source: "/((?!_next/static|_next/image|icon.svg|api/|ws/|manager(?:/|$)|terms(?:/|$)).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },
