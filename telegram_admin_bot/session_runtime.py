@@ -516,8 +516,7 @@ class SessionRuntime:
             attachments = [
                 i for i in (draft.get("attachments") or []) if self.media_library.get(i) is not None
             ]
-            parts = ai_responder.split_burst(
-                text, self.config["burst"]["max_messages"], self.config["burst"].get("keep_together", True))
+            parts = self.burst_parts(text)
             if not parts and not attachments:
                 raise ValueError("Message is empty")
             sent = await self.send_burst(
@@ -921,6 +920,13 @@ class SessionRuntime:
             if phrase.strip() and phrase.strip().lower() in low:
                 return phrase.strip()
         return ""
+
+    def burst_parts(self, text: str) -> list[str]:
+        """The reply as the messages it goes out as (burst.*); the prompt's
+        fixed blocks (the rates) stay one message even without markers."""
+        burst = self.config["burst"]
+        fixed = ai_responder.fixed_blocks(self.bundle.prompt.text) if self.bundle is not None else ()
+        return ai_responder.split_burst(text, burst["max_messages"], burst.get("keep_together", True), fixed)
 
     def staging_on(self) -> bool:
         return bool(self.config["staging"]["enabled"])
@@ -1657,8 +1663,7 @@ class SessionRuntime:
                            if (item := self.media_library.get(i)) is not None and not item.get("send_on_arrival")]
             if not media_note:
                 attachments = []
-            parts = ai_responder.split_burst(
-                text, self.config["burst"]["max_messages"], self.config["burst"].get("keep_together", True))
+            parts = self.burst_parts(text)
             if not parts and not attachments:
                 raise ai_responder.AIResponderError("The reply came back empty.")
             if attachments:
