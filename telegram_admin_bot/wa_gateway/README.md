@@ -101,6 +101,13 @@ Envelope is `commands.py`'s, so Python calls
 | `presence` | `session_id`, `epoch`, `state`, `jid?` | `{"ok": true}`; `composing`/`paused` need `jid`, `available`/`unavailable` take none | same |
 | `logout` | `session_id`, `epoch` | `{"logged_out": bool}` | `stale_epoch`, `not_found`, `busy`, `other` (timeout 25 s) |
 
+`view_once` needs `scripts/patch-baileys.mjs`, which npm runs after every
+install: Baileys 7.0.0-rc14 reads the media type off the view-once wrapper,
+finds none and leaves `mediatype` off the stanza, so the other phone drops the
+message without an error (and it never tags the send `<meta view_once>` as
+WhatsApp Web does). Upstream fixes: WhiskeySockets/Baileys #2836, #2837. A
+Baileys upgrade fails the install there until the patch is checked.
+
 `pair` wipes the session's `wa_auth_state` first (a re-pair is a new linked
 device), runs a pairing socket, streams `qr` (each rotation) or requests a
 pairing code once the socket is up, and on success (creds registered and
