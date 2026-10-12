@@ -102,6 +102,50 @@ def test_overflow_keeps_a_blocks_line_breaks():
     assert parts[:3] == ["a", "b", "c"] and parts[3] == RATES + "\nd"
 
 
+SERVICES = (
+    "Two fixed messages. Send each one exactly as written below, as ONE message, with [block] on the "
+    "line before it and [/block] on the line after it.\n\n"
+    "THE RATES MESSAGE:\n[block]\n1 time 💦💦\n30 minutes 100 euro\n\n2 times 💦💦\n1 hour 200 euro\n"
+    "Incall 200\nOutcall 200+ 🚕\n\nBest company in Latvia 🇱🇻🔥\n[/block]\n\n"
+    "THE EXTRAS MESSAGE:\n[block]\nExtras +50 euro\nNo anal\nNo lesbian show\n"
+    "I decide on extras when we meet 😘\nPlease come clean 🧼 and healthy\n[/block]\n\n"
+    "Questions about services: answer in one short line.\n[block]\none line only\n[/block]"
+)
+FIXED_RATES = ("1 time 💦💦\n30 minutes 100 euro\n\n2 times 💦💦\n1 hour 200 euro\nIncall 200\n"
+               "Outcall 200+ 🚕\n\nBest company in Latvia 🇱🇻🔥")
+FIXED_EXTRAS = ("Extras +50 euro\nNo anal\nNo lesbian show\nI decide on extras when we meet 😘\n"
+                "Please come clean 🧼 and healthy")
+
+
+def test_fixed_blocks_are_the_prompts_own_multi_line_blocks():
+    """Not the markers named in a sentence, and not a one-liner."""
+    assert ai_responder.fixed_blocks(SERVICES) == (FIXED_RATES, FIXED_EXTRAS)
+    assert ai_responder.fixed_blocks("") == ()
+
+
+def test_a_fixed_block_without_markers_is_still_one_message():
+    """What a real customer got: the model left the markers out, the rates
+    went out a line at a time and the cap glued the rest into one bubble."""
+    reply = ("Hi my love ❤️ what time tomorrow? 😘\n" + FIXED_RATES + "\n" + FIXED_EXTRAS
+             + "\n[block]\nganu street 4\n[/block]")
+    assert ai_responder.split_burst(reply, 5)[:4] == [
+        "Hi my love ❤️ what time tomorrow? 😘", "1 time 💦💦", "30 minutes 100 euro", "2 times 💦💦"]
+    parts = ai_responder.split_burst(reply, 5, fixed=ai_responder.fixed_blocks(SERVICES))
+    assert parts == ["Hi my love ❤️ what time tomorrow? 😘", FIXED_RATES, FIXED_EXTRAS, "ganu street 4"]
+
+
+def test_a_fixed_block_comes_back_as_the_prompt_writes_it():
+    """Blank lines, case, an emoji or a mark the model dropped: the prompt's
+    words go out. Lines of it alone, or out of order, are left as they are."""
+    fixed = ai_responder.fixed_blocks(SERVICES)
+    sloppy = "extras +50 euro\nno anal\n\nNo lesbian show!\nI decide on extras when we meet\nplease come clean and healthy"
+    assert ai_responder.split_burst(f"ok love\n{sloppy}", 5, fixed=fixed) == ["ok love", FIXED_EXTRAS]
+    assert ai_responder.split_burst("No anal\nExtras +50 euro", 5, fixed=fixed) == ["No anal", "Extras +50 euro"]
+    # With the markers it was already one message; keep_together off splits it.
+    assert ai_responder.split_burst(f"[block]\n{FIXED_RATES}\n[/block]", 5, fixed=fixed) == [FIXED_RATES]
+    assert len(ai_responder.split_burst(FIXED_RATES, 9, keep_together=False, fixed=fixed)) == 7
+
+
 def test_the_block_note_follows_the_setting():
     assert ai_responder.BLOCK_OPEN in ai_responder.burst_note(4, True)
     assert ai_responder.BLOCK_OPEN not in ai_responder.burst_note(4, False)

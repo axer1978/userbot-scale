@@ -429,7 +429,8 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
         # The address the reply asked for goes in as a message of its own
         # (shown as sent by the system); the reply is checked without it.
         text, tagged = bookings.take_address_tag(text)
-        parts = ai_responder.split_burst(text, burst["max_messages"], burst.get("keep_together", True))
+        parts = ai_responder.split_burst(text, burst["max_messages"], burst.get("keep_together", True),
+                                         ai_responder.fixed_blocks(ctx.prompt.text))
         sent = "\n".join(parts)
         if (first_reply and address and not tagged and scenario["category"] not in ctx.except_categories):
             failed.append("the address was not sent with the prices in the first reply")

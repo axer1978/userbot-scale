@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import logging
 import re
 from typing import Any, Awaitable, Callable, Optional
@@ -74,6 +75,14 @@ _BLOCK = re.compile(r"\[\s*block\s*\](.*?)(?:\[\s*/\s*block\s*\]|$)", re.IGNOREC
 _STRAY_BLOCK_TAG = re.compile(r"\[\s*/?\s*block\s*\]", re.IGNORECASE)
 _SEPARATOR_LINE = re.compile(r"^[ \t]*\|{3,}[ \t]*(?:\n|$)", re.MULTILINE)
 _EXTRA_BLANK_LINES = re.compile(r"\n\s*\n(\s*\n)+")
+# A one-piece message the prompt spells out word for word: the markers on
+# lines of their own around it ("send the rates message exactly as written").
+# A marker named in a sentence ("with [block] on the line before it") is not one.
+_PROMPT_BLOCK = re.compile(
+    r"^[ \t]*\[\s*block\s*\][ \t]*\n(.*?)\n[ \t]*\[\s*/\s*block\s*\][ \t]*$",
+    re.IGNORECASE | re.DOTALL | re.MULTILINE,
+)
+_NOT_A_WORD = re.compile(r"[\W_]+")
 
 
 def burst_note(max_messages: int = MAX_BURST_MESSAGES, keep_together: bool = True) -> str:
@@ -146,7 +155,55 @@ def _block_text(text: str) -> str:
     return _EXTRA_BLANK_LINES.sub("\n\n", "\n".join(lines)).strip()
 
 
-def split_burst(text: str, max_messages: int = MAX_BURST_MESSAGES, keep_together: bool = True) -> list[str]:
+@functools.lru_cache(maxsize=64)
+def fixed_blocks(prompt_text: str) -> tuple[str, ...]:
+    """The one-piece messages a prompt gives word for word between [block]
+    and [/block] lines (a rates or an extras message), when longer than one
+    line: split_burst keeps these together even when a reply forgets the
+    markers."""
+    blocks = (_block_text(match.group(1)) for match in _PROMPT_BLOCK.finditer(prompt_text or ""))
+    return tuple(block for block in blocks if len(_block_keys(block)) > 1)
+
+
+def _line_key(line: str) -> str:
+    """A line as compared with a fixed block: case, emojis, punctuation and
+    spacing left out."""
+    return _NOT_A_WORD.sub(" ", line.lower()).strip()
+
+
+def _block_keys(block: str) -> list[str]:
+    return [key for key in map(_line_key, block.splitlines()) if key]
+
+
+def _split_loose(text: str, fixed: tuple[str, ...]) -> list[str]:
+    """Text outside the markers, one part per line — except that the lines of
+    a fixed block, in its order, come back as that block (as the prompt
+    writes it), one part."""
+    lines = _split_lines(text)
+    if not fixed:
+        return lines
+    keys = [_line_key(line) for line in lines]
+    wanted = sorted(((_block_keys(block), block) for block in fixed), key=lambda kb: -len(kb[0]))
+    parts: list[str] = []
+    i = 0
+    while i < len(lines):
+        for block_keys, block in wanted:
+            if keys[i:i + len(block_keys)] == block_keys:
+                parts.append(block)
+                i += len(block_keys)
+                break
+        else:
+            parts.append(lines[i])
+            i += 1
+    return parts
+
+
+def split_burst(
+    text: str,
+    max_messages: int = MAX_BURST_MESSAGES,
+    keep_together: bool = True,
+    fixed: tuple[str, ...] = (),
+) -> list[str]:
     """The parts of a reply, in order: one per separator or line break, and
     one per [block]…[/block] when `keep_together` (burst.keep_together).
 
@@ -157,6 +214,11 @@ def split_burst(text: str, max_messages: int = MAX_BURST_MESSAGES, keep_together
     back empty — the caller reports that rather than sending a blank message.
     With `keep_together` off, a block is split like any other text; the
     markers are dropped either way.
+
+    `fixed` are the prompt's own blocks (fixed_blocks): the model now and
+    then writes the rates without the markers, and six bubbles of a price
+    list (the rest glued onto the last one by the cap) read as a bot. With
+    `keep_together`, their lines still go out as one message.
     """
     max_messages = max(1, int(max_messages))
     text = text or ""
@@ -164,12 +226,12 @@ def split_burst(text: str, max_messages: int = MAX_BURST_MESSAGES, keep_together
     if keep_together:
         last = 0
         for match in _BLOCK.finditer(text):
-            parts.extend(_split_lines(_STRAY_BLOCK_TAG.sub("", text[last:match.start()])))
+            parts.extend(_split_loose(_STRAY_BLOCK_TAG.sub("", text[last:match.start()]), fixed))
             block = _block_text(_STRAY_BLOCK_TAG.sub("", match.group(1)))
             if block:
                 parts.append(block)
             last = match.end()
-        parts.extend(_split_lines(_STRAY_BLOCK_TAG.sub("", text[last:])))
+        parts.extend(_split_loose(_STRAY_BLOCK_TAG.sub("", text[last:]), fixed))
     else:
         parts = _split_lines(_STRAY_BLOCK_TAG.sub("", text))
     if len(parts) > max_messages:
