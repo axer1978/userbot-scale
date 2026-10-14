@@ -156,13 +156,14 @@ def _block_text(text: str) -> str:
 
 
 @functools.lru_cache(maxsize=64)
-def fixed_blocks(prompt_text: str) -> tuple[str, ...]:
+def fixed_blocks(prompt_text: str, min_lines: int = 2) -> tuple[str, ...]:
     """The one-piece messages a prompt gives word for word between [block]
     and [/block] lines (a rates or an extras message), when longer than one
     line: split_burst keeps these together even when a reply forgets the
-    markers."""
+    markers. With `min_lines` 1 the one-line ones too, which variation.py
+    must leave as written."""
     blocks = (_block_text(match.group(1)) for match in _PROMPT_BLOCK.finditer(prompt_text or ""))
-    return tuple(block for block in blocks if len(_block_keys(block)) > 1)
+    return tuple(block for block in blocks if len(_block_keys(block)) >= max(1, min_lines))
 
 
 def _line_key(line: str) -> str:
@@ -175,27 +176,51 @@ def _block_keys(block: str) -> list[str]:
     return [key for key in map(_line_key, block.splitlines()) if key]
 
 
-def _split_loose(text: str, fixed: tuple[str, ...]) -> list[str]:
+def _split_loose(text: str, fixed: tuple[str, ...]) -> list[tuple[str, bool]]:
     """Text outside the markers, one part per line — except that the lines of
     a fixed block, in its order, come back as that block (as the prompt
-    writes it), one part."""
+    writes it), one part. Each part says whether it is a fixed block."""
     lines = _split_lines(text)
     if not fixed:
-        return lines
+        return [(line, False) for line in lines]
     keys = [_line_key(line) for line in lines]
     wanted = sorted(((_block_keys(block), block) for block in fixed), key=lambda kb: -len(kb[0]))
-    parts: list[str] = []
+    parts: list[tuple[str, bool]] = []
     i = 0
     while i < len(lines):
         for block_keys, block in wanted:
             if keys[i:i + len(block_keys)] == block_keys:
-                parts.append(block)
+                parts.append((block, True))
                 i += len(block_keys)
                 break
         else:
-            parts.append(lines[i])
+            parts.append((lines[i], False))
             i += 1
     return parts
+
+
+def reply_pieces(text: str, fixed: tuple[str, ...] = ()) -> list[tuple[str, bool]]:
+    """The reply's messages, before any cap, each with whether it is a
+    one-piece message: between [block] markers (the rates, the extras, the
+    address) or one of the prompt's `fixed` blocks written without them."""
+    text = text or ""
+    pieces: list[tuple[str, bool]] = []
+    last = 0
+    for match in _BLOCK.finditer(text):
+        pieces.extend(_split_loose(_STRAY_BLOCK_TAG.sub("", text[last:match.start()]), fixed))
+        block = _block_text(_STRAY_BLOCK_TAG.sub("", match.group(1)))
+        if block:
+            pieces.append((block, True))
+        last = match.end()
+    pieces.extend(_split_loose(_STRAY_BLOCK_TAG.sub("", text[last:]), fixed))
+    return pieces
+
+
+def join_pieces(pieces: list[tuple[str, bool]]) -> str:
+    """reply_pieces back into reply text: one line per message, a one-piece
+    message between its [block] markers. split_burst gives the same parts."""
+    return "\n".join(f"{BLOCK_OPEN}\n{text}\n{BLOCK_CLOSE}" if is_block else text
+                     for text, is_block in pieces)
 
 
 def split_burst(
@@ -222,16 +247,8 @@ def split_burst(
     """
     max_messages = max(1, int(max_messages))
     text = text or ""
-    parts: list[str] = []
     if keep_together:
-        last = 0
-        for match in _BLOCK.finditer(text):
-            parts.extend(_split_loose(_STRAY_BLOCK_TAG.sub("", text[last:match.start()]), fixed))
-            block = _block_text(_STRAY_BLOCK_TAG.sub("", match.group(1)))
-            if block:
-                parts.append(block)
-            last = match.end()
-        parts.extend(_split_loose(_STRAY_BLOCK_TAG.sub("", text[last:]), fixed))
+        parts = [part for part, _ in reply_pieces(text, fixed)]
     else:
         parts = _split_lines(_STRAY_BLOCK_TAG.sub("", text))
     if len(parts) > max_messages:
