@@ -13,6 +13,11 @@ Without a vision key the chats can be transcribed instead: the same
 template goes to the text model (DeepSeek) with the transcripts and a note
 that says how to read them in place of screenshots.
 
+Or the admin flags real chats from the conversations view (good / bad, what
+kind of client, how it ended, why, corrections on single lines): those go
+to the text model the same way, each headed by that judgement, with the
+client's personal data and the business's address masked.
+
 Both JSON blocks are checked exactly as a manual save would check them
 (prompt_layers.validate_client / validate_industry), plus one rule of this
 module: an industry standard written by a run must have a boundaries
@@ -27,8 +32,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -199,6 +206,221 @@ def text_model() -> str:
     return (os.getenv("FINETUNE_TEXT_MODEL") or "").strip() or DEFAULT_TEXT_MODEL
 
 
+# ----------------------------------------------------------- flagged chats
+# Real chats the admin flagged from the conversations view. They go to the
+# text model like typed transcripts, each headed by the admin's judgement.
+
+VERDICTS = {
+    "good": "GOOD: handled the way the business wants. Learn from it first.",
+    "bad": "BAD: shows replies NOT to repeat. Never use them as writing samples.",
+    "plain": "an ordinary example, neither marked good nor bad.",
+}
+CLIENT_KINDS = {
+    "serious": "SERIOUS client",
+    "time_waster": "TIME-WASTER",
+    "safety_risk": "SAFETY RISK",
+    "regular": "REGULAR (a returning client)",
+}
+OUTCOMES = {
+    "came": "he booked and came",
+    "no_show": "he booked but did not come (no-show)",
+    "cancelled": "he booked, then cancelled",
+    "never_booked": "he never booked",
+    "blocked": "the business stopped answering him or blocked him",
+}
+MAX_NOTE_CHARS = 4_000
+MAX_CORRECTION_CHARS = 1_000
+MAX_CORRECTIONS = 100
+# From the first message on: first contact is what matters most.
+MAX_EXAMPLE_MESSAGES = 300
+
+# After TRANSCRIPT_NOTE, in a run from flagged chats.
+EXAMPLES_NOTE = (
+    "THESE ARE THE BUSINESS'S REAL CHATS, FLAGGED BY THE OPERATOR. Most business replies were written by the "
+    "assistant you are tuning, so a \"-bad\" chat shows the assistant's own mistakes. Each conversation starts "
+    "with the operator's judgement, which is not part of the chat:\n"
+    "- \"Handled:\" good = learn from it first (like a \"-good\" screenshot); bad = replies not to repeat (like "
+    "\"-bad\"); ordinary = an ordinary example.\n"
+    "- \"Client:\" what kind of client he was: serious, time-waster, safety risk or regular. This is the "
+    "operator's verdict and it stands. Learn from the chat the SIGNS that show this kind of client early, and "
+    "write them into the Qualify step. If you read the client differently, say so in the operator notes.\n"
+    "- \"Ended:\" what really happened afterwards (came, no-show, cancelled, never booked, blocked). A client "
+    "who looked serious and did not come teaches warning signs too.\n"
+    "- \"Why:\" the operator's explanation of how to read this chat. Follow it, and turn it into a rule where "
+    "it fits (qualify, booking, boundaries, tone).\n"
+    "- A line \"ANNOTATION FOR MODEL: ...\" right under a message is the operator's comment on that message. "
+    "Under a business reply: what was wrong, or what the business should have written; treat it like a "
+    "\"-bad\" lesson and turn it into a rule. Under a client message: what that message shows about him (a "
+    "sign of a serious client, a time-waster or a risk); use it in the Qualify step.\n"
+    "- A message can run over several lines (the rates and extras messages do): it lasts until the next line "
+    "that starts with a time, \"ANNOTATION FOR MODEL:\" or \"—\". Lines \"— booking: ... —\" are what the booking "
+    "system did (requested, confirmed, declined, address sent), not messages. \"[sent photo #N: ...]\" is a "
+    "photo the business sent.\n"
+    "- Personal data is already masked: [client], [number], [username], [email], and the business's own "
+    "[address] and [way in]. Keep them masked."
+)
+
+
+class ExampleError(FinetuneError):
+    pass
+
+
+def check_example(*, verdict: str, client_kind: str, outcome: str, note: str,
+                  corrections: dict[str, str], message_ids: set[int]) -> dict[str, Any]:
+    """The admin's judgement of one chat, cleaned. Corrections must point at
+    messages of the chat as it was flagged; empty ones are dropped."""
+    if verdict not in VERDICTS:
+        raise ExampleError("Mark the chat good, bad or ordinary.")
+    if client_kind and client_kind not in CLIENT_KINDS:
+        raise ExampleError(f"Unknown kind of client: {client_kind}.")
+    if outcome and outcome not in OUTCOMES:
+        raise ExampleError(f"Unknown outcome: {outcome}.")
+    note = (note or "").strip()
+    if len(note) > MAX_NOTE_CHARS:
+        raise ExampleError(f"The explanation is {len(note)} characters; at most {MAX_NOTE_CHARS}.")
+    clean: dict[str, str] = {}
+    for key, text in (corrections or {}).items():
+        text = (text or "").strip()
+        if not text:
+            continue
+        try:
+            message_id = int(key)
+        except (TypeError, ValueError):
+            raise ExampleError(f"A correction points at {key!r}, which is not a message.") from None
+        if message_id not in message_ids:
+            raise ExampleError("A correction points at a message that is not in this chat.")
+        if len(text) > MAX_CORRECTION_CHARS:
+            raise ExampleError(f"A correction is {len(text)} characters; at most {MAX_CORRECTION_CHARS}.")
+        clean[str(message_id)] = text
+    if len(clean) > MAX_CORRECTIONS:
+        raise ExampleError(f"{len(clean)} corrections; at most {MAX_CORRECTIONS} per chat.")
+    return {"verdict": verdict, "client_kind": client_kind or "", "outcome": outcome or "",
+            "note": note, "corrections": clean}
+
+
+def example_name(example_id: int, verdict: str) -> str:
+    """Like a screenshot's file name: "07-good", "12-bad", "15"."""
+    return f"{example_id:02d}" + (f"-{verdict}" if verdict in ("good", "bad") else "")
+
+
+def chat_lines(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The chat as the model reads it: what crossed the wire, and the
+    booking system's events. Drafts never sent, rejected drafts, errors and
+    the panel's other notes are left out."""
+    lines: list[dict[str, Any]] = []
+    for m in messages:
+        text = (m.get("text") or "").strip()
+        if m["direction"] == "in" and m["status"] == "received":
+            who = "client"
+        elif m["direction"] == "out" and m["status"] == "sent":
+            who = "business"
+            if not text and m.get("attachments"):
+                text = "[sent a file]"
+        elif m["status"] == "note" and "Booking #" in text:
+            who = "event"
+        else:
+            continue
+        if text:
+            lines.append({"id": m["id"], "who": who, "text": text, "at": m.get("created_at")})
+    return lines[:MAX_EXAMPLE_MESSAGES]
+
+
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# A + and 7 or more digits, or 8 or more digits in a row (dashes allowed);
+# spaces only after a +, so "100 150 200" in a price list and a date like
+# 12.10.2026 are left alone.
+_PHONE = re.compile(r"\+\d(?:[ \-().]?\d){6,}|(?<!\d)\d(?:-?\d){7,}(?!\d)")
+_HANDLE = re.compile(r"(?<![\w.@])@[A-Za-z0-9_]{3,}")
+
+
+def masks_for(*, display_name: str = "", username: str = "", address: str = "",
+              way_in: str = "") -> list[tuple[str, str]]:
+    """What to hide from the model in one chat: the client's name, and the
+    business's address and way in (the system sends those, they must never
+    turn up in a prompt). Longest first, so a whole text is replaced before
+    a line of it."""
+    found: list[tuple[str, str]] = []
+    for text, label in ((address, "[address]"), (way_in, "[way in]")):
+        text = (text or "").strip()
+        if text:
+            found.append((text, label))
+            found += [(line.strip(), label) for line in text.splitlines() if len(line.strip()) >= 6]
+    name = (display_name or "").strip()
+    if len(name) >= 3:
+        found.append((name, "[client]"))
+        first = name.split()[0]
+        # Only a name-like first word: "Love" as a contact name must not eat "my love".
+        if first != name and len(first) >= 3 and first[0].isupper():
+            found.append((first, "[client]"))
+    if username and len(username.lstrip("@")) >= 3:
+        found.append(("@" + username.lstrip("@"), "[username]"))
+    return sorted(set(found), key=lambda item: -len(item[0]))
+
+
+def mask(text: str, masks: Sequence[tuple[str, str]]) -> str:
+    for literal, label in masks:
+        if label == "[client]":
+            text = re.sub(rf"(?<!\w){re.escape(literal)}(?!\w)", label, text)
+        else:
+            text = re.sub(re.escape(literal), label, text, flags=re.IGNORECASE)
+    text = _EMAIL.sub("[email]", text)
+    text = _PHONE.sub("[number]", text)
+    return _HANDLE.sub("[username]", text)
+
+
+def _local(at: Any, tz: Optional[ZoneInfo]) -> Optional[datetime]:
+    if isinstance(at, str):
+        try:
+            at = datetime.fromisoformat(at)
+        except ValueError:
+            return None
+    if not isinstance(at, datetime):
+        return None
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at.astimezone(tz) if tz else at
+
+
+def render_example(example: dict[str, Any], lines: Sequence[dict[str, Any]], *,
+                   masks: Sequence[tuple[str, str]] = (), tz: Optional[ZoneInfo] = None) -> str:
+    """One flagged chat as a transcript: the operator's judgement, then the
+    chat with times, a line for each new day, and each correction under the
+    message it corrects."""
+    head = ["OPERATOR'S JUDGEMENT (not part of the chat):",
+            f"- Handled: {VERDICTS.get(example['verdict'], VERDICTS['plain'])}"]
+    if example.get("client_kind") in CLIENT_KINDS:
+        head.append(f"- Client: {CLIENT_KINDS[example['client_kind']]}")
+    if example.get("outcome") in OUTCOMES:
+        head.append(f"- Ended: {OUTCOMES[example['outcome']]}")
+    note = mask(example.get("note") or "", masks).strip()
+    if note:
+        head.append("- Why: " + note.replace("\n", "\n  "))
+
+    corrections = example.get("corrections") or {}
+    body: list[str] = []
+    day = None
+    for line in lines:
+        at = _local(line.get("at"), tz)
+        if at and at.date() != day:
+            day = at.date()
+            body.append(f"— {at:%a %d.%m.%Y} —")
+        text = mask(line["text"], masks)
+        if line["who"] == "event":
+            body.append(f"— booking: {text} —")
+        else:
+            who = "Client" if line["who"] == "client" else "Business"
+            body.append((f"[{at:%H:%M}] " if at else "") + f"{who}: {text}")
+        correction = corrections.get(str(line["id"]))
+        if correction:
+            body.append("ANNOTATION FOR MODEL: " + mask(correction, masks).replace("\n", " "))
+    return "\n".join(head) + "\n\n" + "\n".join(body)
+
+
+def build_example_messages(prompt: str, chats: Sequence[tuple[str, str]]) -> list[dict[str, Any]]:
+    transcripts = "\n\n".join(f"### {name}\n{text}" for name, text in chats)
+    return [{"role": "user", "content": f"{prompt}\n\n{TRANSCRIPT_NOTE}\n\n{EXAMPLES_NOTE}\n\n{transcripts}"}]
+
+
 def text_max_tokens() -> int:
     try:
         return max(1000, int(os.getenv("FINETUNE_TEXT_MAX_TOKENS") or DEFAULT_TEXT_MAX_TOKENS))
@@ -334,22 +556,26 @@ async def complete_text(
     *,
     api_key: str,
     model: str,
+    flagged: bool = False,
     usage_sink: Optional[UsageSink] = None,
     client: Optional[httpx.AsyncClient] = None,
 ) -> str:
-    """The text model's raw answer for transcribed chats. DeepSeek speaks the
-    same chat-completions format, so this reuses vision.py's call, which
-    allows a long answer the time it takes (ai_responder's cap is for
-    replies to customers). Raises vision.VisionError with a safe message."""
+    """The text model's raw answer for transcribed chats (`flagged`: real
+    chats the admin flagged, with the note on reading their judgement).
+    DeepSeek speaks the same chat-completions format, so this reuses
+    vision.py's call, which allows a long answer the time it takes
+    (ai_responder's cap is for replies to customers). Raises
+    vision.VisionError with a safe message."""
     if not api_key:
         raise vision.VisionError("DEEPSEEK_PLATFORM_KEY is not set, so transcripts cannot be read.")
+    build = build_example_messages if flagged else build_text_messages
     owns = client is None
     http = client or httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS)
     try:
         text = await vision._complete(
             api_url=ai_responder.API_URL, api_key=api_key, client=http, usage_sink=usage_sink,
             service="DeepSeek API", key_name="DEEPSEEK_PLATFORM_KEY",
-            payload={"model": model, "messages": build_text_messages(prompt, chats),
+            payload={"model": model, "messages": build(prompt, chats),
                      "max_tokens": text_max_tokens(), "temperature": 0.2},
         )
     finally:

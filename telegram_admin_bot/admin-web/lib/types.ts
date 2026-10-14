@@ -606,8 +606,9 @@ export type FinetuneRun = {
   industry_id: number;
   status: "running" | "done" | "failed" | "applied" | "discarded";
   model: string;
-  // screenshots: the vision model read images; text: transcribed chats.
-  source: "screenshots" | "text";
+  // screenshots: the vision model read images; text: transcribed chats;
+  // examples: real chats flagged from the conversations view.
+  source: "screenshots" | "text" | "examples";
   files: string[];
   industry_version: number;
   error: string;
@@ -631,4 +632,42 @@ export type FinetuneRun = {
   };
   sections?: { key: string; heading: string; append_only: boolean }[];
   addendum_limit?: number;
+};
+
+// A real chat flagged for finetuning (finetune_api.py): the admin's
+// judgement only; the chat is read from the conversation when a run starts.
+export type ExampleVerdict = "good" | "bad" | "plain";
+export type ClientKind = "" | "serious" | "time_waster" | "safety_risk" | "regular";
+export type ChatOutcome = "" | "came" | "no_show" | "cancelled" | "never_booked" | "blocked";
+
+export type FinetuneExample = {
+  id: number;
+  tenant_id: number;
+  chat_id: number;
+  // "07-good": how the run names it.
+  name: string;
+  upto_message_id: number;
+  verdict: ExampleVerdict;
+  client_kind: ClientKind;
+  outcome: ChatOutcome;
+  note: string;
+  // message id → what was wrong / what it should have said
+  corrections: Record<string, string>;
+  last_run_id: number | null;
+  created_at: string;
+  updated_at: string;
+  display_name: string;
+  // Only on GET /api/finetune/examples/{id}: what the model reads.
+  preview?: string;
+};
+
+export type ChatLine = { id: number; who: "client" | "business" | "event"; text: string; at: string };
+
+export type ChatExampleView = {
+  tenant_id: number;
+  example: FinetuneExample | null;
+  lines: ChatLine[];
+  preview: string;
+  // Messages written since it was flagged.
+  newer: number;
 };
