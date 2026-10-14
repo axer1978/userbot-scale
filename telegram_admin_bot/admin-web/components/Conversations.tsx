@@ -2,15 +2,21 @@
 
 // The open account's conversations: the list, the thread with the AI's
 // drafts waiting for approval, linked context, and a box to write as
-// yourself. Live through the panel's socket (lib/panel.tsx).
+// yourself. Live through the panel's socket (lib/panel.tsx). The admin can
+// flag a chat for finetuning from its header (FinetuneExampleDialog).
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useToast } from "@/components/feedback";
+import { FinetuneExampleDialog, verdictLabel } from "@/components/FinetuneExampleDialog";
 import { MediaPreview } from "@/components/MediaDialog";
-import { errorText } from "@/lib/api";
+import { api, errorText } from "@/lib/api";
 import { contactLabel, cx, fmtTime } from "@/lib/format";
 import { usePanel } from "@/lib/panel";
-import type { ChatLink, Conversation, LinkSuggestion, Message } from "@/lib/types";
+import type { ChatLink, Conversation, ExampleVerdict, LinkSuggestion, Message } from "@/lib/types";
+
+// chat id → verdict, for the account's chats flagged for finetuning (admin only).
+type Flags = Record<string, ExampleVerdict>;
+const NO_FLAGS: Flags = {};
 
 // Someone wrote in this chat by hand; the bot stays quiet until then.
 function takeoverActive(conv?: Conversation | null): boolean {
@@ -19,7 +25,7 @@ function takeoverActive(conv?: Conversation | null): boolean {
 
 /* ----------------------------------------------------------------- sidebar */
 
-function Sidebar({ onOpen }: { onOpen: () => void }) {
+function Sidebar({ onOpen, flags }: { onOpen: () => void; flags: Flags }) {
   const { state, sApi, selectChat } = usePanel();
   const open = (chatId: number) => { onOpen(); void selectChat(chatId); };
   const toast = useToast();
@@ -51,6 +57,10 @@ function Sidebar({ onOpen }: { onOpen: () => void }) {
             <div className="conv-preview">{conv.last_message_preview || "—"}</div>
             <div className="conv-meta">
               {conv.is_bot && <span className="badge bot">bot</span>}
+              {flags[String(conv.chat_id)] && (
+                <span className={cx("badge", `ft-${flags[String(conv.chat_id)]}`)} title="Flagged for finetuning">
+                  ★ {verdictLabel(flags[String(conv.chat_id)])}</span>
+              )}
               {conv.automation_paused && (
                 <span className={cx("badge", escalated ? "escalated" : "paused")} title={conv.paused_reason || "paused by hand"}>
                   {escalated ? "escalated" : "paused"}
@@ -133,10 +143,16 @@ function LinkPicker({ conv }: { conv: Conversation }) {
   );
 }
 
-function ThreadHeader({ onBack }: { onBack: () => void }) {
-  const { state, sApi, dispatch } = usePanel();
+function ThreadHeader({ onBack, flags, onFlagged }: {
+  onBack: () => void;
+  flags: Flags;
+  onFlagged: (chatId: number, verdict: ExampleVerdict | null) => void;
+}) {
+  const { state, sApi, dispatch, isAdmin } = usePanel();
   const toast = useToast();
+  const [flagging, setFlagging] = useState(false);
   const conv = state.conversations.find((c) => c.chat_id === state.activeChatId) || null;
+  const closeFlag = useCallback(() => setFlagging(false), []);
 
   if (!conv) {
     return <div id="thread-header"><span className="muted">No conversation selected</span></div>;
@@ -179,6 +195,13 @@ function ThreadHeader({ onBack }: { onBack: () => void }) {
                   }}>Hand back to the bot</button>
         </>
       )}
+      {isAdmin && state.sessionId && (
+        <button type="button" className={cx("btn small", flags[String(conv.chat_id)] && `ft-flagged`)}
+                title="Mark this chat as a good or bad example for finetuning, and say how to read it"
+                onClick={() => setFlagging(true)}>
+          {flags[String(conv.chat_id)] ? `★ ${verdictLabel(flags[String(conv.chat_id)])}` : "Flag for finetune"}
+        </button>
+      )}
       <button type="button" className={cx("btn small", conv.automation_paused && "on")} title={conv.paused_reason || undefined}
               onClick={async () => {
                 try { await sApi("POST", `/conversations/${conv.chat_id}/pause`, { paused: !conv.automation_paused }); }
@@ -186,6 +209,11 @@ function ThreadHeader({ onBack }: { onBack: () => void }) {
               }}>
         {conv.automation_paused ? "Automation paused" : "Pause automation"}
       </button>
+      {flagging && state.sessionId && (
+        <FinetuneExampleDialog key={`${state.sessionId}-${conv.chat_id}`} sessionId={state.sessionId}
+                               chatId={conv.chat_id} name={contactLabel(conv)} onClose={closeFlag}
+                               onChanged={(verdict) => onFlagged(conv.chat_id, verdict)} />
+      )}
     </div>
   );
 }
@@ -350,7 +378,8 @@ function Composer() {
 }
 
 export function Conversations() {
-  const { state, me, can } = usePanel();
+  const { state, me, can, isAdmin } = usePanel();
+  const [flagged, setFlagged] = useState<{ sessionId: string | null; flags: Flags }>({ sessionId: null, flags: NO_FLAGS });
   // Phones: the list and the open chat take turns filling the screen.
   const [showChat, setShowChat] = useState(state.activeChatId !== null);
   const [shownFor, setShownFor] = useState(state.activeChatId);
@@ -358,6 +387,24 @@ export function Conversations() {
     setShownFor(state.activeChatId);
     setShowChat(state.activeChatId !== null);
   }
+
+  // Finetune is the admin's alone; a moderator never asks. Kept with the
+  // account they belong to, so a switch never shows the last one's.
+  const sessionId = state.sessionId;
+  const flags = flagged.sessionId === sessionId ? flagged.flags : NO_FLAGS;
+  useEffect(() => {
+    if (!isAdmin || !sessionId) return;
+    let cancelled = false;
+    api<Flags>("GET", `/api/finetune/sessions/${encodeURIComponent(sessionId)}/flags`)
+      .then((data) => { if (!cancelled) setFlagged({ sessionId, flags: data }); })
+      .catch(() => { /* the badges are a convenience */ });
+    return () => { cancelled = true; };
+  }, [isAdmin, sessionId]);
+  const onFlagged = useCallback((chatId: number, verdict: ExampleVerdict | null) => setFlagged((s) => {
+    const next = { ...s.flags };
+    if (verdict) next[String(chatId)] = verdict; else delete next[String(chatId)];
+    return { ...s, flags: next };
+  }), []);
 
   if (me && !can("view.conversations")) {
     return (
@@ -370,9 +417,9 @@ export function Conversations() {
 
   return (
     <main className={cx("chat", showChat && "chat-open")}>
-      <Sidebar onOpen={() => setShowChat(true)} />
+      <Sidebar onOpen={() => setShowChat(true)} flags={flags} />
       <section id="panel">
-        <ThreadHeader onBack={() => setShowChat(false)} />
+        <ThreadHeader onBack={() => setShowChat(false)} flags={flags} onFlagged={onFlagged} />
         <Thread />
         <Composer />
       </section>

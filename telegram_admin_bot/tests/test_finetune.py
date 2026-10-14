@@ -342,3 +342,181 @@ async def test_a_run_from_typed_chats(panel_client, tenant, monkeypatch):
     assert run["source"] == "text" and run["files"] == ["01", "02-bad"]
     assert run["status"] == "done" and run["result"]["errors"] == []
     assert "discount" not in json.dumps(run)  # the chats themselves are not stored
+
+
+# ----------------------------------------------------------- flagged chats
+
+
+def msg(id, direction, status, text, at="2026-10-12T19:40:00+00:00", attachments=()):
+    return {"id": id, "direction": direction, "status": status, "text": text, "created_at": at,
+            "attachments": list(attachments)}
+
+
+def test_a_flagged_chat_is_read_as_what_crossed_the_wire():
+    lines = finetune.chat_lines([
+        msg(1, "in", "received", "Hi, can I come over?"),
+        msg(2, "out", "sent", "Hi my love ❤️ around what hour you come? 😘"),
+        msg(3, "out", "rejected", "a draft the admin threw away"),
+        msg(4, "out", "pending_approval", "a draft still waiting"),
+        msg(5, "system", "note", "No reply: bare ok."),
+        msg(6, "system", "note", "📅 Booking #3 requested for today 23:00, waiting for the owner."),
+        msg(7, "out", "sent", "", attachments=[3]),
+        msg(8, "out", "error", "FloodWait"),
+        msg(9, "in", "received", "  "),
+    ])
+    assert [(line["id"], line["who"]) for line in lines] == [(1, "client"), (2, "business"), (6, "event"),
+                                                               (7, "business")]
+    assert lines[3]["text"] == "[sent a file]"
+
+
+def test_personal_data_and_the_way_in_are_masked():
+    masks = finetune.masks_for(display_name="Toms Berzins", username="toms_lv", address="ganu street 4",
+                               way_in="door code 1234\nfloor 4 apart 42")
+    text = finetune.mask(
+        "Hi Toms! I'm at Ganu Street 4, door code 1234, call +371 2694 2162 or 26942162, toms@mail.lv, @toms_lv "
+        "@someone_else", masks)
+    assert text == ("Hi [client]! I'm at [address], [way in], call [number] or [number], [email], [username] "
+                    "[username]")
+    # Prices, times and dates are not phone numbers.
+    assert finetune.mask("30 min 100, 1h 150 200 300, at 23:00 on 12.10.2026, +50 extra", masks) == \
+        "30 min 100, 1h 150 200 300, at 23:00 on 12.10.2026, +50 extra"
+    # A contact called "Love" does not eat "my love".
+    assert finetune.mask("Hi my love, Love", finetune.masks_for(display_name="Love")) == "Hi my love, [client]"
+
+
+def test_a_flagged_chat_carries_the_operators_judgement_and_corrections():
+    from zoneinfo import ZoneInfo
+
+    example = {"verdict": "bad", "client_kind": "time_waster", "outcome": "never_booked",
+               "note": "Toms asked for photos 3 times, never named a time.\nShould have asked for his time.",
+               "corrections": {"2": "should have been: send me a voice message love and tell me your time 😘"}}
+    lines = finetune.chat_lines([
+        msg(1, "in", "received", "I want to see your energy first", at="2026-10-12T20:59:00+00:00"),
+        msg(2, "out", "sent", "okay love", at="2026-10-12T21:01:00+00:00"),
+        msg(3, "system", "note", "📅 Booking #3 declined.", at="2026-10-12T21:30:00+00:00"),
+    ])
+    text = finetune.render_example(example, lines, masks=finetune.masks_for(display_name="Toms"),
+                                   tz=ZoneInfo("Europe/Riga"))
+    assert text == (
+        "OPERATOR'S JUDGEMENT (not part of the chat):\n"
+        f"- Handled: {finetune.VERDICTS['bad']}\n"
+        "- Client: TIME-WASTER\n"
+        "- Ended: he never booked\n"
+        "- Why: [client] asked for photos 3 times, never named a time.\n  Should have asked for his time.\n\n"
+        "— Mon 12.10.2026 —\n"
+        "[23:59] Client: I want to see your energy first\n"
+        "— Tue 13.10.2026 —\n"
+        "[00:01] Business: okay love\n"
+        "ANNOTATION FOR MODEL: should have been: send me a voice message love and tell me your time 😘\n"
+        "— booking: 📅 Booking #3 declined. —"
+    )
+
+
+def test_a_flag_is_checked():
+    ok = finetune.check_example(verdict="good", client_kind="", outcome="came", note=" fine ",
+                                corrections={"5": " x ", "6": "  "}, message_ids={5, 6})
+    assert ok == {"verdict": "good", "client_kind": "", "outcome": "came", "note": "fine", "corrections": {"5": "x"}}
+    base = {"verdict": "good", "client_kind": "", "outcome": "", "note": "", "corrections": {}, "message_ids": {5}}
+    for bad in ({"verdict": "great"}, {"client_kind": "rich"}, {"outcome": "married"},
+                {"corrections": {"9": "not in this chat"}}, {"corrections": {"x": "not a message"}},
+                {"note": "n" * (finetune.MAX_NOTE_CHARS + 1)}):
+        with pytest.raises(finetune.ExampleError):
+            finetune.check_example(**{**base, **bad})
+    assert [finetune.example_name(7, v) for v in ("good", "bad", "plain")] == ["07-good", "07-bad", "07"]
+
+
+def test_flagged_chats_come_with_a_note_on_the_judgement():
+    [message] = finetune.build_example_messages("TEMPLATE", [("07-good", "OPERATOR'S JUDGEMENT ...")])
+    assert message["content"].startswith(f"TEMPLATE\n\n{finetune.TRANSCRIPT_NOTE}\n\n{finetune.EXAMPLES_NOTE}\n\n")
+    assert message["content"].endswith("### 07-good\nOPERATOR'S JUDGEMENT ...")
+    assert "ANNOTATION FOR MODEL" in finetune.EXAMPLES_NOTE
+
+
+async def seed_chat(pool, tenant, session_id="acct", chat_id=501, name="Toms", messages=()):
+    async with pool.acquire() as con:
+        await con.execute("INSERT INTO conversations (session_id, tenant_id, chat_id, display_name, username) "
+                          "VALUES ($1, $2, $3, $4, 'toms_lv')", session_id, tenant, chat_id, name)
+        return [await con.fetchval("INSERT INTO messages (session_id, tenant_id, chat_id, direction, status, text) "
+                                   "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+                                   session_id, tenant, chat_id, direction, status, text)
+                for direction, status, text in messages]
+
+
+CHAT = (("in", "received", "Hi, Toms here, free tonight? +37126942162"),
+        ("out", "sent", "Hi my love ❤️ around what hour you come? 😘"),
+        ("in", "received", "send more photos"),
+        ("out", "sent", "okay love"))
+
+
+@pytest.mark.requires_pg
+@pytest.mark.asyncio
+async def test_flag_a_chat_and_run_from_it(panel_client, pg_pool, tenant, monkeypatch):
+    ids = await seed_chat(pg_pool, tenant, messages=CHAT)
+    path = "/api/finetune/sessions/acct/chats/501/example"
+    empty = (await panel_client.get(path)).json()
+    assert empty["example"] is None and [line["id"] for line in empty["lines"]] == ids
+
+    bad = await panel_client.put(path, json={"verdict": "bad", "corrections": {"999": "x"}})
+    assert bad.status_code == 400
+    saved = await panel_client.put(path, json={
+        "verdict": "bad", "client_kind": "time_waster", "outcome": "never_booked",
+        "note": "Toms only collects photos.", "corrections": {str(ids[3]): "ask for his time instead"}})
+    assert saved.status_code == 200, saved.text
+    flagged = saved.json()
+    example = flagged["example"]
+    assert example["upto_message_id"] == ids[3] and example["name"] == f"{example['id']:02d}-bad"
+    assert (await panel_client.get("/api/finetune/sessions/acct/flags")).json() == {"501": "bad"}
+    preview = flagged["preview"]
+    assert "Client: Hi, [client] here, free tonight? [number]" in preview
+    assert "- Why: [client] only collects photos." in preview
+    assert "Business: okay love\nANNOTATION FOR MODEL: ask for his time instead" in preview
+
+    # Messages after the flag are not part of it until it is saved again.
+    await seed_chat_message(pg_pool, tenant, "in", "received", "ok bye")
+    again = (await panel_client.get(path)).json()
+    assert again["newer"] == 1 and "ok bye" not in again["preview"]
+
+    # Another client's account does not see it.
+    other = await seed_session(pg_pool, "other", name="Ann")
+    await seed_chat(pg_pool, other, session_id="other", chat_id=501, messages=CHAT[:1])
+    assert (await panel_client.get("/api/finetune/sessions/other/chats/501/example")).json()["example"] is None
+
+    seen = {}
+
+    async def fake_complete_text(prompt, chats, **kwargs):
+        seen.update(chats=list(chats), flagged=kwargs.get("flagged"))
+        return answer()
+
+    monkeypatch.setattr(finetune, "complete_text", fake_complete_text)
+    monkeypatch.setenv("DEEPSEEK_PLATFORM_KEY", "pk")
+    await write_template(panel_client)
+    refused = await panel_client.post("/api/finetune/example-runs", json={"tenant_id": other,
+                                                                          "example_ids": [example["id"]]})
+    assert refused.status_code == 400
+    started = await panel_client.post("/api/finetune/example-runs", json={"tenant_id": tenant,
+                                                                          "example_ids": [example["id"]]})
+    await asyncio.gather(*finetune_api._tasks)
+    assert started.status_code == 200, started.text
+    assert seen["flagged"] is True and [n for n, _ in seen["chats"]] == [example["name"]]
+    assert "TIME-WASTER" in seen["chats"][0][1] and "ok bye" not in seen["chats"][0][1]
+    run = (await panel_client.get(f"/api/finetune/runs/{started.json()['id']}")).json()
+    assert run["source"] == "examples" and run["files"] == [example["name"]] and run["status"] == "done"
+    assert "okay love" not in json.dumps(run)  # the chats are not copied into the run
+
+    listed = (await panel_client.get(f"/api/finetune/examples?tenant_id={tenant}")).json()
+    assert [(e["id"], e["display_name"], e["last_run_id"]) for e in listed] == [(example["id"], "Toms", run["id"])]
+    # Judged again: news for the next run, and it now covers the newer message.
+    resaved = (await panel_client.put(path, json={"verdict": "good", "client_kind": "serious"})).json()
+    assert resaved["example"]["last_run_id"] is None and resaved["newer"] == 0 and "ok bye" in resaved["preview"]
+    assert (await panel_client.get(f"/api/finetune/examples/{example['id']}")).json()["name"].endswith("-good")
+    removed = await panel_client.delete(f"/api/finetune/examples/{example['id']}")
+    assert removed.status_code == 200
+    assert (await panel_client.get(path)).json()["example"] is None
+    events = [e["event"] for e in await audit.list_events(pg_pool)]
+    assert finetune_api.FINETUNE_EXAMPLE_SAVED in events and finetune_api.FINETUNE_EXAMPLE_REMOVED in events
+
+
+async def seed_chat_message(pool, tenant, direction, status, text, session_id="acct", chat_id=501):
+    return await pool.fetchval("INSERT INTO messages (session_id, tenant_id, chat_id, direction, status, text) "
+                               "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+                               session_id, tenant, chat_id, direction, status, text)

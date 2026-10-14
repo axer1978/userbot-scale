@@ -8,6 +8,10 @@ Mounted by panel.py behind the admin login.
   chats the admin transcribed (read by DeepSeek on the platform key), and
   works in the background; the page polls it. The chats stay in memory for
   the run only and are never written anywhere.
+- Flagged chats: the admin marks real chats from the conversations view
+  (good / bad, kind of client, how it ended, why, corrections on single
+  messages). Only that judgement is stored, in finetune_examples; a run
+  from them reads the chats from messages, masked, when it starts.
 - Applying a run saves ordinary prompt versions through tenants.py, the
   industry standard first, then the business layer, and reloads the
   accounts affected, as platform_api does. Either part can be left out,
@@ -23,6 +27,7 @@ import json
 import logging
 import os
 from typing import Any, Awaitable, Callable, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -421,3 +426,228 @@ async def api_discard(run_id: int) -> dict[str, Any]:
         await audit.record(con, tenant_id=run["tenant_id"], actor=ACTOR, event=FINETUNE_DISCARDED,
                            payload={"run_id": run_id})
     return await _get_run(run_id)
+
+
+# -------------------------------------------------------------- flagged chats
+# The admin flags a real chat from the conversations view: good or bad, what
+# kind of client, how it ended, why, and corrections on single messages.
+# Only that judgement is stored (finetune_examples); the chat is read from
+# messages when a run starts, up to where it was when flagged.
+
+FINETUNE_EXAMPLE_SAVED = "finetune_example_saved"
+FINETUNE_EXAMPLE_REMOVED = "finetune_example_removed"
+EXAMPLE_RUN_PATH = "/api/finetune/example-runs"
+# Rows read per chat before chat_lines() keeps what crossed the wire.
+_RAW_ROWS = finetune.MAX_EXAMPLE_MESSAGES * 3
+
+
+def _example(row: Any, conversation: Optional[Any] = None) -> dict[str, Any]:
+    return {
+        "id": row["id"], "tenant_id": row["tenant_id"], "chat_id": row["chat_id"],
+        "name": finetune.example_name(row["id"], row["verdict"]),
+        "upto_message_id": row["upto_message_id"],
+        "verdict": row["verdict"], "client_kind": row["client_kind"], "outcome": row["outcome"],
+        "note": row["note"], "corrections": tenants._json(row["corrections"]) or {},
+        "last_run_id": row["last_run_id"], "created_by": row["created_by"],
+        "created_at": row["created_at"], "updated_at": row["updated_at"],
+        "display_name": (conversation["display_name"] or "") if conversation else "",
+    }
+
+
+async def _chat(con: Any, tenant_id: int, chat_id: int,
+                upto: Optional[int] = None) -> tuple[Any, list[dict[str, Any]]]:
+    """The conversation row and the chat's lines (finetune.chat_lines), up to
+    message `upto` when given."""
+    conversation = await con.fetchrow(
+        "SELECT display_name, username FROM conversations WHERE tenant_id = $1 AND chat_id = $2", tenant_id, chat_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Unknown conversation")
+    rows = await con.fetch(
+        "SELECT id, direction, status, text, attachments, created_at FROM messages "
+        "WHERE tenant_id = $1 AND chat_id = $2 AND ($3::bigint IS NULL OR id <= $3) ORDER BY id LIMIT $4",
+        tenant_id, chat_id, upto, _RAW_ROWS)
+    return conversation, finetune.chat_lines([dict(r) for r in rows])
+
+
+def _masks(bundle: tenants.Bundle, conversation: Any) -> list[tuple[str, str]]:
+    booking = bundle.config.get("booking") or {}
+    return finetune.masks_for(display_name=conversation["display_name"] or "",
+                              username=conversation["username"] or "",
+                              address=booking.get("address", ""), way_in=booking.get("arrival_instructions", ""))
+
+
+def _tz(bundle: tenants.Bundle) -> Optional[ZoneInfo]:
+    try:
+        return ZoneInfo(bundle.config.get("timezone") or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+async def _render(con: Any, bundle: tenants.Bundle, example: dict[str, Any]) -> str:
+    """What the model reads for this flagged chat."""
+    conversation, lines = await _chat(con, example["tenant_id"], example["chat_id"], example["upto_message_id"])
+    return finetune.render_example(example, lines, masks=_masks(bundle, conversation), tz=_tz(bundle))
+
+
+async def _get_example(example_id: int) -> dict[str, Any]:
+    row = await _get_pool().fetchrow(
+        "SELECT e.*, c.display_name FROM finetune_examples e LEFT JOIN conversations c "
+        "ON c.tenant_id = e.tenant_id AND c.chat_id = e.chat_id WHERE e.id = $1", example_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown flagged chat")
+    return _example(row, row)
+
+
+class ExampleBody(BaseModel):
+    verdict: str
+    client_kind: str = ""
+    outcome: str = ""
+    note: str = Field("", max_length=finetune.MAX_NOTE_CHARS)
+    # {"<message id>": "what was wrong / what it should have said"}
+    corrections: dict[str, str] = Field(default_factory=dict)
+
+
+@router.get("/api/finetune/sessions/{session_id}/flags")
+async def api_session_flags(session_id: str) -> dict[str, str]:
+    """{chat id: verdict} of the account's flagged chats, for the chat list."""
+    tenant = await platform_api.store().by_session(session_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Unknown account")
+    rows = await _get_pool().fetch("SELECT chat_id, verdict FROM finetune_examples WHERE tenant_id = $1", tenant["id"])
+    return {str(r["chat_id"]): r["verdict"] for r in rows}
+
+
+@router.get("/api/finetune/sessions/{session_id}/chats/{chat_id}/example")
+async def api_chat_example(session_id: str, chat_id: int) -> dict[str, Any]:
+    """The chat's flag (or null), the chat as it is now to mark corrections
+    on, and what the model would read for the flag as saved."""
+    bundle = await platform_api.guarded(platform_api.store().bundle_for_session(session_id))
+    tenant_id = bundle.tenant["id"]
+    async with _get_pool().acquire() as con:
+        _, lines = await _chat(con, tenant_id, chat_id)
+        row = await con.fetchrow("SELECT * FROM finetune_examples WHERE tenant_id = $1 AND chat_id = $2",
+                                 tenant_id, chat_id)
+        example = _example(row) if row else None
+        preview = await _render(con, bundle, example) if example else ""
+    return {
+        "tenant_id": tenant_id, "example": example, "lines": lines, "preview": preview,
+        # Written since it was flagged: saving again takes them in.
+        "newer": sum(1 for line in lines if example and line["id"] > example["upto_message_id"]),
+    }
+
+
+@router.put("/api/finetune/sessions/{session_id}/chats/{chat_id}/example")
+async def api_save_chat_example(session_id: str, chat_id: int, body: ExampleBody) -> dict[str, Any]:
+    """Flag the chat, or change its flag. It covers the chat as it is now."""
+    bundle = await platform_api.guarded(platform_api.store().bundle_for_session(session_id))
+    tenant_id = bundle.tenant["id"]
+    async with _get_pool().acquire() as con, con.transaction():
+        _, lines = await _chat(con, tenant_id, chat_id)
+        if not lines:
+            raise HTTPException(status_code=400, detail="This chat has no messages to learn from yet.")
+        try:
+            clean = finetune.check_example(
+                verdict=body.verdict, client_kind=body.client_kind, outcome=body.outcome, note=body.note,
+                corrections=body.corrections, message_ids={line["id"] for line in lines})
+        except finetune.FinetuneError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        example_id = await con.fetchval(
+            "INSERT INTO finetune_examples (tenant_id, chat_id, upto_message_id, verdict, client_kind, outcome, "
+            "note, corrections, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9) "
+            "ON CONFLICT (tenant_id, chat_id) DO UPDATE SET upto_message_id = EXCLUDED.upto_message_id, "
+            "verdict = EXCLUDED.verdict, client_kind = EXCLUDED.client_kind, outcome = EXCLUDED.outcome, "
+            # A changed judgement is news: the next run picks it again by default.
+            "note = EXCLUDED.note, corrections = EXCLUDED.corrections, last_run_id = NULL, updated_at = now() "
+            "RETURNING id",
+            tenant_id, chat_id, lines[-1]["id"], clean["verdict"], clean["client_kind"], clean["outcome"],
+            clean["note"], json.dumps(clean["corrections"]), ACTOR,
+        )
+        # The judgement only, not the note: it can quote the client.
+        await audit.record(con, tenant_id=tenant_id, actor=ACTOR, event=FINETUNE_EXAMPLE_SAVED, payload={
+            "example_id": example_id, "chat_id": chat_id, "verdict": clean["verdict"],
+            "client_kind": clean["client_kind"], "outcome": clean["outcome"],
+            "corrections": len(clean["corrections"])})
+    return await api_chat_example(session_id, chat_id)
+
+
+@router.get("/api/finetune/examples")
+async def api_examples(tenant_id: int) -> list[dict[str, Any]]:
+    rows = await _get_pool().fetch(
+        "SELECT e.*, c.display_name FROM finetune_examples e LEFT JOIN conversations c "
+        "ON c.tenant_id = e.tenant_id AND c.chat_id = e.chat_id WHERE e.tenant_id = $1 ORDER BY e.id", tenant_id)
+    return [_example(r, r) for r in rows]
+
+
+@router.get("/api/finetune/examples/{example_id}")
+async def api_example(example_id: int) -> dict[str, Any]:
+    """The flag, with what the model reads for it."""
+    example = await _get_example(example_id)
+    bundle = await platform_api.guarded(platform_api.store().bundle(example["tenant_id"]))
+    async with _get_pool().acquire() as con:
+        example["preview"] = await _render(con, bundle, example)
+    return example
+
+
+@router.delete("/api/finetune/examples/{example_id}")
+async def api_remove_example(example_id: int) -> dict[str, Any]:
+    """Unflag. The chat itself is not touched."""
+    example = await _get_example(example_id)
+    async with _get_pool().acquire() as con, con.transaction():
+        await con.execute("DELETE FROM finetune_examples WHERE id = $1", example_id)
+        await audit.record(con, tenant_id=example["tenant_id"], actor=ACTOR, event=FINETUNE_EXAMPLE_REMOVED,
+                           payload={"example_id": example_id, "chat_id": example["chat_id"]})
+    return {"removed": example_id}
+
+
+class ExampleRunBody(BaseModel):
+    tenant_id: int
+    example_ids: list[int] = Field(..., min_length=1, max_length=finetune.MAX_CHATS)
+
+
+@router.post(EXAMPLE_RUN_PATH)
+async def api_start_examples(body: ExampleRunBody) -> dict[str, Any]:
+    """A run from flagged chats, read by the text model (DeepSeek, on the
+    platform key) like typed chats, with the admin's judgement on each."""
+    s = platform_api.store()
+    bundle = await platform_api.guarded(s.bundle(body.tenant_id))
+    industry = bundle.industry
+    template = await load_template(industry["id"])
+    if not template:
+        raise HTTPException(status_code=400, detail=f"Write the finetune template for {industry['name']} first.")
+    api_key = platform_api.platform_key()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="DEEPSEEK_PLATFORM_KEY must be set in .env to read flagged chats.")
+    pool = _get_pool()
+    wanted = sorted(set(body.example_ids))
+    async with pool.acquire() as con:
+        rows = await con.fetch("SELECT * FROM finetune_examples WHERE tenant_id = $1 AND id = ANY($2::bigint[]) "
+                               "ORDER BY id", body.tenant_id, wanted)
+        if len(rows) != len(wanted):
+            raise HTTPException(status_code=400, detail="Some of these flagged chats are gone or belong to another "
+                                                        "client. Reload the page.")
+        chats = []
+        for r in rows:
+            name = finetune.example_name(r["id"], r["verdict"])
+            try:
+                chats.append((name, await _render(con, bundle, _example(r))))
+            except HTTPException:
+                raise HTTPException(status_code=400, detail=f"The chat flagged as {name} is gone (its account was "
+                                                            "removed). Remove the flag and start again.") from None
+    try:
+        chats = finetune.check_chats(chats)
+        prompt = finetune.fill_template(
+            template, business_name=bundle.tenant["name"],
+            businesses_so_far=await businesses_so_far(industry["id"]),
+            industry_sections=await _live_sections(industry),
+        )
+    except finetune.FinetuneError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    model = finetune.text_model()
+    run = await _launch(
+        body.tenant_id, industry, model=model, source="examples", files=[name for name, _ in chats],
+        call=lambda meter: finetune.complete_text(prompt, chats, api_key=api_key, model=model, flagged=True,
+                                                  usage_sink=meter),
+    )
+    await pool.execute("UPDATE finetune_examples SET last_run_id = $1 WHERE id = ANY($2::bigint[])",
+                       run["id"], wanted)
+    return run

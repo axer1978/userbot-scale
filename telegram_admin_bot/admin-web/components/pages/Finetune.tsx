@@ -4,17 +4,20 @@
 // add screenshots of its chats (read by the vision model) or paste them as
 // text (read by DeepSeek), marked good or bad if you like, and the model
 // proposes the client's prompt layer and an updated industry standard from
-// the industry's finetune template. Nothing changes until a run is applied;
-// applying saves ordinary prompt versions, which the Clients page can roll
-// back. The chats are never stored.
+// the industry's finetune template. Or pick the client's chats flagged
+// from Conversations (FinetuneExampleDialog), each with the admin's verdict.
+// Nothing changes until a run is applied; applying saves ordinary prompt
+// versions, which the Clients page can roll back. Screenshots and typed
+// chats are never stored.
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDialogs, useToast } from "@/components/feedback";
+import { CLIENT_KINDS, OUTCOMES, verdictLabel } from "@/components/FinetuneExampleDialog";
 import { PageShell, Tabs } from "@/components/ui";
 import { api, errorText } from "@/lib/api";
 import { cx, fmtDateTime } from "@/lib/format";
-import type { BusinessLayer, FinetuneIndustry, FinetuneRun, PlatformTree } from "@/lib/types";
+import type { BusinessLayer, FinetuneExample, FinetuneIndustry, FinetuneRun, PlatformTree } from "@/lib/types";
 import { useLoader } from "@/lib/useLoader";
 import "@/app/finetune.css";
 
@@ -22,7 +25,7 @@ type Tab = "new" | "runs" | "template";
 type Mark = "" | "good" | "bad";
 type Shot = { file: File; base: string; ext: string; mark: Mark };
 type Chat = { id: number; name: string; mark: Mark; text: string };
-type Source = "screenshots" | "text";
+type Source = "screenshots" | "text" | "examples";
 type Mode = "inherit" | "override" | "append";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -35,8 +38,14 @@ const MAX_TRANSCRIPT_CHARS = 100_000;
 
 function sourceCount(run: FinetuneRun): string {
   const n = run.files.length;
-  return run.source === "text" ? `${n} typed conversation${n === 1 ? "" : "s"}` : `${n} screenshot${n === 1 ? "" : "s"}`;
+  const s = n === 1 ? "" : "s";
+  if (run.source === "examples") return `${n} flagged chat${s}`;
+  return run.source === "text" ? `${n} typed conversation${s}` : `${n} screenshot${s}`;
 }
+
+const SOURCE_NAME: Record<FinetuneRun["source"], string> = {
+  screenshots: "Screenshots", text: "Conversations", examples: "Flagged chats",
+};
 
 /** "03a-good.png" → base "03a", mark "good", ext ".png". */
 function splitName(name: string): Omit<Shot, "file"> {
@@ -89,18 +98,23 @@ function NewRun(props: RunProps) {
                                         onChange={() => setSource("screenshots")} /> Screenshots</label>
         <label className="check"><input type="radio" name="ft-source" checked={source === "text"}
                                         onChange={() => setSource("text")} /> Typed chats</label>
+        <label className="check"><input type="radio" name="ft-source" checked={source === "examples"}
+                                        onChange={() => setSource("examples")} /> Flagged chats</label>
       </div>
       {source === "screenshots" && !info.screenshots_ready && (
         <div className="pf-errors">No vision model yet: set VISION_API_URL and VISION_API_KEY in the server&apos;s .env,
           or use typed chats.</div>
       )}
-      {source === "text" && !info.transcripts_ready && (
-        <div className="pf-errors">Typed chats need DEEPSEEK_PLATFORM_KEY in the server&apos;s .env.</div>
+      {source !== "screenshots" && !info.transcripts_ready && (
+        <div className="pf-errors">{source === "text" ? "Typed" : "Flagged"} chats need DEEPSEEK_PLATFORM_KEY in the
+          server&apos;s .env.</div>
       )}
       <p className="pf-note">The {info.industry.name} standard is built from {info.businesses_so_far} business
         {info.businesses_so_far === 1 ? "" : "es"} so far{info.has_standard ? "" : " (none yet: this run writes the first)"}.
-        The chats are sent to the model and not stored.</p>
-      {source === "screenshots" ? <ScreenshotRun {...props} /> : <TranscriptRun {...props} />}
+        {source === "examples" ? "Only your judgement of each chat is stored; the chat is read when the run starts."
+          : "The chats are sent to the model and not stored."}</p>
+      {source === "screenshots" ? <ScreenshotRun {...props} />
+        : source === "text" ? <TranscriptRun {...props} /> : <ExampleRun {...props} />}
     </>
   );
 }
@@ -259,6 +273,114 @@ function TranscriptRun({ tenantId, onStarted }: RunProps) {
   );
 }
 
+function ExampleRun({ tenantId, onStarted }: RunProps) {
+  const toast = useToast();
+  const { confirm } = useDialogs();
+  const fetchExamples = useCallback(
+    () => api<FinetuneExample[]>("GET", `/api/finetune/examples?tenant_id=${tenantId}`), [tenantId]);
+  const { data: examples, error, reload } = useLoader(fetchExamples);
+  // null: the default pick, every chat no run has read yet.
+  const [picked, setPicked] = useState<Set<number> | null>(null);
+  const [previews, setPreviews] = useState<Record<number, string>>({});
+  const [open, setOpen] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const list = examples ?? [];
+  const chosen = picked ?? new Set(list.filter((e) => e.last_run_id === null).map((e) => e.id));
+
+  const toggle = (id: number) => {
+    const next = new Set(chosen);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setPicked(next);
+  };
+
+  const preview = async (id: number) => {
+    if (open === id) { setOpen(null); return; }
+    setOpen(id);
+    if (previews[id] !== undefined) return;
+    try {
+      const full = await api<FinetuneExample>("GET", `/api/finetune/examples/${id}`);
+      setPreviews((all) => ({ ...all, [id]: full.preview ?? "" }));
+    } catch (err) { toast(errorText(err)); }
+  };
+
+  const remove = async (e: FinetuneExample) => {
+    if (!(await confirm(`Remove the flag from ${e.display_name || "this chat"}? The chat itself stays as it is.`))) return;
+    try {
+      await api("DELETE", `/api/finetune/examples/${e.id}`);
+      if (picked) { const next = new Set(picked); next.delete(e.id); setPicked(next); }
+      void reload();
+    } catch (err) { toast(errorText(err)); }
+  };
+
+  const start = async () => {
+    const ids = list.filter((e) => chosen.has(e.id)).map((e) => e.id);
+    if (!ids.length) { toast("Pick at least one flagged chat."); return; }
+    setBusy(true);
+    try {
+      const run = await api<FinetuneRun>("POST", "/api/finetune/example-runs", { tenant_id: tenantId, example_ids: ids });
+      setPicked(null);
+      onStarted(run);
+    } catch (err) { toast(errorText(err)); } finally { setBusy(false); }
+  };
+
+  const kind = (key: string) => CLIENT_KINDS.find(([k]) => k === key)?.[1];
+  const outcome = (key: string) => OUTCOMES.find(([k]) => k === key)?.[1];
+  const corrections = (e: FinetuneExample) => Object.keys(e.corrections).length;
+
+  return (
+    <>
+      <p className="pf-note">
+        Real chats of this client, flagged from <Link href="/">Conversations</Link> (open a finished chat, press{" "}
+        <b>Flag for finetune</b>): good or bad, what kind of client, how it ended, how to read it, and corrections on
+        single messages. The model gets each chat with that judgement on top; names, numbers and the address are masked.
+      </p>
+      {error && <div className="pf-errors">{error}</div>}
+      {examples && !list.length && (
+        <div className="empty">No flagged chats for this client yet. Open one of its finished chats under Conversations
+          and press Flag for finetune.</div>
+      )}
+      {list.length > 0 && (
+        <div className="ft-shots">
+          {list.map((e) => (
+            <div key={e.id}>
+              <div className="ft-example">
+                <input type="checkbox" checked={chosen.has(e.id)} aria-label={`Use ${e.name}`} onChange={() => toggle(e.id)} />
+                <div className="grow">
+                  <div>
+                    <b>{e.display_name || `Chat ${e.chat_id}`}</b>{" "}
+                    <span className={cx("badge", `ft-${e.verdict}`)}>{verdictLabel(e.verdict)}</span>{" "}
+                    {e.client_kind && <span className="badge">{kind(e.client_kind)}</span>}{" "}
+                    {e.outcome && <span className="badge">{outcome(e.outcome)}</span>}{" "}
+                    <span className="muted">
+                      {e.name} · {corrections(e)} correction{corrections(e) === 1 ? "" : "s"}
+                      {e.last_run_id !== null ? ` · read by run ${e.last_run_id}` : ""} · {fmtDateTime(e.updated_at)}
+                    </span>
+                  </div>
+                  {e.note && <div className="ft-example-note">{e.note}</div>}
+                </div>
+                <button type="button" className="btn small" onClick={() => preview(e.id)}>
+                  {open === e.id ? "Hide" : "What the model reads"}</button>
+                <button type="button" className="btn small" onClick={() => remove(e)}>Remove</button>
+              </div>
+              {open === e.id && <pre className="pf-rendered">{previews[e.id] ?? "Loading…"}</pre>}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="pf-actions">
+        <span className="muted grow">{chosen.size} of {list.length} picked
+          {picked === null && list.length > 0 ? " (the ones no run has read yet)" : ""}</span>
+        {list.length > 0 && (
+          <button type="button" className="btn" onClick={() => setPicked(chosen.size === list.length
+            ? new Set() : new Set(list.map((e) => e.id)))}>{chosen.size === list.length ? "Pick none" : "Pick all"}</button>
+        )}
+        <button type="button" className="btn primary" disabled={!chosen.size || busy} onClick={start}>
+          {busy ? "Sending…" : "Start the run"}</button>
+      </div>
+    </>
+  );
+}
+
 /* ------------------------------------------------------------- review run */
 
 type Editor = { key: string; heading: string; appendOnly: boolean; industry: string; mode: Mode; text: string };
@@ -328,7 +450,7 @@ function RunReview({ run, onChanged }: { run: FinetuneRun; onChanged: (run: Fine
         <span>Run {run.id}</span>
         <span className="muted">{fmtDateTime(run.created_at)} · {run.model} · {sourceCount(run)}</span>
       </div>
-      <details className="ft-files"><summary className="muted">{run.source === "text" ? "Conversations" : "Screenshots"}</summary>{run.files.join(", ")}</details>
+      <details className="ft-files"><summary className="muted">{SOURCE_NAME[run.source] ?? "Screenshots"}</summary>{run.files.join(", ")}</details>
       {run.status === "running" && <div className="empty">The model is reading the chats. This can take a few minutes.</div>}
       {run.error && <div className="pf-errors">{run.error}</div>}
       {run.status === "applied" && run.applied && (
