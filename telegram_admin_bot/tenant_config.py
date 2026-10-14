@@ -87,6 +87,71 @@ class Burst(_Strict):
         "them like any other reply."))
 
 
+DEFAULT_EMOJI_FAMILIES = [
+    "❤️ ♥️ 💕 💖 💗",
+    "😘 😚 😙 💋 🥰",
+    "😍 🥰 🤩",
+    "😊 🙂 ☺️ 😌",
+    "😉 😜 😏",
+    "😂 🤣 😆 😅",
+    "😔 😕 🥺",
+    "👍 👌",
+]
+
+
+class Variation(_Strict):
+    """Small differences between replies (variation.py), so people who ask
+    the same thing never get the same text: WhatsApp flags an account that
+    sends many people identical messages. The one-piece messages (the rates,
+    the extras, the address, anything between [block] markers) always go out
+    exactly as written."""
+    enabled: bool = Field(True, description=(
+        "Vary the bot's own lines a little in every reply (emoji, phrases, capitals, "
+        "punctuation, how many bubbles). Rates, extras, the address and other [block] "
+        "messages are never changed."))
+    emoji_drop: float = Field(0.25, ge=0, le=1, description=(
+        "Chance that a message goes out without its emoji."))
+    emoji_swap: float = Field(0.45, ge=0, le=1, description=(
+        "Chance that a message's emoji is swapped for another one of its family."))
+    emoji_families: list[str] = Field(default_factory=lambda: list(DEFAULT_EMOJI_FAMILIES), max_length=50,
+                                      description=(
+        "Emojis that may stand in for each other, one family per line "
+        "(❤️ ♥️ 💕). An emoji in no family is only ever kept or left out."))
+    phrases: list[str] = Field(default_factory=list, max_length=200, description=(
+        "Phrases that mean the same, one group per line, apart by | "
+        "(Hi my love | Hey my love | Hi love). Wherever the bot writes one, any of "
+        "its group may go out instead. Every phrase in a group must have the same "
+        "numbers."))
+    lowercase_start: float = Field(0.3, ge=0, le=1, description=(
+        "Chance that a message starts with a small letter (\"hi love\")."))
+    drop_end_punctuation: float = Field(0.3, ge=0, le=1, description=(
+        "Chance that the full stop, ! or ? at the end of a message is left out."))
+    merge_messages: float = Field(0.25, ge=0, le=1, description=(
+        "Chance that two short messages in a row go out as one."))
+
+    @field_validator("emoji_families", "phrases")
+    @classmethod
+    def _groups(cls, value: list[str], info: Any) -> list[str]:
+        # The same checks variation.py uses, so a saved line always works.
+        import variation
+        problem = variation.phrase_group_problem if info.field_name == "phrases" else variation.emoji_family_problem
+        out: list[str] = []
+        for line in value:
+            line = line.strip()
+            if not line:
+                continue
+            if why := problem(line):
+                raise ValueError(f"{line!r} {why}")
+            out.append(line)
+        return out
+
+    @model_validator(mode="after")
+    def _chances(self) -> "Variation":
+        if self.emoji_drop + self.emoji_swap > 1:
+            raise ValueError("variation.emoji_drop + emoji_swap must be at most 1")
+        return self
+
+
 class QuietHours(_Strict):
     """A window, in the tenant's timezone, when nothing is sent. Replies due
     inside it wait until it ends. The window may cross midnight."""
@@ -373,6 +438,7 @@ class TenantConfig(_Strict):
     auto_send: bool = False
     reply_delay: ReplyDelay = Field(default_factory=ReplyDelay)
     burst: Burst = Field(default_factory=Burst)
+    variation: Variation = Field(default_factory=Variation)
     quiet_hours: QuietHours = Field(default_factory=QuietHours)
     # A customer message containing one of these (a word or the start of
     # one, any case) pauses that chat and pings the owner (booking.provider).

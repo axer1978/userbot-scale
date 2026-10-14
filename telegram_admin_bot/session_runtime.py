@@ -87,6 +87,7 @@ import scheduler
 import tenant_config
 import tenants
 import unanswered
+import variation
 import vision
 import wa_store
 from transport import (
@@ -921,12 +922,24 @@ class SessionRuntime:
                 return phrase.strip()
         return ""
 
+    def fixed_blocks(self, min_lines: int = 2) -> tuple[str, ...]:
+        return ai_responder.fixed_blocks(self.bundle.prompt.text, min_lines) if self.bundle is not None else ()
+
     def burst_parts(self, text: str) -> list[str]:
         """The reply as the messages it goes out as (burst.*); the prompt's
         fixed blocks (the rates) stay one message even without markers."""
         burst = self.config["burst"]
-        fixed = ai_responder.fixed_blocks(self.bundle.prompt.text) if self.bundle is not None else ()
-        return ai_responder.split_burst(text, burst["max_messages"], burst.get("keep_together", True), fixed)
+        return ai_responder.split_burst(text, burst["max_messages"], burst.get("keep_together", True),
+                                        self.fixed_blocks())
+
+    def vary(self, text: str) -> str:
+        """An AI reply with its own lines varied (variation.*), so two
+        clients never get the same words; the prompt's blocks, one-line ones
+        too, stay as written."""
+        settings = self.config.get("variation")
+        if not settings:
+            return text
+        return variation.vary_reply(text, settings, self.fixed_blocks(min_lines=1))
 
     def staging_on(self) -> bool:
         return bool(self.config["staging"]["enabled"])
@@ -1658,6 +1671,12 @@ class SessionRuntime:
 
             text, attachments = media.split_attachments(text)
             text = self.flow.fill_address(text)
+            # The fallback phrases are looked for in the model's own words: a
+            # varied reply may have lost the full stop or emoji they end in.
+            fallback = self.fallback_phrase(text)
+            # Before the policy check and the draft: what goes out (or waits
+            # for approval) is the varied text. The address is a block by now.
+            text = self.vary(text)
             # Only what the AI was offered: never an arrival item (the way in).
             attachments = [i for i in attachments
                            if (item := self.media_library.get(i)) is not None and not item.get("send_on_arrival")]
@@ -1678,9 +1697,8 @@ class SessionRuntime:
             verdict = await self.check_policy(chat_id, text, prompt)
             model = self.config["ai"]["model"]
             version = prompt.version_tag if prompt else None
-            # Found before sending, queued after: the reply still goes out
-            # (or is drafted) as normal.
-            fallback = self.fallback_phrase(text)
+            # The fallback phrase was found before sending (above), queued
+            # after: the reply still goes out (or is drafted) as normal.
 
             if self.config["auto_send"] and self.transport.can_send and not hold and verdict.ok:
                 self.sending_chats.add(chat_id)

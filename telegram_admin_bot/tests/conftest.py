@@ -62,6 +62,16 @@ def crypto_key(monkeypatch):
     crypto.reset_cache()
 
 
+@pytest.fixture(autouse=True)
+def replies_as_written(request, monkeypatch):
+    """The runtime varies every AI reply at random (variation.py, on by
+    default). A test that checks the words a reply went out with gets them
+    as the model wrote them; tests about the variation itself are marked
+    `variation` and see it."""
+    if request.node.get_closest_marker("variation") is None:
+        monkeypatch.setattr(SessionRuntime, "vary", lambda self, text: text)
+
+
 @pytest_asyncio.fixture
 async def pg_pool():
     """A pool bound to a throwaway schema, migrated to the latest version,
