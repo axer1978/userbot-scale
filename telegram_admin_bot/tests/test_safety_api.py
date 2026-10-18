@@ -153,3 +153,54 @@ async def test_the_controls_view_for_one_client(panel_client, pg_pool, tenant):
     body = r.json()
     assert body["tenant"]["name"] == "Salon Anna" and body["holds"] == [] and body["health"]["status"] == "unknown"
     assert (await panel_client.get("/api/tenants/999/controls")).status_code == 404
+
+
+async def test_the_deepseek_key_can_be_replaced_and_is_never_shown(panel_client, pg_pool, tenant, monkeypatch):
+    import ai_responder
+    from database import SessionRegistry
+
+    checked = []
+
+    async def accepts(key, **kw):
+        checked.append(key)
+        return True, ""
+
+    monkeypatch.setattr(ai_responder, "check_key", accepts)
+    registry = SessionRegistry(pg_pool)
+    await registry.set_deepseek_key("acct", "sk-old-0000000000000000AAAA")
+    view = (await panel_client.get(f"/api/tenants/{tenant}/controls")).json()
+    assert view["deepseek_key"] == {"ends": "AAAA"} and "sk-old" not in str(view)
+
+    new = "sk-new-1111111111111111BBBB"
+    r = await panel_client.put(f"/api/tenants/{tenant}/deepseek-key", json={"deepseek_api_key": f"  {new} "})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"deepseek_key": {"ends": "BBBB"}, "applied": False}   # nothing runs it in the test
+    assert checked == [new]
+    assert await registry.load_deepseek_key("acct") == new
+    raw = await pg_pool.fetchval("SELECT deepseek_key_enc FROM telegram_sessions WHERE session_id = 'acct'")
+    assert new.encode() not in bytes(raw)
+    [event] = [e for e in await audit.list_events(pg_pool, tenant_id=tenant)
+               if e["event"] == audit.DEEPSEEK_KEY_CHANGED]
+    assert event["payload"] == {"ends": "BBBB"} and new not in str(event)
+    assert (await panel_client.get(f"/api/tenants/{tenant}/controls")).json()["deepseek_key"] == {"ends": "BBBB"}
+
+
+async def test_a_refused_or_empty_deepseek_key_changes_nothing(panel_client, pg_pool, tenant, monkeypatch):
+    import ai_responder
+    from database import SessionRegistry
+
+    async def refuses(key, **kw):
+        return False, "DeepSeek does not accept this key"
+
+    monkeypatch.setattr(ai_responder, "check_key", refuses)
+    registry = SessionRegistry(pg_pool)
+    await registry.set_deepseek_key("acct", "sk-old-0000000000000000AAAA")
+    r = await panel_client.put(f"/api/tenants/{tenant}/deepseek-key", json={"deepseek_api_key": "sk-typo"})
+    assert r.status_code == 400 and r.json()["detail"] == "Not saved: DeepSeek does not accept this key."
+    r = await panel_client.put(f"/api/tenants/{tenant}/deepseek-key", json={"deepseek_api_key": "   "})
+    assert r.status_code == 400
+    assert await registry.load_deepseek_key("acct") == "sk-old-0000000000000000AAAA"
+    assert not [e for e in await audit.list_events(pg_pool, tenant_id=tenant)
+                if e["event"] == audit.DEEPSEEK_KEY_CHANGED]
+    assert (await panel_client.put("/api/tenants/999/deepseek-key",
+                                   json={"deepseek_api_key": "sk-x"})).status_code == 404

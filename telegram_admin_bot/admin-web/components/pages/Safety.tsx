@@ -157,6 +157,7 @@ function ClientTab({ ctx, tenantId, reloadKey }: { ctx: Ctx; tenantId: number | 
   const [due, setDue] = useState("");
   const [billingStatus, setBillingStatus] = useState("active");
   const [proxyUrl, setProxyUrl] = useState("");
+  const [deepseekKey, setDeepseekKey] = useState("");
 
   useEffect(() => {
     if (!tenantId) return;
@@ -187,6 +188,18 @@ function ClientTab({ ctx, tenantId, reloadKey }: { ctx: Ctx; tenantId: number | 
       toast((url ? "Proxy saved. " : "Proxy removed. ") +
         (r.reconnected ? "The account reconnected." : "The account uses it when it next starts."), "info");
       setProxyUrl("");
+    }
+  };
+
+  const saveDeepseekKey = async () => {
+    const key = deepseekKey.trim();
+    if (!key) { toast("Paste the new key first."); return; }
+    const r = await ctx.call("PUT", `/api/tenants/${id}/deepseek-key`, { deepseek_api_key: key }) as
+      { applied?: boolean } | null;
+    if (r) {
+      toast("Key saved. " + (r.applied ? "The bot uses it from the next reply."
+        : "The account uses it when it next starts."), "info");
+      setDeepseekKey("");
     }
   };
 
@@ -290,6 +303,25 @@ function ClientTab({ ctx, tenantId, reloadKey }: { ctx: Ctx; tenantId: number | 
             )}
           </div>
         )}
+      </div>
+
+      <div className={cx("pf-section", c.tenant.session_id && !c.deepseek_key && "danger")}>
+        <div className="title">DeepSeek key</div>
+        <p className={c.tenant.session_id && !c.deepseek_key ? "warn-note" : "pf-note"}>{!c.tenant.session_id
+          ? "No account yet."
+          : c.deepseek_key
+            ? `The bot writes this client's replies with the key ${c.deepseek_key.ends
+              ? `ending in …${c.deepseek_key.ends}` : "stored here"}. It is stored encrypted and never shown.`
+            : "No key: the bot cannot write replies until one is set."}</p>
+        {c.tenant.session_id && <>
+          <form className="pf-actions" autoComplete="off" onSubmit={(ev) => { ev.preventDefault(); void saveDeepseekKey(); }}>
+            <input type="password" autoComplete="off" placeholder="sk-… from platform.deepseek.com"
+                   value={deepseekKey} onChange={(ev) => setDeepseekKey(ev.target.value)} />
+            <button type="submit" className="btn small primary">{c.deepseek_key ? "Replace key" : "Save key"}</button>
+          </form>
+          <p className="pf-note">DeepSeek is asked whether it accepts the key before it is saved; a running account
+            switches to it without reconnecting.</p>
+        </>}
       </div>
 
       <div className="pf-section danger">
