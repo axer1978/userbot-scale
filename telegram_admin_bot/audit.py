@@ -68,6 +68,8 @@ HUMAN_TAKEOVER = "human_takeover"
 TAKEOVER_ENDED = "takeover_ended"
 # payload.proxy: type, host, port, user; never the password.
 PROXY_CHANGED = "proxy_changed"
+# payload.ends: the key's last four characters; never the key.
+DEEPSEEK_KEY_CHANGED = "deepseek_key_changed"
 
 Executor = Union[asyncpg.Pool, asyncpg.Connection]
 

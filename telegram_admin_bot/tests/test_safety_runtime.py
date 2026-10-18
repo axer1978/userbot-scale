@@ -443,6 +443,16 @@ async def test_hard_off_logs_the_session_out_and_finishes_the_runtime(w, monkeyp
     await asyncio.sleep(0)
 
 
+async def test_a_replaced_deepseek_key_is_used_without_a_restart(w):
+    await w.app.registry.set_deepseek_key(w.app.session_id, "sk-new")
+    assert await w.app.handle_command("reload_deepseek_key", {}) == {"ok": True}
+    assert w.app.deepseek_key == "sk-new"
+    # A key gone from the row (it cannot be cleared from the panel) leaves the one in use.
+    await w.app.registry.set_deepseek_key(w.app.session_id, None)
+    assert await w.app.handle_command("reload_deepseek_key", {}) == {"ok": False}
+    assert w.app.deepseek_key == "sk-new"
+
+
 async def test_health_records_what_the_account_reports(w):
     await health.seen(w.pool, w.app.tenant_id, w.app.session_id)
     await health.rate_limited(w.pool, w.app.tenant_id, w.app.session_id, 600)

@@ -14,6 +14,7 @@ import httpx
 log = logging.getLogger(__name__)
 
 API_URL = "https://api.deepseek.com/chat/completions"
+MODELS_URL = "https://api.deepseek.com/models"
 
 # Used before the persona has been filled in from the Settings tab, so the
 # app still produces something sane instead of erroring out.
@@ -876,6 +877,26 @@ async def _complete(
     finally:
         if owns_client:
             await http.aclose()
+
+
+async def check_key(
+    api_key: str, *, client: Optional[httpx.AsyncClient] = None, timeout: float = 10.0
+) -> tuple[bool, str]:
+    """Whether DeepSeek accepts the key, asked with the model list (costs no
+    tokens). (False, why) when it is refused or DeepSeek cannot be asked."""
+    http = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        response = await http.get(MODELS_URL, headers={"Authorization": f"Bearer {api_key}"})
+    except httpx.HTTPError as exc:
+        return False, f"could not reach DeepSeek to check it ({type(exc).__name__})"
+    finally:
+        if client is None:
+            await http.aclose()
+    if response.status_code == 200:
+        return True, ""
+    if response.status_code in (401, 403):
+        return False, "DeepSeek does not accept this key"
+    return False, f"DeepSeek answered HTTP {response.status_code} when it was checked"
 
 
 async def _report_usage(usage_sink: UsageSink, model: str, response: httpx.Response) -> None:

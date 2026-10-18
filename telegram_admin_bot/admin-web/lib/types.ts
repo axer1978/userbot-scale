@@ -333,6 +333,8 @@ export type TenantControls = {
   billing: Billing;
   health: Health;
   proxy?: { type: string; host: string; port: number; username?: string | null } | null;
+  /** ends: the key's last four characters ("" for a short key); null = no key. */
+  deepseek_key?: { ends: string } | null;
   alerts: Alert[];
 };
 

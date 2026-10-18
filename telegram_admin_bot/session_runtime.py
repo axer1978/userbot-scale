@@ -478,6 +478,13 @@ class SessionRuntime:
             # again with what is stored now.
             return await self.reconnect()
 
+        if action == "reload_deepseek_key":
+            # The key was replaced in the panel; the next reply uses it.
+            key = await self.registry.load_deepseek_key(self.session_id)
+            if key:
+                self.deepseek_key = key
+            return {"ok": bool(key)}
+
         if action == "hard_off":
             return await self.hard_off(str(args.get("reason") or ""))
 
