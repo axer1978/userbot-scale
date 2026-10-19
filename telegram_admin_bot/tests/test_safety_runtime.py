@@ -387,6 +387,7 @@ async def seed_sent(w, count, hours_ago):
 
 
 async def test_a_send_volume_spike_switches_the_client_off(w):
+    w.app.config["anomaly"]["volume_min_messages"] = 30
     await w.db.upsert_conversation(CUSTOMER, "Anna", "anna", False, 1)
     # A normal week: about 2 messages an hour.
     for day in range(1, 7):
@@ -406,6 +407,13 @@ async def test_a_busy_account_is_measured_against_its_own_average(w):
     for day in range(1, 7):
         await seed_sent(w, 24 * 20, day * 24)    # 20 an hour, every hour
     await seed_sent(w, 60, 0.5)                  # 60 this hour: busy, but under 5x
+    await w.app.send_as_me(CUSTOMER, "fine", guard=False)
+    assert not w.app.paused()
+
+
+async def test_a_busy_first_hour_on_a_new_account_is_not_a_spike(w):
+    await w.db.upsert_conversation(CUSTOMER, "Anna", "anna", False, 1)
+    await seed_sent(w, 60, 0.5)                  # no history at all, 60 this hour
     await w.app.send_as_me(CUSTOMER, "fine", guard=False)
     assert not w.app.paused()
 
