@@ -58,6 +58,24 @@ async def test_distinct_people_capped_separately_from_volume(app, db):
 
 
 @pytest.mark.asyncio
+async def test_messages_typed_on_the_phone_do_not_count(app, db):
+    """The caps limit what this platform sends; the owner's own writing on
+    the phone (stored as sent_elsewhere) is not counted."""
+    app.config["daily_message_cap"] = 2
+    app.config["hourly_message_cap"] = 2
+    app.config["safety"]["daily_peer_cap"] = 2
+    for i, chat in enumerate((10, 11, 12)):
+        await db.upsert_conversation(chat, f"P{chat}", None, False, 1)
+        await db.record_message(chat, DIR_OUT, STATUS_SENT, "typed on the phone", telegram_id=100 + i,
+                                sent_elsewhere=True)
+    await app.check_daily_quota()  # must not raise
+
+    await _sent(db, 10, 2, start=200)  # two sends of our own: now the cap is reached
+    with pytest.raises(session_runtime.SendBlocked):
+        await app.check_daily_quota()
+
+
+@pytest.mark.asyncio
 async def test_many_messages_to_one_person_do_not_trip_the_peer_cap(app, db):
     """A long conversation with one person is not spam."""
     app.config["safety"]["daily_peer_cap"] = 2
