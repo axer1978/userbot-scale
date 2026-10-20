@@ -12,6 +12,8 @@ text (there is no bot with buttons). They answer:
     CANCEL 7          cancel #7
     DONE 7 / NOSHOW 7 after the slot: it happened / they did not come
     LIST              what is waiting for an answer
+    READY 7           outcall #7: she is ready, he orders the taxi
+    IN 7 / TAXI 7     outcall #7: she is in the taxi, he sends the way to him
 
 Nothing here touches the database or the network; session_runtime does the
 wiring, booking_states decides what is allowed, booking_store writes it.
@@ -140,7 +142,7 @@ def format_owner_update(booking: Mapping[str, Any], what: str) -> str:
     return f"#{booking['number']} {_who(booking)}, {describe_when(booking)}: {what}"
 
 
-def format_acknowledgement(booking: Mapping[str, Any], action: str) -> str:
+def format_acknowledgement(booking: Mapping[str, Any], action: str, *, outcall_taxi: bool = False) -> str:
     n, who = booking["number"], booking.get("customer_name") or "the customer"
     if action == "propose":
         return f"#{n}: {describe_proposal(booking)} proposed to {who}. You'll hear back when they answer."
@@ -153,14 +155,34 @@ def format_acknowledgement(booking: Mapping[str, Any], action: str) -> str:
         "cancel": f"cancelled ❌ — {who} will be told.",
         "mark_completed": "marked as done.",
         "mark_no_show": "marked as missed.",
+        "ready": f"ready ✅ — {who} is asked to order the taxi to your address and send its link. It will come here.",
+        "in_taxi": f"in the taxi ✅ — {who} is asked for the address, floor, way in and a photo of the place. "
+                   "They will come here.",
     }
-    return f"#{n} {words.get(action, action)}"
+    text = f"#{n} {words.get(action, action)}"
+    if outcall_taxi and action in ("confirm", "accept_proposal") and is_outcall(booking):
+        text += f" It's an outcall: send READY {n} when you're ready, and {who} is told to order the taxi."
+    return text
 
 
-def format_list(bookings: Sequence[Mapping[str, Any]]) -> str:
-    if not bookings:
+def outcall_step(booking: Mapping[str, Any]) -> str:
+    """Where a confirmed outcall's taxi steps stand, for the owner."""
+    n = booking["number"]
+    if booking.get("in_taxi_at"):
+        return "in the taxi"
+    if booking.get("taxi_link_at"):
+        return f"taxi link sent — send IN {n} when you're in"
+    if booking.get("ready_at"):
+        return "ready — waiting for his taxi link"
+    return f"send READY {n} when you're ready"
+
+
+def format_list(bookings: Sequence[Mapping[str, Any]], outcalls: Sequence[Mapping[str, Any]] = ()) -> str:
+    if not bookings and not outcalls:
         return "Nothing is waiting for your answer right now."
-    lines = ["Waiting for your answer:"]
+    lines = []
+    if bookings:
+        lines.append("Waiting for your answer:")
     for b in bookings:
         if b["state"] == bs.CONFIRMED and b.get("proposed_by") == bs.CUSTOMER:
             lines.append(f"  #{b['number']} — {_who(b)} wants to move {describe_when(b)} → {describe_proposal(b)}")
@@ -168,8 +190,45 @@ def format_list(bookings: Sequence[Mapping[str, Any]]) -> str:
             lines.append(f"  #{b['number']} — {_who(b)}, you proposed {describe_proposal(b)} (waiting for them)")
         else:
             lines.append(f"  #{b['number']} — {_who(b)}, {describe_when(b)}")
-    lines += ["", "Reply YES <number>, NO <number>, or <number> <new time>."]
+    if bookings:
+        lines += ["", "Reply YES <number>, NO <number>, or <number> <new time>."]
+    if outcalls:
+        if lines:
+            lines.append("")
+        lines.append("Outcalls:")
+        lines += [f"  #{b['number']} — {_who(b)}, {describe_when(b)}: {outcall_step(b)}" for b in outcalls]
     return "\n".join(lines)
+
+
+# ------------------------------------------------- outcalls, to the owner
+
+
+def format_ready_reminder(booking: Mapping[str, Any]) -> str:
+    n = booking["number"]
+    return (f"🚕 #{n} {_who(booking)}, {describe_when(booking)} (outcall): send READY {n} when you're "
+            "ready — then he orders the taxi.")
+
+
+def format_taxi_link(booking: Mapping[str, Any], text: str, in_taxi_minutes: Optional[int]) -> str:
+    """The customer's message with the taxi link. `in_taxi_minutes`: when
+    he is told she is in the taxi without her IN n; None when no IN n is
+    wanted (he knows already, or is told at once)."""
+    n = booking["number"]
+    head = f"🚕 #{n} {_who(booking)} sent the taxi link:\n{text}"
+    if in_taxi_minutes is None:
+        return head
+    return (f"{head}\n\nSend IN {n} when you're in the taxi (if you don't, he is told you're in it in "
+            f"{in_taxi_minutes} min).")
+
+
+def format_passed_on(booking: Mapping[str, Any], text: str) -> str:
+    """What the customer wrote while the outcall is under way, word for word."""
+    return f"💬 #{booking['number']} {_who(booking)}:\n{text}"
+
+
+def format_photo_header(booking: Mapping[str, Any], caption: str = "") -> str:
+    head = f"📷 #{booking['number']} {_who(booking)} sent a photo"
+    return f"{head}:\n{caption}" if caption else f"{head}:"
 
 
 def format_which(kind: str) -> str:
@@ -193,6 +252,9 @@ _LIST = {"list", "?", "saraksts", "список", "pending"}
 _PROPOSE = {"time", "propose", "move", "laiks", "время", "перенести"}
 _TODAY = {"today", "šodien", "sodien", "сегодня"}
 _TOMORROW = {"tomorrow", "rīt", "rit", "завтра"}
+_READY = {"ready", "gatava", "gatavs", "готова", "готов"}
+_TAXI = {"taxi", "taksi", "taksī", "такси"}
+_IN = {"in", "в", "iekšā"}
 
 _TIME = re.compile(r"^(\d{1,2})[:.](\d{2})$")
 _DMY = re.compile(r"^(\d{1,2})[./](\d{1,2})(?:[./](\d{2}|\d{4}))?$")
@@ -201,7 +263,7 @@ _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 
 @dataclass(frozen=True)
 class OwnerCommand:
-    kind: str                      # yes | no | propose | cancel | done | noshow | list
+    kind: str                      # yes | no | propose | cancel | done | noshow | list | ready | in_taxi
     number: Optional[int] = None
     # For propose: the wall time and, if given, the day ("today"/"tomorrow"
     # already resolved against `today`).
@@ -289,7 +351,26 @@ def parse_owner_reply(text: str, *, today: date) -> Optional[OwnerCommand]:
         at, day, error = _parse_when(tokens[2:], today)
         return OwnerCommand("propose", n, at, day, error)
 
-    kind = ("yes" if head in _YES else "no" if head in _NO else "cancel" if head in _CANCEL
+    # The taxi steps of an outcall: "READY 7", "IN 7", "TAXI 7", "IN TAXI 7",
+    # or the word alone for the only outcall under way. Anything after it
+    # but the number is conversation ("in 10 min", "ready when you are").
+    step, rest = None, tokens[1:]
+    if head in _READY:
+        step = "ready"
+    elif head in _TAXI:
+        step = "in_taxi"
+    elif head in _IN and rest and _word(rest[0]) in _TAXI:
+        step, rest = "in_taxi", rest[1:]
+    elif head == "in":
+        step = "in_taxi"
+    if step is not None:
+        if not rest:
+            return OwnerCommand(step)
+        if len(rest) == 1 and (number := _number(rest[0])) is not None:
+            return OwnerCommand(step, number)
+        return None
+
+    kind =("yes" if head in _YES else "no" if head in _NO else "cancel" if head in _CANCEL
             else "done" if head in _DONE else "noshow" if head in _NOSHOW else None)
     if kind is None:
         return None
@@ -495,7 +576,7 @@ def notice_line(booking: Mapping[str, Any]) -> str:
     return "NEWS TO PASS ON IN THIS REPLY: " + template.format(when=describe_when(booking), proposal=proposal)
 
 
-def standing_line(booking: Mapping[str, Any]) -> str:
+def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False) -> str:
     when = describe_when(booking)
     state = booking["state"]
     if state in (bs.REQUESTED, bs.PENDING):
@@ -510,6 +591,8 @@ def standing_line(booking: Mapping[str, Any]) -> str:
             line += f" They asked to move it to {describe_proposal(booking)}; that is NOT confirmed yet."
         elif booking.get("proposed_by") == bs.OWNER:
             line += f" The business proposed moving it to {describe_proposal(booking)}; waiting for their answer."
+        if outcall_taxi and is_outcall(booking):
+            return line + " " + outcall_taxi_line(booking)
         if booking.get("instructions_sent_at"):
             line += " They have arrived and were already sent the entry instructions."
         else:
@@ -606,6 +689,87 @@ def fill_address(text: str, address: str) -> str:
 def is_outcall(booking: Mapping[str, Any]) -> bool:
     """The business goes to them (the request's notes say outcall)."""
     return "outcall" in str(booking.get("notes") or "").lower()
+
+
+# ------------------------------------------------- outcalls, to the customer
+# booking.outcall_taxi: she goes to him by a taxi he orders. The reply
+# writer speaks as her, so these say "you" for her and "them" for him.
+
+_NEWS = "NEWS TO PASS ON IN THIS REPLY: "
+
+
+def outcall_notice_line(booking: Mapping[str, Any], *, now: datetime, ready_minutes: int,
+                        has_address: bool) -> str:
+    """The news of a confirmed outcall's taxi steps."""
+    when = describe_when(booking)
+    notice = booking.get("customer_notice")
+    if notice == bs.NOTICE_READY:
+        line = (f"you are ready for the outcall on {when}. Tell them to order a taxi to pick you up now and "
+                "to send you the taxi's link here, so you can see it coming.")
+        if has_address:
+            line += " Your address, for the taxi, follows in a separate message."
+        return _NEWS + line
+    if notice == bs.NOTICE_IN_TAXI:
+        return _NEWS + (f"you are in the taxi now, on your way to them for the outcall on {when}. Ask them to "
+                        "send the exact address, the floor and flat number, how to get in (entrance, door "
+                        "code) and a photo of the entrance or the building, so you find it easily. Do not "
+                        "write [address].")
+    soon = booking["starts_at"] - now <= timedelta(minutes=ready_minutes + 60)
+    getting_ready = (f"You need about {ready_minutes} minutes to get ready; say you will text them as soon as "
+                     "you are ready" if soon else "Say you will text them when you are getting ready")
+    return _NEWS + (f"the outcall on {when} has just been CONFIRMED. Tell them it is booked, restating the day "
+                    f"and time. {getting_ready}, and that they then order the taxi to pick you up. Do not ask "
+                    "them to order it before that.")
+
+
+def outcall_taxi_line(booking: Mapping[str, Any]) -> str:
+    """Where a confirmed outcall's taxi steps stand, for every reply."""
+    line = "It is an outcall: you go to them by a taxi they order."
+    if booking.get("in_taxi_at"):
+        return line + (" You are in the taxi on your way to them. If they have not sent the exact address, "
+                       "the floor and flat, how to get in and a photo of the entrance yet, ask for what is "
+                       "missing. Do not write [address]: you are coming to them.")
+    if booking.get("taxi_link_at"):
+        return line + (" They ordered the taxi and sent its link; you are about to get in. Do not write "
+                       "[address] again.")
+    if booking.get("ready_at"):
+        return line + (" You are ready and asked them to order a taxi to pick you up at your address and "
+                       "to send you its link.")
+    return line + (" You are getting ready and will text them when you are ready; only then do they order "
+                   "the taxi. Do not ask them to order it before that.")
+
+
+TAXI_LINK_LINE = _NEWS + "the taxi link they sent has reached you. Thank them briefly; do not repeat the link."
+
+PICKUP_ADDRESS_LINE = (
+    "Your address, for the taxi, is sent to them automatically in a separate message right after this "
+    "reply — do not write any address yourself."
+)
+
+# What the customer sends for an outcall photo, in the chat history: the
+# photo itself went on to the owner.
+PHOTO_PASSED_ON = "[photo for the outcall]"
+
+_LINK = re.compile(r"(?:https?://|www\.)[^\s<>\"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}/[^\s<>\"']*", re.IGNORECASE)
+# A link from a taxi app's "share my ride" (Bolt, Uber, Yandex Go, Yango,
+# Forus, Free Now, any ...taxi... site).
+_TAXI_HOST = re.compile(r"bolt\.|uber\.|ubr\.to|yango|go\.yandex|taxi|taksi|forus|free-?now|lyft\.|cabify|"
+                        r"careem|didi|gett\.|grab\.|taxify", re.IGNORECASE)
+# Where he is, not his ride.
+_MAP_HOST = re.compile(r"maps?\.|/maps|goo\.gl/maps|waze\.|2gis|openstreetmap|what3words", re.IGNORECASE)
+
+
+def find_links(text: str) -> list[str]:
+    return [m.group(0).rstrip(".,;:!?)»”") for m in _LINK.finditer(text or "")]
+
+
+def is_taxi_link(link: str, *, ready: bool) -> bool:
+    """A taxi app's ride link. Once she is ready (he was asked for the
+    link) any link but a map is taken for it."""
+    if _MAP_HOST.search(link):
+        return False
+    host = re.sub(r"^[a-z]+://", "", link, flags=re.IGNORECASE).split("/", 1)[0]
+    return bool(_TAXI_HOST.search(host)) or ready
 
 
 def context_for_reply(lines: Sequence[str]) -> str:

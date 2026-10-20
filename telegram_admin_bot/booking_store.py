@@ -54,6 +54,7 @@ _WRITABLE = {
     "customer_notice", "cancelled_by", "cancel_reason", "decided_by", "decided_at",
     "attendance_confirmed_at", "arrived_at", "arrival_photo_match", "instructions_sent_at",
     "instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at",
+    "ready_at", "ready_reminded_at", "taxi_link", "taxi_link_at", "in_taxi_at", "in_taxi_by",
     "customer_name", "customer_username",
 }
 
@@ -265,6 +266,22 @@ class BookingStore:
         if row is None:
             raise BookingNotFound(f"no booking {booking_id}")
         return dict(row)
+
+    async def set_once(self, booking_id: int, column: str, value: Any, **fields: Any) -> Optional[dict[str, Any]]:
+        """Set `column` (and `fields`) on a confirmed booking only while the
+        column is still empty: a step taken twice (two workers, a repeated
+        command) is taken once. None when it was taken already."""
+        unknown = ({column} | set(fields)) - _WRITABLE
+        if unknown:
+            raise ValueError(f"not writable: {sorted(unknown)}")
+        sets, args = ["updated_at = now()", f"{column} = $3"], [self.tenant_id, booking_id, value]
+        for key, field_value in fields.items():
+            args.append(field_value)
+            sets.append(f"{key} = ${len(args)}")
+        return _row(await self.pool.fetchrow(
+            f"UPDATE bookings SET {', '.join(sets)} WHERE tenant_id = $1 AND id = $2 AND {column} IS NULL "
+            "AND state = 'confirmed' RETURNING *", *args,
+        ))
 
     async def _event(
         self, con: asyncpg.Connection, booking_id: int, from_state: Optional[str], to_state: str,

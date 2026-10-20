@@ -1477,6 +1477,32 @@ class SessionRuntime:
         log.info("[%s]   sent %s to chat %s.", self.session_id, media.label(item), chat_id)
         return row or {}
 
+    async def send_photo_as_me(self, chat_id: int, path: Path, *, text: str, reason: str) -> dict[str, Any]:
+        """A photo that is not in the media library (a customer's, passed on
+        to the owner). `text` is what the thread shows for it."""
+        await self.ensure_may_send(audit.BOT)
+        await self.check_daily_quota()
+        peer = await self.resolve_peer(chat_id)
+        self.in_flight_media[chat_id] = self.in_flight_media.get(chat_id, 0) + 1
+        self.delivery_attempts += 1
+        try:
+            sent = await self.deliver_file(peer, chat_id, {"kind": media.PHOTO}, path)
+            ids = self.external_id(self.transport.message_id(sent))
+            row = await self.db.record_message(chat_id, DIR_OUT, STATUS_SENT, text, **ids)
+            if row is None:
+                row = await self.find_by_external_id(chat_id, ids)
+        finally:
+            left = self.in_flight_media.get(chat_id, 1) - 1
+            if left > 0:
+                self.in_flight_media[chat_id] = left
+            else:
+                self.in_flight_media.pop(chat_id, None)
+        await self.write_audit(audit.MESSAGE_SENT, actor=audit.BOT, reason=reason,
+                               payload={"message_id": (row or {}).get("id"), "kind": media.PHOTO})
+        if row is not None:
+            await self.push_message(row)
+        return row or {}
+
     async def send_burst(
         self,
         chat_id: int,
@@ -2185,7 +2211,20 @@ class SessionRuntime:
                 return
             log.info("[%s]   message from the booking owner; replying as usual.", self.session_id)
 
-        if has_photo and not is_provider and not self.paused() and not quiet and not staged:
+        # An outcall under way: what he sends goes on to the owner (his
+        # taxi link, the way to him, photos of the place), whatever happens
+        # to the reply. A repeat of a stored message (row None) went already.
+        passed = None
+        if self.flow.enabled() and not is_provider and not staged and row is not None:
+            passed = await self.flow.pass_on(chat_id, text, message if has_photo else None)
+        if passed is not None and row is not None:
+            label = f"{text}\n{passed}" if has_text else passed
+            updated = await self.db.update_message(row["id"], text=label)
+            if updated is not None:
+                await self.push_message(updated)
+            has_text = True
+            text = label
+        elif has_photo and not is_provider and not self.paused() and not quiet and not staged:
             seen = await self.read_photo(chat_id, message)
             if seen is not None and row is not None:
                 label = f"{text}\n{seen}" if has_text else seen

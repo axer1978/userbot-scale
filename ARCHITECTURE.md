@@ -274,7 +274,7 @@ customer message ─▶ on_incoming ─▶ BookingFlow.on_customer_message
              free, open request ─▶ change_request (same number) ─▶ owner again
              free, confirmed ─▶ propose(by customer) ─▶ owner asked to move it
         cancel / accept_proposal / decline_proposal / confirm_attendance / waitlist
-owner message ─▶ bookings.parse_owner_reply: YES n | NO n | n HH:MM | CANCEL n | DONE n | NOSHOW n | LIST
+owner message ─▶ bookings.parse_owner_reply: YES n | NO n | n HH:MM | CANCEL n | DONE n | NOSHOW n | LIST | READY n | IN n
 panel ─▶ booking_api ─▶ bus: booking_action ─▶ BookingFlow.admin_action
 booking page ─▶ public_app ─▶ bus: booking_customer_action
 ```

@@ -59,6 +59,94 @@ def test_ordinary_conversation_is_not_a_command():
         assert parse(text) is None, text
 
 
+@pytest.mark.parametrize("text,kind,number", [
+    ("READY 7", "ready", 7), ("ready", "ready", None), ("Ready!", "ready", None), ("gatava 7", "ready", 7),
+    ("готова 7", "ready", 7),
+    ("IN 7", "in_taxi", 7), ("in", "in_taxi", None), ("TAXI 7", "in_taxi", 7), ("in taxi 7", "in_taxi", 7),
+    ("в такси 7", "in_taxi", 7), ("taksī", "in_taxi", None),
+])
+def test_the_outcall_steps_from_the_owner(text, kind, number):
+    cmd = parse(text)
+    assert (cmd.kind, cmd.number) == (kind, number)
+
+
+def test_talk_about_being_ready_or_in_a_while_is_not_a_command():
+    for text in ("in 10 min", "ready when you are", "в 10", "taxi is here soon", "ready?", "in a bit"):
+        assert parse(text) is None, text
+
+
+@pytest.mark.parametrize("link,ready,taxi", [
+    ("https://bolt.eu/ride/share/abc", False, True),
+    ("https://trip.uber.com/AbC12", False, True),
+    ("https://taxi.yandex.ru/route-enter?x=1", False, True),
+    ("https://baltictaxi.lv/t/123", False, True),
+    ("https://example.com/r/123", False, False),
+    ("https://example.com/r/123", True, True),
+    ("https://maps.app.goo.gl/xyz", True, False),
+    ("https://www.google.com/maps/place/Riga", True, False),
+    ("https://example.com/didier", False, False),
+])
+def test_a_taxi_link_is_told_from_a_map(link, ready, taxi):
+    assert bookings.is_taxi_link(link, ready=ready) is taxi
+
+
+def test_links_are_found_in_a_message():
+    assert bookings.find_links("here it is: https://bolt.eu/ride/abc. see you") == ["https://bolt.eu/ride/abc"]
+    assert bookings.find_links("bolt.eu/r/xyz") == ["bolt.eu/r/xyz"]
+    assert bookings.find_links("no link, 3rd floor. flat 12") == []
+
+
+def outcall(**fields):
+    start = datetime(2026, 10, 1, 21, 0, tzinfo=RIGA)
+    return {"number": 5, "state": bs.CONFIRMED, "starts_at": start, "ends_at": start + timedelta(hours=1),
+            "tz": "Europe/Riga", "notes": "Outcall. Hotel Bellevue", "customer_name": "Anna",
+            "customer_username": None, "proposed_by": None, **fields}
+
+
+def test_an_outcall_confirmation_says_she_needs_time_to_get_ready():
+    soon = bookings.outcall_notice_line(outcall(customer_notice=bs.NOTICE_CONFIRMED),
+                                        now=datetime(2026, 10, 1, 20, 30, tzinfo=RIGA), ready_minutes=20,
+                                        has_address=True)
+    assert "CONFIRMED" in soon and "about 20 minutes to get ready" in soon and "Do not ask them to order" in soon
+    later = bookings.outcall_notice_line(outcall(customer_notice=bs.NOTICE_CONFIRMED),
+                                         now=datetime(2026, 10, 1, 15, 0, tzinfo=RIGA), ready_minutes=20,
+                                         has_address=True)
+    assert "20 minutes" not in later and "when you are getting ready" in later
+
+
+def test_the_taxi_steps_as_the_reply_writer_reads_them():
+    now = datetime(2026, 10, 1, 20, 30, tzinfo=RIGA)
+    ready = bookings.outcall_notice_line(outcall(customer_notice=bs.NOTICE_READY), now=now, ready_minutes=20,
+                                         has_address=True)
+    assert "order a taxi to pick you up now" in ready and "taxi's link" in ready and "separate message" in ready
+    assert "separate message" not in bookings.outcall_notice_line(
+        outcall(customer_notice=bs.NOTICE_READY), now=now, ready_minutes=20, has_address=False)
+    in_taxi = bookings.outcall_notice_line(outcall(customer_notice=bs.NOTICE_IN_TAXI), now=now, ready_minutes=20,
+                                           has_address=True)
+    assert "in the taxi now" in in_taxi and "floor" in in_taxi and "photo of the entrance" in in_taxi
+
+    assert "Do not ask them to order it" in bookings.standing_line(outcall(), outcall_taxi=True)
+    assert "send you its link" in bookings.standing_line(outcall(ready_at=now), outcall_taxi=True)
+    assert "about to get in" in bookings.standing_line(outcall(ready_at=now, taxi_link_at=now), outcall_taxi=True)
+    on_way = bookings.standing_line(outcall(ready_at=now, taxi_link_at=now, in_taxi_at=now), outcall_taxi=True)
+    assert "on your way to them" in on_way and "ask for what is missing" in on_way
+    # Never the incall rule about the way in.
+    assert bookings.NO_DIRECTIONS_RULE not in on_way
+    # With the taxi steps off, an outcall reads as before.
+    assert bookings.NO_DIRECTIONS_RULE in bookings.standing_line(outcall())
+
+
+def test_the_owner_hears_how_to_take_an_outcall_on():
+    assert "send READY 5" in bookings.format_acknowledgement(outcall(), "confirm", outcall_taxi=True)
+    assert "READY" not in bookings.format_acknowledgement(outcall(), "confirm")
+    assert "READY" not in bookings.format_acknowledgement(outcall(notes=""), "confirm", outcall_taxi=True)
+    link = bookings.format_taxi_link(outcall(), "https://bolt.eu/r/1", 5)
+    assert "https://bolt.eu/r/1" in link and "Send IN 5" in link and "in 5 min" in link
+    assert "Send IN" not in bookings.format_taxi_link(outcall(), "https://bolt.eu/r/1", None)
+    listed = bookings.format_list([], [outcall(ready_at=datetime(2026, 10, 1, 20, 0, tzinfo=RIGA))])
+    assert "Outcalls:" in listed and "#5 — Anna" in listed and "waiting for his taxi link" in listed
+
+
 def test_a_date_that_looks_like_a_time_is_read_as_the_date():
     cmd = parse("7 12.10 9.30")
     assert (cmd.day, cmd.at) == (date(2026, 10, 12), time(9, 30))

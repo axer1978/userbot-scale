@@ -296,6 +296,19 @@ class Booking(_Strict):
     # arrival instructions wait for a photo that matches.
     arrival_requires_photo: bool = False
     arrival_photo_min_confidence: float = Field(0.7, ge=0.0, le=1.0)
+    # Outcalls by taxi. After the owner confirms an outcall she gets ready
+    # and sends READY n: the customer is asked to order a taxi to `address`
+    # and send its link, which goes on to the owner. She sends IN n once in
+    # the taxi; he is then asked for the exact address, floor, way in and a
+    # photo of the place. Everything he sends after the confirmation goes on
+    # to the owner, photos too. Off: an outcall is only confirmed.
+    outcall_taxi: bool = True
+    # How long she needs to get ready (he is told; she is reminded to send
+    # READY n when it has passed).
+    outcall_ready_minutes: int = Field(20, ge=5, le=240)
+    # No IN n this long after his taxi link reached her: he is told she is
+    # in the taxi anyway. 0 = as soon as the link comes.
+    outcall_in_taxi_minutes: int = Field(5, ge=0, le=120)
 
     @field_validator("reminders")
     @classmethod

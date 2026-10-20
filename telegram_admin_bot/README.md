@@ -631,8 +631,8 @@ the opening hours, the calendar link and AI usage.
   Numbers count per client from 1. **Nothing is confirmed until a person
   says yes**: the owner by text, or you in the panel.
 - The owner can answer `YES 7`, `NO 7`, a new time (`7 15:30`,
-  `7 04.10 15:30`, `7 tomorrow 15:30`), `CANCEL 7`, `DONE 7`, `NOSHOW 7`, or
-  `LIST`. A bare `yes` works as a reply to the request message, or when only
+  `7 04.10 15:30`, `7 tomorrow 15:30`), `CANCEL 7`, `DONE 7`, `NOSHOW 7`,
+  `LIST`, and for an outcall `READY 7` / `IN 7` (below). A bare `yes` works as a reply to the request message, or when only
   one request is open. When the owner proposes a time, the customer is asked;
   if they take it, it is confirmed (the owner wrote that time).
 - The customer can change the time before the owner answers (same number),
@@ -657,6 +657,19 @@ the opening hours, the calendar link and AI usage.
   the media items marked *Entrance*; with `arrival_requires_photo` the
   instructions wait for a matching photo. The owner can send the entrance
   photo to this account captioned "door".
+- **Outcalls by taxi** (`outcall_taxi`, on by default): an outcall (the
+  customer wants the business to come to them) gets no address and no way
+  in. Once the owner confirms it, the customer hears it is booked and that
+  she needs `outcall_ready_minutes` (20) to get ready. The owner sends
+  `READY 7`: the customer is asked to order a taxi to her and send its link,
+  and `address` follows word for word, for the taxi. His taxi link goes on to
+  the owner; she sends `IN 7` once she is in the taxi (if she doesn't, he is
+  told she is in it `outcall_in_taxi_minutes` (5) after the link came). He is
+  then asked for the exact address, floor, way in and a photo of the place.
+  Everything he sends from the confirmation until the outcall is over goes
+  on to the owner, photos as photos. If `READY 7` has not come when her
+  getting-ready time has passed, she is reminded once. `LIST` shows the
+  outcalls under way.
 - **E-mail record**: with `SMTP_*` in `.env` and `booking.owner_email` set,
   every confirmation, move and cancellation is e-mailed with an `.ics`
   attached.
