@@ -458,9 +458,10 @@ class TenantConfig(_Strict):
     # Phone numbers / e-mail addresses the business allows the bot to share;
     # any other one in a reply holds it.
     shareable_contacts: list[str] = Field(default_factory=list, max_length=50)
-    # Every message the account sends per day, replies included.
+    # Every message this platform sends for the account per day: bot
+    # replies and panel sends. Ones typed on the phone don't count.
     daily_message_cap: int = Field(150, ge=1, le=5000)
-    # Every message the account sends per hour. 0 = no limit.
+    # The same, per hour. 0 = no limit.
     hourly_message_cap: int = Field(0, ge=0, le=1000)
     # AI spend per calendar month (tenant timezone), in EUR. 0 = no limit.
     # See also `limits`.

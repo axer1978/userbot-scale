@@ -7,8 +7,9 @@ Three triggers, each checked in code:
 - send volume: the messages the account sent in the last hour against its
   own average hour over the last `volume_baseline_days` days. Trips at
   `volume_multiplier` times that average, and never below
-  `volume_min_messages`. Every outgoing message counts, including ones
-  typed by hand on a phone: a hijacked account sending spam shows up here.
+  `volume_min_messages`. Only what this platform sent counts (bot replies
+  and panel sends): messages typed by hand on the phone or another app
+  are the owner's own. A hijacked Telegram login shows up as a new login.
 - the outbound trip-wire: a reply the bot wrote links to a domain nobody
   allowed, or contains a wallet address or an IBAN the business never
   wrote (policy.py). The reply is already held; this also stops the rest.
@@ -71,7 +72,7 @@ async def volume_spike(pool: asyncpg.Pool, tenant_id: int, settings: dict[str, A
                count(*) FILTER (WHERE created_at <  now() - interval '1 hour') AS before,
                EXTRACT(EPOCH FROM (now() - interval '1 hour') - min(created_at)) / 3600 AS hours
           FROM messages
-         WHERE tenant_id = $1 AND direction = 'out' AND status = 'sent'
+         WHERE tenant_id = $1 AND direction = 'out' AND status = 'sent' AND NOT sent_elsewhere
            AND created_at >= now() - make_interval(days => $2)
         """,
         tenant_id, days,

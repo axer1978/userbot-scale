@@ -377,12 +377,12 @@ async def test_new_logins_only_alert_when_suspending_is_turned_off(w):
     assert alert["kind"] == "anomaly:new_login" and alert["severity"] == alerts.WARNING
 
 
-async def seed_sent(w, count, hours_ago):
+async def seed_sent(w, count, hours_ago, elsewhere=False):
     tid = w.app.tenant_id
     await w.pool.executemany(
-        "INSERT INTO messages (session_id, tenant_id, chat_id, direction, status, text, created_at) "
-        "VALUES ($1, $2, $3, $4, $5, 'x', now() - make_interval(hours => $6))",
-        [(w.app.session_id, tid, CUSTOMER, DIR_OUT, STATUS_SENT, float(hours_ago))] * count,
+        "INSERT INTO messages (session_id, tenant_id, chat_id, direction, status, text, created_at, sent_elsewhere) "
+        "VALUES ($1, $2, $3, $4, $5, 'x', now() - make_interval(hours => $6), $7)",
+        [(w.app.session_id, tid, CUSTOMER, DIR_OUT, STATUS_SENT, float(hours_ago), elsewhere)] * count,
     )
 
 
@@ -416,6 +416,22 @@ async def test_a_busy_first_hour_on_a_new_account_is_not_a_spike(w):
     await seed_sent(w, 60, 0.5)                  # no history at all, 60 this hour
     await w.app.send_as_me(CUSTOMER, "fine", guard=False)
     assert not w.app.paused()
+
+
+async def test_messages_typed_on_the_phone_are_not_a_spike(w):
+    w.app.config["anomaly"]["volume_min_messages"] = 30
+    await w.db.upsert_conversation(CUSTOMER, "Anna", "anna", False, 1)
+    await seed_sent(w, 80, 0.5, elsewhere=True)  # the owner wrote 80 by hand this hour
+    await seed_sent(w, 28, 0.5)                  # the platform sent 28
+    await w.app.send_as_me(CUSTOMER, "29th of ours", guard=False)
+    assert not w.app.paused()
+
+
+async def test_a_message_typed_on_the_phone_is_stored_as_sent_elsewhere(w):
+    await w.app.on_outgoing(FakeEvent(CUSTOMER, "typed by hand"))
+    await w.app.send_as_me(CUSTOMER, "sent from the panel", guard=False)
+    stored = {m["text"]: m["sent_elsewhere"] for m in await w.db.get_messages(CUSTOMER) if m["direction"] == DIR_OUT}
+    assert stored == {"typed by hand": True, "sent from the panel": False}
 
 
 async def test_the_trip_wire_holds_the_reply_and_switches_the_client_off(w):

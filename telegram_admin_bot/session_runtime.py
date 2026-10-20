@@ -2254,6 +2254,7 @@ class SessionRuntime:
 
         row = await self._store_with_retry("storing a sent message", lambda: self.db.record_message(
             chat_id, DIR_OUT, STATUS_SENT, text or "[non-text message]", **self.external_id(message.external_id),
+            sent_elsewhere=True,
         ))
         if row is None:
             return  # already stored: one of this runtime's own sends
