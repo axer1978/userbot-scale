@@ -1,0 +1,924 @@
+{
+ "tenant": 1,
+ "business": "Nikol, Riga",
+ "note": "The taxi steps of an outcall (booking.outcall_taxi). Every chat is an outcall; they are excused from the fixed messages and the first-reply address check.",
+ "except_categories": [
+  "outcall before ready",
+  "outcall full",
+  "outcall in taxi",
+  "outcall link",
+  "outcall ready"
+ ],
+ "never_says": [
+  "let me check",
+  "checking",
+  "i'll ask",
+  "i will ask",
+  "my manager",
+  "the agency",
+  "our girls",
+  "check with",
+  "i'll check",
+  "i will check",
+  "let you know"
+ ],
+ "scenarios": [
+  {
+   "id": "outcall-full-1",
+   "category": "outcall full",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "hey, do you do outcall?",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi"
+      ]
+     }
+    },
+    {
+     "customer": "radisson blu hotel, now?",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "20",
+       "min",
+       "ready"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "event": "ready",
+     "booking": "outcall_ready_news",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "link"
+      ]
+     }
+    },
+    {
+     "customer": "ok ordered https://bolt.eu/ride/share/7Hk2pQ",
+     "booking": "outcall_link",
+     "expect": {
+      "lacks": [
+       "bolt.eu",
+       "i'm in the taxi",
+       "im in the taxi",
+       "i am in the taxi",
+       "я в такси",
+       "esmu taksī"
+      ]
+     }
+    },
+    {
+     "event": "in taxi",
+     "booking": "outcall_in_taxi_news",
+     "expect": {
+      "has_any": [
+       "floor",
+       "flat",
+       "room",
+       "address",
+       "photo",
+       "pic",
+       "entrance"
+      ]
+     }
+    },
+    {
+     "customer": "radisson blu, room 512, 5th floor. lift on the right",
+     "booking": "outcall_in_taxi"
+    }
+   ]
+  },
+  {
+   "id": "outcall-full-2",
+   "category": "outcall full",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "outcall tonight possible?",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi",
+       "time",
+       "where"
+      ]
+     }
+    },
+    {
+     "customer": "23:00 at my place in old town",
+     "booking": "requested",
+     "intent": "book"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "23",
+       "11",
+       "booked",
+       "confirmed"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "customer": "great, should I order the taxi already?",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "ready",
+       "text",
+       "message",
+       "write",
+       "tell"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now",
+       "yes order"
+      ]
+     }
+    },
+    {
+     "event": "ready",
+     "booking": "outcall_ready_news",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "link"
+      ]
+     }
+    },
+    {
+     "customer": "https://trip.uber.com/AbC12xY",
+     "booking": "outcall_link",
+     "expect": {
+      "lacks": [
+       "trip.uber.com",
+       "i'm in the taxi",
+       "im in the taxi",
+       "i am in the taxi",
+       "я в такси",
+       "esmu taksī"
+      ]
+     }
+    },
+    {
+     "event": "in taxi",
+     "booking": "outcall_in_taxi_news",
+     "expect": {
+      "has_any": [
+       "floor",
+       "flat",
+       "room",
+       "address",
+       "photo",
+       "pic",
+       "entrance"
+      ]
+     }
+    },
+    {
+     "customer": "Kaleju iela 12, 3rd floor flat 7, gate code 4815",
+     "booking": "outcall_in_taxi"
+    }
+   ]
+  },
+  {
+   "id": "outcall-full-3",
+   "category": "outcall full",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "привет, выезд возможен?",
+     "expect": {
+      "has_any": [
+       "200",
+       "такси",
+       "taxi"
+      ]
+     }
+    },
+    {
+     "customer": "отель гранд палас, сейчас",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "20",
+       "мин",
+       "min"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "event": "ready",
+     "booking": "outcall_ready_news",
+     "expect": {
+      "has_any": [
+       "такси",
+       "taxi",
+       "ссылк",
+       "link"
+      ]
+     }
+    },
+    {
+     "customer": "https://go.yandex/route/share/aa11",
+     "booking": "outcall_link",
+     "expect": {
+      "lacks": [
+       "go.yandex",
+       "i'm in the taxi",
+       "im in the taxi",
+       "i am in the taxi",
+       "я в такси",
+       "esmu taksī"
+      ]
+     }
+    },
+    {
+     "event": "in taxi",
+     "booking": "outcall_in_taxi_news",
+     "expect": {
+      "has_any": [
+       "этаж",
+       "адрес",
+       "фото",
+       "номер",
+       "floor",
+       "address",
+       "photo"
+      ]
+     }
+    },
+    {
+     "customer": "гранд палас, номер 204, 2 этаж",
+     "booking": "outcall_in_taxi"
+    }
+   ]
+  },
+  {
+   "id": "outcall-full-4",
+   "category": "outcall full",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "sveiki, izbraukums iespējams?",
+     "expect": {
+      "has_any": [
+       "200",
+       "taksi",
+       "taxi"
+      ]
+     }
+    },
+    {
+     "customer": "tagad, Elizabetes iela",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "20",
+       "min"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "event": "ready",
+     "booking": "outcall_ready_news",
+     "expect": {
+      "has_any": [
+       "taksi",
+       "taxi",
+       "saiti",
+       "saite",
+       "link"
+      ]
+     }
+    },
+    {
+     "customer": "https://bolt.eu/ride/share/LV12",
+     "booking": "outcall_link",
+     "expect": {
+      "lacks": [
+       "bolt.eu",
+       "i'm in the taxi",
+       "im in the taxi",
+       "i am in the taxi",
+       "я в такси",
+       "esmu taksī"
+      ]
+     }
+    },
+    {
+     "event": "in taxi",
+     "booking": "outcall_in_taxi_news",
+     "expect": {
+      "has_any": [
+       "stāv",
+       "adres",
+       "foto",
+       "dzīvokl",
+       "floor",
+       "address",
+       "photo"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "outcall-before-ready-1",
+   "category": "outcall before ready",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "outcall to hotel bellevue now?",
+     "booking": "requested_now",
+     "intent": "asap",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "20",
+       "min",
+       "ready"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "customer": "how long?",
+     "booking": "confirmed",
+     "expect": {
+      "has_any": [
+       "20",
+       "min",
+       "ready"
+      ]
+     }
+    },
+    {
+     "customer": "can i order the taxi now?",
+     "booking": "confirmed",
+     "expect": {
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now",
+       "yes order"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "outcall-before-ready-2",
+   "category": "outcall before ready",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "outcall at 22:30? hotel tallink",
+     "booking": "requested",
+     "intent": "book",
+     "expect": {
+      "has_any": [
+       "200",
+       "taxi"
+      ]
+     }
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "22",
+       "10",
+       "booked",
+       "confirmed"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "customer": "ok see you then 😘",
+     "booking": "confirmed",
+     "expect": {
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "outcall-ready-1",
+   "category": "outcall ready",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "outcall now? hotel tallink",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "20",
+       "min",
+       "ready"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "event": "ready",
+     "booking": "outcall_ready_news",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "link"
+      ]
+     }
+    },
+    {
+     "customer": "where should the taxi come?",
+     "booking": "outcall_ready"
+    },
+    {
+     "customer": "ok ordering now",
+     "booking": "outcall_ready",
+     "expect": {
+      "has_any": [
+       "link"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "outcall-link-1",
+   "category": "outcall link",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "outcall to my apartment now?",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "20",
+       "min",
+       "ready"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "event": "ready",
+     "booking": "outcall_ready_news",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "link"
+      ]
+     }
+    },
+    {
+     "customer": "white skoda octavia, 6 min https://bolt.eu/ride/share/Q1",
+     "booking": "outcall_link",
+     "expect": {
+      "lacks": [
+       "bolt.eu",
+       "i'm in the taxi",
+       "im in the taxi",
+       "i am in the taxi",
+       "я в такси",
+       "esmu taksī"
+      ],
+      "has_any": [
+       "ok",
+       "thank",
+       "perfect",
+       "see",
+       "😘",
+       "great",
+       "good"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "outcall-link-2",
+   "category": "outcall link",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "outcall now? hotel albert",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "20",
+       "min",
+       "ready"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "event": "ready",
+     "booking": "outcall_ready_news",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "link"
+      ]
+     }
+    },
+    {
+     "customer": "https://example-taxi.app/t/9",
+     "booking": "outcall_link",
+     "expect": {
+      "lacks": [
+       "example-taxi.app",
+       "i'm in the taxi",
+       "im in the taxi",
+       "i am in the taxi",
+       "я в такси",
+       "esmu taksī"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "outcall-in-taxi-1",
+   "category": "outcall in taxi",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "outcall now? radisson",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "20",
+       "min",
+       "ready"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "event": "ready",
+     "booking": "outcall_ready_news",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "link"
+      ]
+     }
+    },
+    {
+     "customer": "https://bolt.eu/ride/share/Zz9",
+     "booking": "outcall_link",
+     "expect": {
+      "lacks": [
+       "bolt.eu",
+       "i'm in the taxi",
+       "im in the taxi",
+       "i am in the taxi",
+       "я в такси",
+       "esmu taksī"
+      ]
+     }
+    },
+    {
+     "event": "in taxi",
+     "booking": "outcall_in_taxi_news",
+     "expect": {
+      "has_any": [
+       "floor",
+       "flat",
+       "room",
+       "address",
+       "photo",
+       "pic",
+       "entrance"
+      ]
+     }
+    },
+    {
+     "customer": "where are you now?",
+     "booking": "outcall_in_taxi",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "way",
+       "min",
+       "soon",
+       "coming",
+       "close"
+      ]
+     }
+    },
+    {
+     "customer": "[photo for the outcall]",
+     "booking": "outcall_in_taxi",
+     "expect": {
+      "has_any": [
+       "got",
+       "ok",
+       "thank",
+       "perfect",
+       "see",
+       "coming"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "outcall-in-taxi-2",
+   "category": "outcall in taxi",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "outcall now? my place, teika",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "20",
+       "min",
+       "ready"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "event": "ready",
+     "booking": "outcall_ready_news",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "link"
+      ]
+     }
+    },
+    {
+     "customer": "https://bolt.eu/ride/share/Ph0",
+     "booking": "outcall_link",
+     "expect": {
+      "lacks": [
+       "bolt.eu",
+       "i'm in the taxi",
+       "im in the taxi",
+       "i am in the taxi",
+       "я в такси",
+       "esmu taksī"
+      ]
+     }
+    },
+    {
+     "event": "in taxi",
+     "booking": "outcall_in_taxi_news",
+     "expect": {
+      "has_any": [
+       "floor",
+       "flat",
+       "room",
+       "address",
+       "photo",
+       "pic",
+       "entrance"
+      ]
+     }
+    },
+    {
+     "customer": "[photo for the outcall]",
+     "booking": "outcall_in_taxi",
+     "expect": {
+      "has_any": [
+       "address",
+       "floor",
+       "flat",
+       "room",
+       "street"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "outcall-in-taxi-3",
+   "category": "outcall in taxi",
+   "outcall": true,
+   "steps": [
+    {
+     "customer": "outcall now? Brivibas street",
+     "booking": "requested_now",
+     "intent": "asap"
+    },
+    {
+     "event": "confirmed",
+     "booking": "confirmed_news",
+     "expect": {
+      "has_any": [
+       "20",
+       "min",
+       "ready"
+      ],
+      "lacks": [
+       "send me the link",
+       "order the taxi now",
+       "order a taxi now",
+       "order it now",
+       "order now"
+      ]
+     }
+    },
+    {
+     "event": "ready",
+     "booking": "outcall_ready_news",
+     "expect": {
+      "has_any": [
+       "taxi",
+       "link"
+      ]
+     }
+    },
+    {
+     "customer": "https://bolt.eu/ride/share/G7",
+     "booking": "outcall_link",
+     "expect": {
+      "lacks": [
+       "bolt.eu",
+       "i'm in the taxi",
+       "im in the taxi",
+       "i am in the taxi",
+       "я в такси",
+       "esmu taksī"
+      ]
+     }
+    },
+    {
+     "event": "in taxi",
+     "booking": "outcall_in_taxi_news",
+     "expect": {
+      "has_any": [
+       "floor",
+       "flat",
+       "room",
+       "address",
+       "photo",
+       "pic",
+       "entrance"
+      ]
+     }
+    },
+    {
+     "customer": "grey building with the pharmacy, 4th floor, flat 16, intercom 16",
+     "booking": "outcall_in_taxi",
+     "expect": {
+      "has_any": [
+       "photo",
+       "pic",
+       "ok",
+       "got",
+       "see",
+       "perfect"
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

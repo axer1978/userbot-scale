@@ -80,6 +80,40 @@ def test_the_address_tag_is_offered_and_the_address_follows_only_a_confirmation(
     assert "already sent the entry instructions" in replay.booking_note("way_in_sent", now, "Europe/Riga")
 
 
+def test_the_outcall_taxi_chats_load_with_the_others():
+    data = replay.load_all(["maria", "outcall-taxi"])
+    taxi = [s for s in data["scenarios"] if s.get("outcall")]
+    assert len(taxi) >= 10
+    # They start mid-flow: no fixed messages or first-reply address are due.
+    assert {s["category"] for s in taxi} <= set(data["except_categories"])
+    assert {"outcall_ready_news", "outcall_link", "outcall_in_taxi_news", "outcall_in_taxi"} <= {
+        step.get("booking") for s in taxi for step in s["steps"]}
+
+
+def test_the_taxi_steps_are_told_to_the_reply_as_in_the_runtime():
+    now = datetime(2026, 10, 5, 19, 20, tzinfo=timezone.utc)
+
+    def note(state, **kw):
+        return replay.booking_note(state, now, "Europe/Riga", address_set=True, **kw)
+
+    confirmed = note("confirmed_news", outcall=True)
+    assert "outcall" in confirmed and "CONFIRMED" in confirmed and "Do not ask them to order" in confirmed
+    # Without the outcall (or with the taxi steps off) it is the plain confirmation.
+    assert "outcall" not in note("confirmed_news")
+    assert "Do not ask them to order" not in note("confirmed_news", outcall=True, outcall_taxi=False)
+    assert "only then do they order the taxi" in note("confirmed", outcall=True)
+
+    ready = note("outcall_ready_news")
+    assert "order a taxi to pick you up now" in ready and "Your address, for the taxi, is sent" in ready
+    assert "send you its link" in note("outcall_ready")
+    link = note("outcall_link")
+    assert "taxi link they sent has reached you" in link and "about to get in" in link
+    assert "you are in the taxi now" in note("outcall_in_taxi_news")
+    assert "ask for what is missing" in note("outcall_in_taxi")
+    # Confirmed: agreeing words are fine from here on.
+    assert replay.check_reply("see you soon love", {"customer": "ok"}, "outcall_in_taxi") == []
+
+
 def test_what_she_never_says_fails_every_reply():
     never = ("let me check", "agency")
     assert replay.check_reply("Let me check love, one sec", {"customer": "22:00?"}, "requested", never) == [
