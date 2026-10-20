@@ -18,6 +18,11 @@ kind of client, how it ended, why, corrections on single lines): those go
 to the text model the same way, each headed by that judgement, with the
 client's personal data and the business's address masked.
 
+Or the run picks, by itself, the chats where a person typed the business's
+replies (on the phone, or by hand in the panel): the business's own way of
+working, which outranks the standard's. Each reply is marked typed by hand
+or written by the assistant, and the chats can come from several accounts.
+
 Both JSON blocks are checked exactly as a manual save would check them
 (prompt_layers.validate_client / validate_industry), plus one rule of this
 module: an industry standard written by a run must have a boundaries
@@ -34,7 +39,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Iterator, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -197,9 +202,12 @@ def check_chats(chats: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
     return sorted(chats, key=lambda item: screenshot_order(item[0]))
 
 
+def _transcripts(chats: Sequence[tuple[str, str]]) -> str:
+    return "\n\n".join(f"### {name}\n{text}" for name, text in chats)
+
+
 def build_text_messages(prompt: str, chats: Sequence[tuple[str, str]]) -> list[dict[str, Any]]:
-    transcripts = "\n\n".join(f"### {name}\n{text}" for name, text in chats)
-    return [{"role": "user", "content": f"{prompt}\n\n{TRANSCRIPT_NOTE}\n\n{transcripts}"}]
+    return [{"role": "user", "content": f"{prompt}\n\n{TRANSCRIPT_NOTE}\n\n{_transcripts(chats)}"}]
 
 
 def text_model() -> str:
@@ -306,7 +314,8 @@ def example_name(example_id: int, verdict: str) -> str:
 def chat_lines(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     """The chat as the model reads it: what crossed the wire, and the
     booking system's events. Drafts never sent, rejected drafts, errors and
-    the panel's other notes are left out."""
+    the panel's other notes are left out. A business message that says
+    whether a person typed it ("typed") keeps that mark."""
     lines: list[dict[str, Any]] = []
     for m in messages:
         text = (m.get("text") or "").strip()
@@ -321,7 +330,10 @@ def chat_lines(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         else:
             continue
         if text:
-            lines.append({"id": m["id"], "who": who, "text": text, "at": m.get("created_at")})
+            line = {"id": m["id"], "who": who, "text": text, "at": m.get("created_at")}
+            if who == "business" and "typed" in m:
+                line["typed"] = bool(m["typed"])
+            lines.append(line)
     return lines[:MAX_EXAMPLE_MESSAGES]
 
 
@@ -398,27 +410,156 @@ def render_example(example: dict[str, Any], lines: Sequence[dict[str, Any]], *,
 
     corrections = example.get("corrections") or {}
     body: list[str] = []
-    day = None
-    for line in lines:
-        at = _local(line.get("at"), tz)
-        if at and at.date() != day:
-            day = at.date()
-            body.append(f"— {at:%a %d.%m.%Y} —")
-        text = mask(line["text"], masks)
-        if line["who"] == "event":
-            body.append(f"— booking: {text} —")
-        else:
-            who = "Client" if line["who"] == "client" else "Business"
-            body.append((f"[{at:%H:%M}] " if at else "") + f"{who}: {text}")
+    for line, rendered in _rendered(lines, masks, tz,
+                                    lambda line: "Client" if line["who"] == "client" else "Business"):
+        body += rendered
         correction = corrections.get(str(line["id"]))
         if correction:
             body.append("ANNOTATION FOR MODEL: " + mask(correction, masks).replace("\n", " "))
     return "\n".join(head) + "\n\n" + "\n".join(body)
 
 
+def _rendered(lines: Sequence[dict[str, Any]], masks: Sequence[tuple[str, str]], tz: Optional[ZoneInfo],
+              who: Callable[[dict[str, Any]], str]) -> Iterator[tuple[dict[str, Any], list[str]]]:
+    """Each chat line as transcript lines, masked: a "— <day> —" line when
+    the day changes, then the message with its time and `who(line)`, or the
+    booking event."""
+    day = None
+    for line in lines:
+        out: list[str] = []
+        at = _local(line.get("at"), tz)
+        if at and at.date() != day:
+            day = at.date()
+            out.append(f"— {at:%a %d.%m.%Y} —")
+        text = mask(line["text"], masks)
+        if line["who"] == "event":
+            out.append(f"— booking: {text} —")
+        else:
+            out.append((f"[{at:%H:%M}] " if at else "") + f"{who(line)}: {text}")
+        yield line, out
+
+
 def build_example_messages(prompt: str, chats: Sequence[tuple[str, str]]) -> list[dict[str, Any]]:
-    transcripts = "\n\n".join(f"### {name}\n{text}" for name, text in chats)
-    return [{"role": "user", "content": f"{prompt}\n\n{TRANSCRIPT_NOTE}\n\n{EXAMPLES_NOTE}\n\n{transcripts}"}]
+    return [{"role": "user", "content": f"{prompt}\n\n{TRANSCRIPT_NOTE}\n\n{EXAMPLES_NOTE}\n\n{_transcripts(chats)}"}]
+
+
+# -------------------------------------------------------- hand-typed chats
+# The chats where a person typed the business's replies, picked by the
+# system rather than flagged: the business's own way of working. The
+# assistant's replies in the same chats stay in, marked, so the model sees
+# where a person took over and what it did differently.
+
+TYPED = "Business (typed by hand)"
+ASSISTANT = "Assistant"
+# One long chat must not take a run's whole budget; its start, with the
+# first contact, matters most.
+MAX_HAND_CHAT_CHARS = 12_000
+CUT = "— (the rest of this chat is left out) —"
+
+# After TRANSCRIPT_NOTE, in a run from hand-typed chats.
+HAND_NOTE = (
+    "THESE ARE REAL CHATS IN WHICH A PERSON TYPED THE BUSINESS'S REPLIES, on the phone or by hand in the panel. "
+    "The system picked them; nobody judged them. They show how the work really goes, and on the voice and the "
+    "pipeline they outrank everything else you were told about this business:\n"
+    f"- \"{TYPED}:\" a reply a person typed. This is the voice and the way of working to learn: how the "
+    "business opens, what it says first and what it leaves for later, how long its messages are, emojis, "
+    "spelling and capitals, when the rates, photos and address go out, how it asks for a time, how it answers "
+    "the usual questions, how it closes the booking.\n"
+    f"- \"{ASSISTANT}:\" a reply the assistant you are tuning wrote. It is NOT the voice to learn. Where a person "
+    "took over from the assistant, or the typed replies do something the assistant does not, the person is "
+    "right: write that into the standard.\n"
+    "- Where the typed replies work differently from the current industry standard (the first reply, the order "
+    "of the steps, wording, length, emojis), the typed way wins: rewrite the standard's booking pipeline, faq, "
+    "tone, sign_off and writing_samples to match it. This overrides any instruction above to only add to the "
+    "existing standard. The boundaries section, and every rule the instructions above call fixed, always stay. "
+    "In the operator notes, list each change as \"CHANGED: <old> → <new> (from <conversation names>)\".\n"
+    "- Each conversation starts with a line \"FROM:\", the account it comes from. Only conversations from THIS "
+    "business count for the business layer (its prices, services, hours and area). Conversations from other "
+    "accounts teach the shared voice and pipeline, never their prices, services or places.\n"
+    "- A person typing fast makes mistakes. A price below the business's rates, an address, door code or flat "
+    "typed into the chat, a time confirmed before the business decided, a promise only the business can make, "
+    "or anything against the boundaries is a mistake, not a pattern: never turn it into a rule or a sample, and "
+    "list it in the operator notes.\n"
+    "- Different people, or one person on different days, word things differently. Learn what they share; "
+    "where they vary, keep the variety instead of choosing one line.\n"
+    "- A real person never sends two clients the same text. In writing_samples, give at least three different "
+    "wordings for each answer the business gives often (greeting, asking for a time, sending photos, the price, "
+    "confirming, on the way, arrival). In the operator notes, add a section \"PHRASE GROUPS\": one line per "
+    "group of short phrases from the typed replies that mean the same and can stand in for each other, written "
+    "\"a | b | c\", for the reply variation settings. Never put a price, a time or an address in a group.\n"
+    "- \"[non-text message]\" is a photo, voice note or sticker sent from the phone; \"[sent photo #N: ...]\" is "
+    "a photo from the business's library. Lines \"— booking: ... —\" are what the booking system did, not "
+    f"messages. \"{CUT}\" means the chat went on.\n"
+    "- Personal data is already masked: [client], [number], [username], [email], and the business's own "
+    "[address] and [way in]. Keep them masked."
+)
+
+
+def hand_origin(account: str, *, own: bool) -> str:
+    """The FROM line's text: whose chat it is, and what it may teach."""
+    if own:
+        return f"{account} (THIS business: its prices, services, hours and area count)"
+    return f"{account} (another account: learn its voice and pipeline only, never its prices, services or area)"
+
+
+def render_hand_chat(lines: Sequence[dict[str, Any]], *, origin: str, masks: Sequence[tuple[str, str]] = (),
+                     tz: Optional[ZoneInfo] = None, max_chars: int = MAX_HAND_CHAT_CHARS) -> str:
+    """One chat for a run from hand-typed chats: where it comes from, then
+    the chat, each business reply marked typed by hand or written by the
+    assistant. Longer than `max_chars`, it is cut and its start kept."""
+    out = [f"FROM: {origin}", ""]
+    size = sum(len(part) + 1 for part in out)
+    for _, rendered in _rendered(lines, masks, tz, lambda line: (
+            "Client" if line["who"] == "client" else TYPED if line.get("typed") else ASSISTANT)):
+        chunk = "\n".join(rendered)
+        if size + len(chunk) + len(CUT) + 1 > max_chars:
+            out.append(CUT)
+            break
+        out.append(chunk)
+        size += len(chunk) + 1
+    return "\n".join(out)
+
+
+def _slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", name.lower()) or "account"
+
+
+def plan_hand_run(chats: Sequence[dict[str, Any]], accounts: Sequence[tuple[int, str]], *,
+                  max_chats: int = MAX_CHATS, max_chars: int = MAX_TRANSCRIPT_CHARS) -> list[dict[str, Any]]:
+    """Name and pick the chats of a run from hand-typed chats.
+
+    `chats` carry "tenant_id", "typed" (replies typed by hand), "last_at"
+    and "chars" (the rendered length); `accounts` are (tenant id, name),
+    the business the run is for first. Each account's chats are ranked, the
+    most typed replies first, then the newest, and named after the account
+    and the rank ("pam-03"). They are picked in turns, each account's next
+    best after the other's, as many as the run's limits take, so one busy
+    account does not crowd the others out. Returns copies in that order,
+    with "name" and "picked" set."""
+    slugs: dict[int, str] = {}
+    for tenant_id, name in accounts:
+        slug = _slug(name)
+        slugs[tenant_id] = f"{slug}{tenant_id}" if slug in slugs.values() else slug
+    turns: list[tuple[int, int, dict[str, Any]]] = []
+    for turn_of_account, (tenant_id, _) in enumerate(accounts):
+        own = [dict(c) for c in chats if c["tenant_id"] == tenant_id]
+        own.sort(key=lambda c: str(c.get("last_at") or ""), reverse=True)
+        own.sort(key=lambda c: c["typed"], reverse=True)
+        for rank, chat in enumerate(own, start=1):
+            chat["name"] = f"{slugs[tenant_id]}-{rank:02d}"
+            turns.append((rank, turn_of_account, chat))
+    turns.sort(key=lambda item: item[:2])
+    planned, count, total = [], 0, 0
+    for _, _, chat in turns:
+        chat["picked"] = count < max_chats and total + chat["chars"] <= max_chars
+        if chat["picked"]:
+            count, total = count + 1, total + chat["chars"]
+        planned.append(chat)
+    return planned
+
+
+def build_hand_messages(prompt: str, chats: Sequence[tuple[str, str]]) -> list[dict[str, Any]]:
+    return [{"role": "user", "content": f"{prompt}\n\n{TRANSCRIPT_NOTE}\n\n{HAND_NOTE}\n\n{_transcripts(chats)}"}]
 
 
 def text_max_tokens() -> int:
@@ -557,18 +698,20 @@ async def complete_text(
     api_key: str,
     model: str,
     flagged: bool = False,
+    hand: bool = False,
     usage_sink: Optional[UsageSink] = None,
     client: Optional[httpx.AsyncClient] = None,
 ) -> str:
     """The text model's raw answer for transcribed chats (`flagged`: real
-    chats the admin flagged, with the note on reading their judgement).
-    DeepSeek speaks the same chat-completions format, so this reuses
-    vision.py's call, which allows a long answer the time it takes
+    chats the admin flagged, with the note on reading their judgement;
+    `hand`: real chats a person typed replies in, with the note on reading
+    those). DeepSeek speaks the same chat-completions format, so this
+    reuses vision.py's call, which allows a long answer the time it takes
     (ai_responder's cap is for replies to customers). Raises
     vision.VisionError with a safe message."""
     if not api_key:
         raise vision.VisionError("DEEPSEEK_PLATFORM_KEY is not set, so transcripts cannot be read.")
-    build = build_example_messages if flagged else build_text_messages
+    build = build_hand_messages if hand else build_example_messages if flagged else build_text_messages
     owns = client is None
     http = client or httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS)
     try:

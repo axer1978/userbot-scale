@@ -12,6 +12,9 @@ Mounted by panel.py behind the admin login.
   (good / bad, kind of client, how it ended, why, corrections on single
   messages). Only that judgement is stored, in finetune_examples; a run
   from them reads the chats from messages, masked, when it starts.
+- Hand-typed chats: the run picks the chats where a person typed the
+  business's replies, from this account and any others the admin adds, and
+  reads them from messages, masked, when it starts. Nothing is stored.
 - Applying a run saves ordinary prompt versions through tenants.py, the
   industry standard first, then the business layer, and reloads the
   accounts affected, as platform_api does. Either part can be left out,
@@ -29,7 +32,7 @@ import os
 from typing import Any, Awaitable, Callable, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 import audit
@@ -651,3 +654,153 @@ async def api_start_examples(body: ExampleRunBody) -> dict[str, Any]:
     await pool.execute("UPDATE finetune_examples SET last_run_id = $1 WHERE id = ANY($2::bigint[])",
                        run["id"], wanted)
     return run
+
+
+# ----------------------------------------------------------- hand-typed chats
+# The run picks, by itself, the chats where a person typed the business's
+# replies (on the phone, or by hand in the panel): from this account, and
+# from any other accounts the admin adds to learn the shared voice from.
+# Nothing is stored; the chats are read from messages, masked, each time.
+#
+# A reply was typed by hand when the model did not write it (no llm_model)
+# and neither the bot nor the system sent it: every send through the
+# runtime writes a message_sent audit row naming who caused it (the bot for
+# replies, booking notices, the address, the way in and reminders; the admin
+# or the owner for a panel send), and a reply typed on the phone has none.
+# (Phone replies are also marked sent_elsewhere since migration 0013, but
+# older ones are not, so the audit rows decide.)
+
+HAND_RUN_PATH = "/api/finetune/hand-runs"
+MAX_HAND_ACCOUNTS = 10
+_MACHINE_ACTORS = [audit.BOT, audit.SYSTEM]
+
+_HAND_MESSAGES = """
+WITH machine AS (
+  SELECT DISTINCT payload->>'message_id' AS id FROM audit_log
+  WHERE tenant_id = ANY($1::int[]) AND event = $2 AND actor = ANY($3::text[])
+), marked AS (
+  SELECT m.tenant_id, m.chat_id, m.id, m.direction, m.status, m.text, m.attachments, m.created_at,
+         (m.direction = 'out' AND m.status = 'sent' AND m.llm_model IS NULL
+          AND NOT EXISTS (SELECT 1 FROM machine WHERE machine.id = m.id::text)) AS typed
+  FROM messages m WHERE m.tenant_id = ANY($1::int[])
+), numbered AS (
+  SELECT marked.*, row_number() OVER (PARTITION BY tenant_id, chat_id ORDER BY id) AS n
+  FROM marked
+  WHERE (tenant_id, chat_id) IN (SELECT tenant_id, chat_id FROM marked WHERE typed)
+)
+SELECT tenant_id, chat_id, id, direction, status, text, attachments, created_at, typed
+FROM numbered WHERE n <= $4 ORDER BY tenant_id, chat_id, id
+"""
+
+
+async def _hand_chats(tenant_id: int, also: list[int]) -> tuple[tenants.Bundle, list[dict[str, Any]]]:
+    """The account's bundle, and every chat of it and of `also` with a reply
+    typed by hand, rendered as the model reads it and planned
+    (finetune.plan_hand_run): named, and picked to fit one run."""
+    s = platform_api.store()
+    bundle = await platform_api.guarded(s.bundle(tenant_id))
+    others = [t for t in dict.fromkeys(also) if t != tenant_id]
+    if len(others) > MAX_HAND_ACCOUNTS:
+        raise HTTPException(status_code=400, detail=f"At most {MAX_HAND_ACCOUNTS} other accounts per run.")
+    bundles = {tenant_id: bundle}
+    for other in others:
+        bundles[other] = await platform_api.guarded(s.bundle(other))
+
+    async with _get_pool().acquire() as con:
+        rows = await con.fetch(_HAND_MESSAGES, list(bundles), audit.MESSAGE_SENT, _MACHINE_ACTORS, _RAW_ROWS)
+        keys = sorted({(r["tenant_id"], r["chat_id"]) for r in rows})
+        people = await con.fetch(
+            "SELECT tenant_id, chat_id, display_name, username FROM conversations "
+            "WHERE (tenant_id, chat_id) IN (SELECT * FROM unnest($1::int[], $2::bigint[]))",
+            [k[0] for k in keys], [k[1] for k in keys])
+    conversations = {(p["tenant_id"], p["chat_id"]): p for p in people}
+    messages: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for r in rows:
+        messages.setdefault((r["tenant_id"], r["chat_id"]), []).append(dict(r))
+
+    chats = []
+    for (owner, chat_id), raw in messages.items():
+        conversation = conversations.get((owner, chat_id))
+        if conversation is None:
+            continue
+        lines = finetune.chat_lines(raw)
+        typed = sum(1 for line in lines if line.get("typed"))
+        if not typed:
+            continue  # its typed replies lie beyond what a run reads
+        own = bundles[owner]
+        text = finetune.render_hand_chat(
+            lines, origin=finetune.hand_origin(own.tenant["name"], own=owner == tenant_id),
+            masks=_masks(own, conversation), tz=_tz(own))
+        chats.append({
+            "key": f"{owner}:{chat_id}", "tenant_id": owner, "account": own.tenant["name"], "chat_id": chat_id,
+            "display_name": conversation["display_name"] or "", "typed": typed,
+            "assistant": sum(1 for line in lines if line["who"] == "business" and not line.get("typed")),
+            "client": sum(1 for line in lines if line["who"] == "client"),
+            "last_at": lines[-1]["at"], "chars": len(text), "text": text,
+        })
+    accounts = [(t, b.tenant["name"]) for t, b in bundles.items()]
+    return bundle, finetune.plan_hand_run(chats, accounts)
+
+
+@router.get("/api/finetune/hand-chats")
+async def api_hand_chats(tenant_id: int, also: list[int] = Query(default=[])) -> dict[str, Any]:
+    """The chats with replies typed by hand that a run for this account
+    would read (picked) or could read, with what the model reads for each,
+    and a count per account."""
+    _, chats = await _hand_chats(tenant_id, also)
+    accounts: dict[int, dict[str, Any]] = {}
+    for c in chats:
+        account = accounts.setdefault(c["tenant_id"], {"tenant_id": c["tenant_id"], "name": c["account"],
+                                                       "chats": 0, "typed": 0, "picked": 0})
+        account["chats"] += 1
+        account["typed"] += c["typed"]
+        account["picked"] += int(c["picked"])
+    return {"accounts": list(accounts.values()), "chats": chats,
+            "limits": {"chats": finetune.MAX_CHATS, "chars": finetune.MAX_TRANSCRIPT_CHARS}}
+
+
+class HandRunBody(BaseModel):
+    tenant_id: int
+    also_tenant_ids: list[int] = Field(default_factory=list, max_length=MAX_HAND_ACCOUNTS)
+    # "<tenant id>:<chat id>" as the list names them; empty = the default pick.
+    chats: list[str] = Field(default_factory=list, max_length=finetune.MAX_CHATS)
+
+
+@router.post(HAND_RUN_PATH)
+async def api_start_hand(body: HandRunBody) -> dict[str, Any]:
+    """A run from the chats where a person typed the business's replies,
+    read by the text model (DeepSeek, on the platform key)."""
+    bundle, planned = await _hand_chats(body.tenant_id, body.also_tenant_ids)
+    industry = bundle.industry
+    template = await load_template(industry["id"])
+    if not template:
+        raise HTTPException(status_code=400, detail=f"Write the finetune template for {industry['name']} first.")
+    api_key = platform_api.platform_key()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="DEEPSEEK_PLATFORM_KEY must be set in .env to read chats.")
+    if body.chats:
+        by_key = {c["key"]: c for c in planned}
+        if any(key not in by_key for key in body.chats):
+            raise HTTPException(status_code=400, detail="Some of these chats no longer have replies typed by hand, "
+                                                        "or belong to an account not in this run. Reload the page.")
+        chosen = [by_key[key] for key in dict.fromkeys(body.chats)]
+    else:
+        chosen = [c for c in planned if c["picked"]]
+    if not chosen:
+        raise HTTPException(status_code=400, detail="No chats with replies typed by hand yet: answer some clients "
+                                                    "yourself on the phone or from the panel first.")
+    try:
+        chats = finetune.check_chats([(c["name"], c["text"]) for c in chosen])
+        prompt = finetune.fill_template(
+            template, business_name=bundle.tenant["name"],
+            businesses_so_far=await businesses_so_far(industry["id"]),
+            industry_sections=await _live_sections(industry),
+        )
+    except finetune.FinetuneError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    model = finetune.text_model()
+    return await _launch(
+        body.tenant_id, industry, model=model, source="hand", files=[name for name, _ in chats],
+        call=lambda meter: finetune.complete_text(prompt, chats, api_key=api_key, model=model, hand=True,
+                                                  usage_sink=meter),
+    )
