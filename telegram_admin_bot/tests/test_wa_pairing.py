@@ -173,7 +173,7 @@ async def test_a_new_whatsapp_client_starts_on_the_safety_defaults(panel_client,
 
 def test_the_whatsapp_defaults_are_a_valid_client_layer():
     config = tenant_config.resolve(None, tenant_config.WHATSAPP_CLIENT_DEFAULTS).as_dict()
-    assert config["daily_message_cap"] == 60 and config["hourly_message_cap"] == 15
+    assert config["daily_message_cap"] == 150 and config["hourly_message_cap"] == 0
     assert config["safety"]["daily_peer_cap"] == 15
     assert config["reply_delay"] == {"min_s": 45, "max_s": 180, "distribution": "lognormal"}
     assert config["burst"] == {"max_messages": 3, "gap_ms": {"min": 1200, "max": 3500}, "keep_together": True}

@@ -223,17 +223,18 @@ async def test_upgrading_a_populated_0005_database_keeps_the_data_and_adds_the_r
 
     after = await table_rows(pool, tables)
     # tenants.channel has been there since 0002; 0006 only has to leave it alone.
-    new_cols = {"telegram_sessions": {"channel"}, "messages": {"wa_message_id"},
+    new_cols = {"telegram_sessions": {"channel"}, "messages": {"wa_message_id", "sent_elsewhere"},  # sent_elsewhere: 0013
                 "bookings": {"provider_wa_message_id",
                              # 0011: arrival cleanup
                              "instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at",
-                             # 0013: outcall taxi steps
+                             # 0014: outcall taxi steps
                              "ready_at", "ready_reminded_at", "taxi_link", "taxi_link_at", "in_taxi_at",
                              "in_taxi_by"}}
     for table, rows in before.items():
         added = new_cols.get(table, set())
         assert [{k: v for k, v in r.items() if k not in added} for r in after[table]] == rows, table
     assert all(r["wa_message_id"] is None for r in after["messages"])
+    assert not any(r["sent_elsewhere"] for r in after["messages"])  # old rows count as before
     assert all(r["provider_wa_message_id"] is None for r in after["bookings"])
     assert {r["session_id"]: r["channel"] for r in after["telegram_sessions"]} == {"tg1": "telegram", "tg2": "telegram"}
     assert {r["name"]: r["channel"] for r in after["tenants"]} == {"Salon": "telegram", "Garage": "telegram", "Closed": "telegram"}

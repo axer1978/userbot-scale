@@ -393,8 +393,10 @@ class Anomaly(_Strict):
     # Sent in the last hour at least this many times the account's own
     # average hour over the last volume_baseline_days days. 0 = off.
     volume_multiplier: float = Field(5.0, ge=0, le=100)
-    # ...and never below this many messages in the hour.
-    volume_min_messages: int = Field(30, ge=1, le=10_000)
+    # ...and never below this many messages in the hour. A new account has
+    # no average yet, so this alone decides; 150 (a whole day's send limit
+    # in one hour) lets a busy hour through and still catches a flood.
+    volume_min_messages: int = Field(150, ge=1, le=10_000)
     volume_baseline_days: int = Field(7, ge=1, le=60)
     # A reply the bot wrote links to a domain nobody allowed, or contains a
     # wallet address or an IBAN (policy.py). The reply is held either way.
@@ -469,9 +471,10 @@ class TenantConfig(_Strict):
     # Phone numbers / e-mail addresses the business allows the bot to share;
     # any other one in a reply holds it.
     shareable_contacts: list[str] = Field(default_factory=list, max_length=50)
-    # Every message the account sends per day, replies included.
+    # Every message this platform sends for the account per day: bot
+    # replies and panel sends. Ones typed on the phone don't count.
     daily_message_cap: int = Field(150, ge=1, le=5000)
-    # Every message the account sends per hour. 0 = no limit.
+    # The same, per hour. 0 = no limit.
     hourly_message_cap: int = Field(0, ge=0, le=1000)
     # AI spend per calendar month (tenant timezone), in EUR. 0 = no limit.
     # See also `limits`.
@@ -529,13 +532,14 @@ class TenantConfig(_Strict):
 # keeps whatever its config says by then). WhatsApp bans numbers for volume
 # and breadth much sooner than Telegram limits them, and a linked device
 # that answers in seconds, around the clock, in long bursts, reads as a bot.
-# So: fewer messages per day and per hour, fewer distinct people per day,
-# slower replies with a human-shaped spread, shorter bursts with longer
-# gaps, a quiet night, replies held for approval and no outreach.
+# So: fewer distinct people per day, slower replies with a human-shaped
+# spread, shorter bursts with longer gaps, a quiet night, replies held for
+# approval and no outreach. Volume is one limit, 150 messages a day: a
+# working account needs about that many, and an hourly cap (it was 15)
+# held replies back in busy hours.
 WHATSAPP_CLIENT_DEFAULTS: dict[str, Any] = {
     "auto_send": False,
-    "daily_message_cap": 60,
-    "hourly_message_cap": 15,
+    "daily_message_cap": 150,
     "safety": {"daily_peer_cap": 15},
     "reply_delay": {"min_s": 45, "max_s": 180, "distribution": "lognormal"},
     "burst": {"max_messages": 3, "gap_ms": {"min": 1200, "max": 3500}},
