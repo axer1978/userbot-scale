@@ -579,6 +579,8 @@ class BookingFlow:
         for the panel to show."""
         booking = await self.store.get(booking_id)
         now = self.now()
+        if action in ("ready", "in_taxi"):
+            return await self.admin_outcall_step(booking, action)
         if action == "resend":
             if booking["state"] != bs.REQUESTED:
                 raise bs.IllegalTransition(f"booking #{booking['number']} is {booking['state']}, not waiting to be sent")
@@ -786,8 +788,12 @@ class BookingFlow:
         """booking.address, or "" when bookings are off or none is set."""
         return (self.settings.get("address") or "").strip() if self.enabled() else ""
 
-    def fill_address(self, text: str) -> str:
-        """A reply's [address] tag as the address itself, a message of its own."""
+    def fill_address(self, text: str, *, follows: bool = False) -> str:
+        """A reply's [address] tag as the address itself, a message of its
+        own. `follows`: the address is sent right after this reply anyway
+        (a confirmation, her taxi), so the tag is only dropped."""
+        if follows:
+            return bookings.take_address_tag(text)[0]
         return bookings.fill_address(text, self.address())
 
     async def address_in_chat(self, chat_id: int) -> bool:
@@ -1018,6 +1024,27 @@ class BookingFlow:
         if updated is None:
             return f"#{booking['number']}: he already knows you're in the taxi."
         return bookings.format_acknowledgement(updated, "in_taxi")
+
+    async def admin_outcall_step(self, booking: dict[str, Any], action: str) -> dict[str, Any]:
+        """She is ready / in the taxi, said in the panel for her (she told
+        the operator another way). The owner hears it too."""
+        n = booking["number"]
+        if not self.outcall_taxi():
+            raise bs.IllegalTransition("the outcall taxi steps are off (booking.outcall_taxi)")
+        if not self._under_way(booking, self.now()):
+            raise bs.IllegalTransition(f"booking #{n} is not a confirmed outcall that is still to come")
+        if action == "ready":
+            updated = await self.mark_ready(booking)
+            if updated is None:
+                raise bs.IllegalTransition(f"booking #{n} is marked ready already")
+        else:
+            updated = await self.mark_in_taxi(booking, by=bs.ADMIN)
+            if updated is None:
+                raise bs.IllegalTransition(f"the customer of #{n} already knows she is in the taxi")
+        if self.settings.get("provider"):
+            await self.send_owner(bookings.format_acknowledgement(updated, action) + " (from the panel)",
+                                  reason="panel booking change passed on to the owner")
+        return booking_store.public(updated)
 
     async def mark_ready(self, booking: dict[str, Any]) -> Optional[dict[str, Any]]:
         """She is ready: he is asked to order the taxi (the address follows

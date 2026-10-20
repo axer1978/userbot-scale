@@ -669,7 +669,11 @@ the opening hours, the calendar link and AI usage.
   Everything he sends from the confirmation until the outcall is over goes
   on to the owner, photos as photos. If `READY 7` has not come when her
   getting-ready time has passed, she is reminded once. `LIST` shows the
-  outcalls under way.
+  outcalls under way. In the panel, **Bookings** shows where each outcall
+  stands and its taxi link, with *She is ready* / *She is in the taxi*
+  buttons for when she tells you another way. The replay chats for these
+  steps are `replay_scenarios/outcall-taxi.json`
+  (`python replay.py --tenant 1 --scenarios outcall-taxi`).
 - **E-mail record**: with `SMTP_*` in `.env` and `booking.owner_email` set,
   every confirmation, move and cancellation is e-mailed with an `.ics`
   attached.

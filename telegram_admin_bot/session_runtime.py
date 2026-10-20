@@ -1703,7 +1703,8 @@ class SessionRuntime:
             text = ai_responder.without_no_reply(text)
 
             text, attachments = media.split_attachments(text)
-            text = self.flow.fill_address(text)
+            # When the address follows this reply anyway, a tag would send it twice.
+            text = self.flow.fill_address(text, follows=note.address_for is not None)
             # The fallback phrases are looked for in the model's own words: a
             # varied reply may have lost the full stop or emoji they end in.
             fallback = self.fallback_phrase(text)

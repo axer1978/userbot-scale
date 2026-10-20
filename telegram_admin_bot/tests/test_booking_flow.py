@@ -403,6 +403,16 @@ async def test_an_outcall_runs_through_ready_taxi_and_the_way_to_him(world):
     assert "already knows" in w.sent[OWNER][-1]
 
 
+async def test_her_address_goes_once_even_when_the_ready_reply_writes_it(world):
+    w = world
+    w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
+    await confirmed_outcall(w)
+    w.script["reply"] = "ready love, order the taxi here\n[address]"
+    await owner(w, "READY 1")
+    assert w.sent[CUSTOMER][-2:] == ["ready love, order the taxi here", "Brivibas iela 1, Riga"]
+    assert w.sent[CUSTOMER].count("Brivibas iela 1, Riga") == 1
+
+
 async def test_he_is_told_she_is_in_the_taxi_when_her_in_does_not_come(world):
     w = world
     await confirmed_outcall(w)
@@ -568,6 +578,36 @@ async def test_a_photo_that_cannot_be_fetched_is_reported_to_her(world, monkeypa
     await confirmed_outcall(w)
     await customer(w, "", photo=True)
     assert "could not be fetched" in w.sent[OWNER][-1] and "#1" in w.sent[OWNER][-1]
+
+
+async def test_the_panel_marks_her_ready_and_in_the_taxi(world):
+    w = world
+    b = await confirmed_outcall(w)
+
+    async def panel(action):
+        result = await w.app.handle_command("booking_action", {"booking_id": b["id"], "action": action})
+        await settle(w.app)
+        return result
+
+    result = await panel("ready")
+    assert result["ready_at"] is not None
+    assert w.sent[OWNER][-1].startswith("#1 ready ✅") and w.sent[OWNER][-1].endswith("(from the panel)")
+    assert "you are ready for the outcall" in w.script["notes"][-1]
+    with pytest.raises(bs.IllegalTransition, match="ready already"):
+        await panel("ready")
+
+    result = await panel("in_taxi")
+    assert result["in_taxi_by"] == bs.ADMIN
+    assert "you are in the taxi now" in w.script["notes"][-1]
+    with pytest.raises(bs.IllegalTransition, match="already knows"):
+        await panel("in_taxi")
+
+
+async def test_the_panel_refuses_taxi_steps_for_an_incall(world):
+    w = world
+    b = await confirmed_booking(w)
+    with pytest.raises(bs.IllegalTransition, match="not a confirmed outcall"):
+        await w.app.handle_command("booking_action", {"booking_id": b["id"], "action": "ready"})
 
 
 async def test_list_shows_the_outcalls_under_way(world):

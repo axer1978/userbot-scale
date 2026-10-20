@@ -118,7 +118,7 @@ async def get_booking(session_id: str, booking_id: int) -> dict[str, Any]:
 
 
 class ActionBody(BaseModel):
-    action: str = Field(pattern="^(confirm|decline|cancel|complete|no_show|propose|reschedule|resend)$")
+    action: str = Field(pattern="^(confirm|decline|cancel|complete|no_show|propose|reschedule|resend|ready|in_taxi)$")
     starts_at: Optional[str] = None
     minutes: Optional[int] = Field(None, ge=5, le=24 * 60)
     reason: str = Field("", max_length=300)

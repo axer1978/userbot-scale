@@ -149,6 +149,12 @@ export type Booking = {
   attendance_confirmed_at?: string | null;
   arrived_at?: string | null;
   arrival_photo_match?: boolean | null;
+  // The taxi steps of an outcall (booking.outcall_taxi).
+  ready_at?: string | null;
+  taxi_link?: string | null;
+  taxi_link_at?: string | null;
+  in_taxi_at?: string | null;
+  in_taxi_by?: "owner" | "admin" | "system" | null;
 };
 
 export type BookingEvent = {
