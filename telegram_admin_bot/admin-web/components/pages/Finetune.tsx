@@ -5,7 +5,9 @@
 // text (read by DeepSeek), marked good or bad if you like, and the model
 // proposes the client's prompt layer and an updated industry standard from
 // the industry's finetune template. Or pick the client's chats flagged
-// from Conversations (FinetuneExampleDialog), each with the admin's verdict.
+// from Conversations (FinetuneExampleDialog), each with the admin's verdict,
+// or let the server pick the chats where a person typed the replies (from
+// this client and any others added), which the model learns the voice from.
 // Nothing changes until a run is applied; applying saves ordinary prompt
 // versions, which the Clients page can roll back. Screenshots and typed
 // chats are never stored.
@@ -17,7 +19,9 @@ import { CLIENT_KINDS, OUTCOMES, verdictLabel } from "@/components/FinetuneExamp
 import { PageShell, Tabs } from "@/components/ui";
 import { api, errorText } from "@/lib/api";
 import { cx, fmtDateTime } from "@/lib/format";
-import type { BusinessLayer, FinetuneExample, FinetuneIndustry, FinetuneRun, PlatformTree } from "@/lib/types";
+import type {
+  BusinessLayer, FinetuneExample, FinetuneIndustry, FinetuneRun, HandChats, PlatformTree,
+} from "@/lib/types";
 import { useLoader } from "@/lib/useLoader";
 import "@/app/finetune.css";
 
@@ -25,7 +29,7 @@ type Tab = "new" | "runs" | "template";
 type Mark = "" | "good" | "bad";
 type Shot = { file: File; base: string; ext: string; mark: Mark };
 type Chat = { id: number; name: string; mark: Mark; text: string };
-type Source = "screenshots" | "text" | "examples";
+type Source = "screenshots" | "text" | "examples" | "hand";
 type Mode = "inherit" | "override" | "append";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -40,11 +44,12 @@ function sourceCount(run: FinetuneRun): string {
   const n = run.files.length;
   const s = n === 1 ? "" : "s";
   if (run.source === "examples") return `${n} flagged chat${s}`;
+  if (run.source === "hand") return `${n} hand-typed chat${s}`;
   return run.source === "text" ? `${n} typed conversation${s}` : `${n} screenshot${s}`;
 }
 
 const SOURCE_NAME: Record<FinetuneRun["source"], string> = {
-  screenshots: "Screenshots", text: "Conversations", examples: "Flagged chats",
+  screenshots: "Screenshots", text: "Conversations", examples: "Flagged chats", hand: "Hand-typed chats",
 };
 
 /** "03a-good.png" → base "03a", mark "good", ext ".png". */
@@ -80,7 +85,7 @@ function readBase64(file: File): Promise<string> {
 
 type RunProps = { tenantId: number; info: FinetuneIndustry; onStarted: (run: FinetuneRun) => void };
 
-function NewRun(props: RunProps) {
+function NewRun({ tree, ...props }: RunProps & { tree: PlatformTree }) {
   const { info } = props;
   // Screenshots when the vision model is set up, typed chats otherwise.
   const [source, setSource] = useState<Source>(info.screenshots_ready || !info.transcripts_ready ? "screenshots" : "text");
@@ -100,21 +105,25 @@ function NewRun(props: RunProps) {
                                         onChange={() => setSource("text")} /> Typed chats</label>
         <label className="check"><input type="radio" name="ft-source" checked={source === "examples"}
                                         onChange={() => setSource("examples")} /> Flagged chats</label>
+        <label className="check"><input type="radio" name="ft-source" checked={source === "hand"}
+                                        onChange={() => setSource("hand")} /> Hand-typed chats</label>
       </div>
       {source === "screenshots" && !info.screenshots_ready && (
         <div className="pf-errors">No vision model yet: set VISION_API_URL and VISION_API_KEY in the server&apos;s .env,
           or use typed chats.</div>
       )}
       {source !== "screenshots" && !info.transcripts_ready && (
-        <div className="pf-errors">{source === "text" ? "Typed" : "Flagged"} chats need DEEPSEEK_PLATFORM_KEY in the
-          server&apos;s .env.</div>
+        <div className="pf-errors">{source === "text" ? "Typed" : source === "hand" ? "Hand-typed" : "Flagged"} chats
+          need DEEPSEEK_PLATFORM_KEY in the server&apos;s .env.</div>
       )}
       <p className="pf-note">The {info.industry.name} standard is built from {info.businesses_so_far} business
         {info.businesses_so_far === 1 ? "" : "es"} so far{info.has_standard ? "" : " (none yet: this run writes the first)"}.
         {source === "examples" ? "Only your judgement of each chat is stored; the chat is read when the run starts."
-          : "The chats are sent to the model and not stored."}</p>
+          : source === "hand" ? "Nothing is stored; the chats are read when the run starts."
+            : "The chats are sent to the model and not stored."}</p>
       {source === "screenshots" ? <ScreenshotRun {...props} />
-        : source === "text" ? <TranscriptRun {...props} /> : <ExampleRun {...props} />}
+        : source === "text" ? <TranscriptRun {...props} />
+          : source === "examples" ? <ExampleRun {...props} /> : <HandRun {...props} tree={tree} />}
     </>
   );
 }
@@ -374,6 +383,111 @@ function ExampleRun({ tenantId, onStarted }: RunProps) {
           <button type="button" className="btn" onClick={() => setPicked(chosen.size === list.length
             ? new Set() : new Set(list.map((e) => e.id)))}>{chosen.size === list.length ? "Pick none" : "Pick all"}</button>
         )}
+        <button type="button" className="btn primary" disabled={!chosen.size || busy} onClick={start}>
+          {busy ? "Sending…" : "Start the run"}</button>
+      </div>
+    </>
+  );
+}
+
+function HandRun({ tenantId, tree, onStarted }: RunProps & { tree: PlatformTree }) {
+  const toast = useToast();
+  const [also, setAlso] = useState<number[]>([]);
+  const fetchChats = useCallback(() => api<HandChats>("GET", `/api/finetune/hand-chats?tenant_id=${tenantId}`
+    + also.map((id) => `&also=${id}`).join("")), [tenantId, also]);
+  const { data, error } = useLoader(fetchChats);
+  // null: the default pick, the best chats that fit one run.
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const chats = data?.chats ?? [];
+  const limits = data?.limits ?? { chats: 100, chars: MAX_TRANSCRIPT_CHARS };
+  const chosen = picked ?? new Set(chats.filter((c) => c.picked).map((c) => c.key));
+  const chars = chats.reduce((n, c) => n + (chosen.has(c.key) ? c.chars : 0), 0);
+  const over = chosen.size > limits.chats || chars > limits.chars;
+  const others = tree.tenants.filter((t) => t.id !== tenantId);
+  const industryName = (id: number) => tree.industries.find((i) => i.id === id)?.name ?? "";
+
+  const toggleAccount = (id: number) => {
+    setAlso((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]));
+    setPicked(null);
+  };
+  const toggle = (key: string) => {
+    const next = new Set(chosen);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    setPicked(next);
+  };
+
+  const start = async () => {
+    if (!chosen.size) { toast("Pick at least one chat."); return; }
+    if (over) { toast(`At most ${limits.chats} chats and ${limits.chars.toLocaleString()} characters per run.`); return; }
+    setBusy(true);
+    try {
+      const run = await api<FinetuneRun>("POST", "/api/finetune/hand-runs", {
+        tenant_id: tenantId, also_tenant_ids: also,
+        chats: picked === null ? [] : chats.filter((c) => chosen.has(c.key)).map((c) => c.key),
+      });
+      setPicked(null);
+      onStarted(run);
+    } catch (err) { toast(errorText(err)); } finally { setBusy(false); }
+  };
+
+  return (
+    <>
+      <p className="pf-note">
+        The chats where a person typed the replies (on the phone, or by hand from the panel), found by the server, the
+        most typed replies first. The model learns the voice and the way of working from the typed replies, and they win
+        over the current standard; the bot&apos;s own replies in the same chats are marked as the assistant&apos;s. Names,
+        numbers and the address are masked.
+      </p>
+      {others.length > 0 && (
+        <div className="ft-accounts" role="group" aria-label="Also learn from">
+          <span className="muted">Also learn the shared voice from:</span>
+          {others.map((t) => (
+            <label key={t.id} className="check">
+              <input type="checkbox" checked={also.includes(t.id)} onChange={() => toggleAccount(t.id)} /> {t.name}
+              {industryName(t.industry_id) && <span className="muted"> ({industryName(t.industry_id)})</span>}
+            </label>
+          ))}
+        </div>
+      )}
+      {error && <div className="pf-errors">{error}</div>}
+      {data && data.accounts.length > 0 && (
+        <p className="pf-note">{data.accounts.map((a) => `${a.name}: ${a.chats} chat${a.chats === 1 ? "" : "s"}, `
+          + `${a.typed} typed repl${a.typed === 1 ? "y" : "ies"}`).join(" · ")}</p>
+      )}
+      {data && !chats.length && (
+        <div className="empty">No chats with replies typed by hand yet. Answer some clients yourself, on the phone or
+          from Conversations, and they show up here.</div>
+      )}
+      {chats.length > 0 && (
+        <div className="ft-shots">
+          {chats.map((c) => (
+            <div key={c.key}>
+              <div className="ft-example">
+                <input type="checkbox" checked={chosen.has(c.key)} aria-label={`Use ${c.name}`} onChange={() => toggle(c.key)} />
+                <div className="grow">
+                  <b>{c.display_name || `Chat ${c.chat_id}`}</b>{" "}
+                  <span className="badge">{c.account}</span>{" "}
+                  <span className="muted">
+                    {c.name} · {c.typed} typed · {c.assistant} by the bot · {c.client} from the client ·{" "}
+                    {c.chars.toLocaleString()} characters · {fmtDateTime(c.last_at)}
+                  </span>
+                </div>
+                <button type="button" className="btn small" onClick={() => setOpen(open === c.key ? null : c.key)}>
+                  {open === c.key ? "Hide" : "What the model reads"}</button>
+              </div>
+              {open === c.key && <pre className="pf-rendered">{c.text}</pre>}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className={cx("pf-note ft-count", over && "warn-note")}>
+        {chosen.size} of {chats.length} picked · {chars.toLocaleString()} / {limits.chars.toLocaleString()} characters
+        {picked === null && chats.length > 0 ? " (the best that fit one run)" : ""}</div>
+      <div className="pf-actions">
+        <span className="grow" />
+        {picked !== null && <button type="button" className="btn" onClick={() => setPicked(null)}>Back to the best pick</button>}
         <button type="button" className="btn primary" disabled={!chosen.size || busy} onClick={start}>
           {busy ? "Sending…" : "Start the run"}</button>
       </div>
@@ -680,8 +794,8 @@ export function Finetune() {
             <span className="muted">{industryName}</span>
           </div>
           <Tabs tabs={tabs} value={tab} onChange={(key) => { setTab(key); setOpenRun(null); }} />
-          {info && tab === "new" && (
-            <NewRun key={tenant.id} tenantId={tenant.id} info={info} onStarted={(run) => {
+          {info && tree && tab === "new" && (
+            <NewRun key={tenant.id} tenantId={tenant.id} info={info} tree={tree} onStarted={(run) => {
               void reloadRuns();
               setTab("runs");
               setOpenRun(run.id);

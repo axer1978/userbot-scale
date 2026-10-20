@@ -615,8 +615,9 @@ export type FinetuneRun = {
   status: "running" | "done" | "failed" | "applied" | "discarded";
   model: string;
   // screenshots: the vision model read images; text: transcribed chats;
-  // examples: real chats flagged from the conversations view.
-  source: "screenshots" | "text" | "examples";
+  // examples: real chats flagged from the conversations view; hand: the
+  // chats a person typed replies in, picked by the server.
+  source: "screenshots" | "text" | "examples" | "hand";
   files: string[];
   industry_version: number;
   error: string;
@@ -667,6 +668,35 @@ export type FinetuneExample = {
   display_name: string;
   // Only on GET /api/finetune/examples/{id}: what the model reads.
   preview?: string;
+};
+
+// A chat a person typed replies in (finetune_api.py hand-chats), as a run
+// from hand-typed chats would read it.
+export type HandChat = {
+  // "<tenant id>:<chat id>"
+  key: string;
+  tenant_id: number;
+  account: string;
+  chat_id: number;
+  // "pam-03": how the run names it.
+  name: string;
+  display_name: string;
+  // Replies typed by hand, written by the bot, and his messages.
+  typed: number;
+  assistant: number;
+  client: number;
+  last_at: string;
+  chars: number;
+  // In the default pick: the best that fit one run.
+  picked: boolean;
+  // What the model reads.
+  text: string;
+};
+
+export type HandChats = {
+  accounts: { tenant_id: number; name: string; chats: number; typed: number; picked: number }[];
+  chats: HandChat[];
+  limits: { chats: number; chars: number };
 };
 
 export type ChatLine = { id: number; who: "client" | "business" | "event"; text: string; at: string };

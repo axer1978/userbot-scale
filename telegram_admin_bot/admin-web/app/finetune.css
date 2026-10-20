@@ -24,6 +24,7 @@
 .ft-row-discarded { opacity: .6; }
 
 .ft-source { display: flex; gap: 18px; margin: 4px 0 12px; }
+.ft-accounts { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; margin: 4px 0 12px; }
 .ft-chat .title { margin-bottom: 8px; }
 .ft-chat .title select { margin-left: auto; }
 .ft-chat-name { width: 110px; }
