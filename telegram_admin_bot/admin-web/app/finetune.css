@@ -92,3 +92,17 @@
 .ft-history > summary { cursor: pointer; }
 .ft-style { margin-bottom: 12px; }
 .ft-style td:first-child { width: 40%; }
+
+/* Reply examples (components/FinetuneReplyExamples.tsx, Finetune → Examples). */
+.ft-rules-of { padding-left: 18px; }
+.ft-rules-of li { margin-bottom: 2px; }
+.ft-moment { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.ft-example-badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ft-matched { margin-top: 4px; font-size: 12px; overflow-wrap: anywhere; }
+.ft-wordings { margin-top: 6px; font-size: 12px; }
+.ft-wordings summary { cursor: pointer; }
+.ft-off { opacity: .55; }
+.ft-active { flex: none; font-size: 13px; }
+.ft-try-note { margin: 6px 0 8px; }
+.ft-try-meta { margin: 12px 0 8px; }
+.ft-rebuilt { margin-top: 8px; }

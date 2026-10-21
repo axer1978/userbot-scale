@@ -802,6 +802,126 @@ export type StyleCard = {
   };
 };
 
+// Reply examples (examples.py, examples_api.py): real moments of the chats,
+// masked, shown to the model as examples when config retrieval is on.
+export type RetrievalSettings = {
+  enabled: boolean;
+  // At most this many examples a reply, at least this alike (0 to 1), in at
+  // most this many characters.
+  k: number;
+  min_similarity: number;
+  max_chars: number;
+  // Also the industry's other accounts' examples without numbers.
+  share_in_industry: boolean;
+  copy_guard: boolean;
+};
+
+// hand: typed by a person; edited: a draft an operator changed before
+// approving it; flagged: in a chat the admin flagged.
+export type ReplyExampleSource = "hand" | "edited" | "flagged";
+// A time waiting for the owner is never an example, so never a phase here.
+export type ReplyExamplePhase = "before_time" | "booked" | "after";
+
+export type ReplyExamplesStatus = {
+  tenant_id: number;
+  industry_id: number;
+  retrieval: RetrievalSettings;
+  // Some account of the industry has retrieval on, so the hourly round
+  // keeps this account's examples up to date.
+  in_hourly_round: boolean;
+  counts: {
+    total: number;
+    active: number;
+    with_figures: number;
+    embedded: number;
+    not_embedded: number;
+    // Examples with wordings, and the wordings in all.
+    worded: number;
+    wordings: number;
+    by_source: Record<ReplyExampleSource, number>;
+    by_phase: Record<ReplyExamplePhase, number>;
+    // The industry's other accounts' active examples without numbers.
+    shared_in_industry: number;
+  };
+  embedder: { up: boolean; model: string | null };
+  // DEEPSEEK_PLATFORM_KEY is set: wording needs it.
+  wordings_ready: boolean;
+  last_ingest_at: string | null;
+};
+
+export type ReplyExample = {
+  id: number;
+  tenant_id: number;
+  chat_id: number;
+  source: ReplyExampleSource;
+  verdict: "good" | "plain";
+  phase: ReplyExamplePhase;
+  outcome: string;
+  client_kind: string;
+  has_figures: boolean;
+  active: boolean;
+  // What the business had just said, the client's message, her reply: masked.
+  context_text: string;
+  client_text: string;
+  reply_text: string;
+  embedded: boolean;
+  // The client side reworded by the model.
+  wordings: string[];
+  created_at: string;
+};
+
+export type ReplyExamplePage = { total: number; items: ReplyExample[] };
+
+export type ReplyExamplesRebuild = ReplyExamplesStatus & {
+  // more: there are chats left to read; call again to go on.
+  ingest: { chats: number; turns: number; added: number; removed: number; more: boolean;
+    skipped: Record<string, number> };
+  embedded: number;
+};
+
+export type ReplyExamplesWorded = ReplyExamplesStatus & {
+  result: { examples: number; wordings: number; calls: number; error: string };
+};
+
+export type ReplyExampleMatch = {
+  id: number;
+  similarity: number;
+  // The text that matched best, and whether it is a generated wording.
+  matched: string;
+  generated: boolean;
+  client_text: string;
+  reply_text: string;
+  context_text: string;
+  source: ReplyExampleSource;
+  verdict: "good" | "plain";
+  phase: ReplyExamplePhase;
+  has_figures: boolean;
+  // From this account, not another of the industry.
+  own: boolean;
+  tenant_id: number;
+  account: string;
+  chat_id: number;
+  chat: string;
+  // In the note the bot would get.
+  shown: boolean;
+};
+
+// POST /api/finetune/reply-examples/try, whether retrieval is on or not.
+export type ReplyExampleTry = {
+  tenant_id: number;
+  phase: ReplyExamplePhase | null;
+  retrieval: RetrievalSettings;
+  model: string;
+  vectors: number;
+  ms: number;
+  // The best ten, best first.
+  results: ReplyExampleMatch[];
+  // As the model would get it; "" when nothing is shown.
+  note: string;
+  // The message names a time: only the owner answers, so nothing is shown.
+  time_named: boolean;
+};
+
 export type ChatLine = { id: number; who: "client" | "business" | "event"; text: string; at: string };
 
 export type ChatExampleView = {

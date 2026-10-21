@@ -14,12 +14,14 @@
 // week, to see whether a run made it better. The Rules tab turns the
 // operators' corrections into short rules every reply's prompt carries
 // (rules_api.py), folded into the prompt itself by a run of their own, and
-// shows the style card: how the business types, measured.
+// shows the style card: how the business types, measured. The Examples tab
+// (FinetuneReplyExamples.tsx) holds the real moments retrieval shows the bot.
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDialogs, useToast } from "@/components/feedback";
 import { CLIENT_KINDS, OUTCOMES, verdictLabel } from "@/components/FinetuneExampleDialog";
+import { ReplyExamplesTab } from "@/components/FinetuneReplyExamples";
 import { REASONS as UNANSWERED_REASONS } from "@/components/pages/Unanswered";
 import { PageShell, Tabs } from "@/components/ui";
 import { api, errorText } from "@/lib/api";
@@ -31,7 +33,7 @@ import type {
 import { useLoader } from "@/lib/useLoader";
 import "@/app/finetune.css";
 
-type Tab = "new" | "runs" | "rules" | "template" | "quality";
+type Tab = "new" | "runs" | "rules" | "examples" | "template" | "quality";
 type Mark = "" | "good" | "bad";
 type Shot = { file: File; base: string; ext: string; mark: Mark };
 type Chat = { id: number; name: string; mark: Mark; text: string };
@@ -1277,7 +1279,7 @@ export function Finetune() {
   const refresh = useCallback(() => { void reloadRuns(); void reloadInfo(); }, [reloadRuns, reloadInfo]);
 
   const tabs: [Tab, string][] = [["new", "New run"], ["runs", `Runs${runs?.length ? ` (${runs.length})` : ""}`],
-    ["rules", "Rules"], ["template", `Template${industryName ? ` — ${industryName}` : ""}`], ["quality", "Quality"]];
+    ["rules", "Rules"], ["examples", "Examples"], ["template", `Template${industryName ? ` — ${industryName}` : ""}`], ["quality", "Quality"]];
   // Open a run in the Runs tab, as starting one from New run does.
   const showRun = (id: number) => { void reloadRuns(); setTab("runs"); setOpenRun(id); };
   const error = treeError || infoError || runsError;
@@ -1310,6 +1312,10 @@ export function Finetune() {
             <StyleCardView key={`style-${tenant.id}`} tenantId={tenant.id} tenantName={tenant.name}
                            industryId={tenant.industry_id} industryName={industryName} />
           </>}
+          {tab === "examples" && (
+            <ReplyExamplesTab key={tenant.id} tenantId={tenant.id} tenantName={tenant.name}
+                              industryId={tenant.industry_id} industryName={industryName} />
+          )}
           {info && tab === "template" && (
             <TemplateEditor key={`${info.industry.id}-${info.template.length}`} info={info}
                             onSaved={() => { void reloadInfo(); }} />
