@@ -19,6 +19,8 @@ Mounted by panel.py behind the admin login.
   industry standard first, then the business layer, and reloads the
   accounts affected, as platform_api does. Either part can be left out,
   and both can be edited before applying.
+- Quality: how the bot did, week by week (stats.quality), as a baseline
+  for seeing whether an applied run made its replies better.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ import binascii
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -40,6 +43,7 @@ import finetune
 import llm_usage
 import platform_api
 import prompt_layers
+import stats
 import tenants
 import vision
 
@@ -804,3 +808,28 @@ async def api_start_hand(body: HandRunBody) -> dict[str, Any]:
         call=lambda meter: finetune.complete_text(prompt, chats, api_key=api_key, model=model, hand=True,
                                                   usage_sink=meter),
     )
+
+
+# ---------------------------------------------------------------- quality
+
+MAX_QUALITY_WEEKS = 12
+
+
+@router.get("/api/finetune/quality")
+async def api_quality(tenant_id: int, weeks: int = Query(default=4, ge=1, le=MAX_QUALITY_WEEKS)) -> dict[str, Any]:
+    """How the bot did for this account, week by week in its own timezone
+    (oldest first, the last one this week so far), and what there is to
+    learn from in all. auto_send says whether drafts can be edited or
+    rejected at all: with it on, replies go out without waiting."""
+    bundle = await platform_api.guarded(platform_api.store().bundle(tenant_id))
+    config = bundle.resolved.config
+    pool = _get_pool()
+    return {
+        "tenant_id": tenant_id,
+        "timezone": config.timezone,
+        "auto_send": config.auto_send,
+        "takeover_hours": config.takeover_hours,
+        "weeks": await stats.weeks(pool, tenant_id, config.timezone, datetime.now(timezone.utc), count=weeks,
+                                   of=stats.quality),
+        "totals": await stats.quality_totals(pool, tenant_id),
+    }

@@ -10,22 +10,24 @@
 // this client and any others added), which the model learns the voice from.
 // Nothing changes until a run is applied; applying saves ordinary prompt
 // versions, which the Clients page can roll back. Screenshots and typed
-// chats are never stored.
+// chats are never stored. The Quality tab counts how the bot did week by
+// week, to see whether a run made it better.
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDialogs, useToast } from "@/components/feedback";
 import { CLIENT_KINDS, OUTCOMES, verdictLabel } from "@/components/FinetuneExampleDialog";
+import { REASONS as UNANSWERED_REASONS } from "@/components/pages/Unanswered";
 import { PageShell, Tabs } from "@/components/ui";
 import { api, errorText } from "@/lib/api";
 import { cx, fmtDateTime } from "@/lib/format";
 import type {
-  BusinessLayer, FinetuneExample, FinetuneIndustry, FinetuneRun, HandChats, PlatformTree,
+  BusinessLayer, FinetuneExample, FinetuneIndustry, FinetuneRun, HandChats, PlatformTree, Quality, QualityWeek,
 } from "@/lib/types";
 import { useLoader } from "@/lib/useLoader";
 import "@/app/finetune.css";
 
-type Tab = "new" | "runs" | "template";
+type Tab = "new" | "runs" | "template" | "quality";
 type Mark = "" | "good" | "bad";
 type Shot = { file: File; base: string; ext: string; mark: Mark };
 type Chat = { id: number; name: string; mark: Mark; text: string };
@@ -751,6 +753,97 @@ function TemplateEditor({ info, onSaved }: { info: FinetuneIndustry; onSaved: (i
   );
 }
 
+/* --------------------------------------------------------------- quality */
+
+function weekLabel(w: QualityWeek, isLast: boolean): string {
+  if (isLast) return "This week";
+  const [y, m, d] = w.since.slice(0, 10).split("-").map(Number);
+  const sunday = new Date(Date.UTC(y, m - 1, d + 6));
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${two(d)}.${two(m)}–${two(sunday.getUTCDate())}.${two(sunday.getUTCMonth() + 1)}`;
+}
+
+function percent(part: number, whole: number): string {
+  return whole ? `${Math.round((part / whole) * 100)}%` : "—";
+}
+
+type QualityRow = [label: string, value: (w: QualityWeek) => string | number, hint?: string];
+
+// How the bot did, week by week: the baseline that shows whether an applied
+// run (or any prompt change) made the replies better (stats.quality).
+function QualityView({ tenantId }: { tenantId: number }) {
+  const fetchQuality = useCallback(() => api<Quality>("GET", `/api/finetune/quality?tenant_id=${tenantId}`), [tenantId]);
+  const { data: q, error } = useLoader(fetchQuality);
+  if (error) return <div className="pf-errors">{error}</div>;
+  if (!q) return <div className="empty">Loading…</div>;
+
+  const reasons = [...new Set(q.weeks.flatMap((w) => Object.keys(w.unanswered_by_reason)))].sort();
+  const decided = (w: QualityWeek) => w.drafts.approved + w.drafts.rejected;
+  const groups: [string, QualityRow[]][] = [
+    ["Conversations", [
+      ["Chats with a message from a client", (w) => w.messages.conversations],
+      ["Messages from clients", (w) => w.messages.received],
+    ]],
+    ["The bot", [
+      ["Replies the bot wrote", (w) => w.replies_written, "One per reply, however many messages it was sent as."],
+      ["Messages it sent", (w) => w.messages.sent_by_bot],
+    ]],
+    ["Drafts waiting for approval", [
+      ["Approved as written", (w) => w.drafts.approved - w.drafts.edited],
+      ["Edited, then approved", (w) => w.drafts.edited, "What the bot wrote is kept beside the edit."],
+      ["Rejected", (w) => w.drafts.rejected],
+      ["Changed or rejected", (w) => percent(w.drafts.edited + w.drafts.rejected, decided(w)),
+        "Of the drafts approved or rejected that week."],
+    ]],
+    ["People", [
+      ["Chats taken over", (w) => w.takeovers, `Someone wrote by hand, so the bot kept quiet there for ${q.takeover_hours} h.`],
+      ["Messages typed by hand", (w) => w.messages.sent_by_hand, "On the phone or in the panel."],
+      ["Chats with hand-typed replies", (w) => w.messages.chats_by_hand],
+    ]],
+    ["Unanswered", [
+      ["All", (w) => w.unanswered],
+      ...reasons.map((r): QualityRow => [UNANSWERED_REASONS[r] || r, (w) => w.unanswered_by_reason[r] ?? 0]),
+    ]],
+    ["Bookings (by the day booked for)", [
+      ["Booked", (w) => w.bookings.booked],
+      ["Came", (w) => w.bookings.completed],
+      ["No-show", (w) => w.bookings.no_show],
+    ]],
+  ];
+  const t = q.totals;
+
+  return (
+    <>
+      <p className="pf-note">Week by week, Monday to Sunday in {q.timezone}. Note these numbers before you apply a run or
+        change the prompt, and compare the weeks after.</p>
+      {q.auto_send && (
+        <p className="pf-note">Replies go out without waiting for approval here (auto-send is on), so there are no
+          drafts to edit or reject: the bot&apos;s mistakes show as chats taken over and messages typed by hand.</p>
+      )}
+      <table className="cfg-table ft-quality">
+        <tbody>
+          <tr>
+            <td />
+            {q.weeks.map((w, i) => <td key={w.since} className="muted num">{weekLabel(w, i === q.weeks.length - 1)}</td>)}
+          </tr>
+          {groups.map(([group, rows]) => [
+            <tr key={group} className="cfg-group"><td colSpan={q.weeks.length + 1}>{group}</td></tr>,
+            ...rows.map(([label, value, hint]) => (
+              <tr key={`${group}-${label}`}>
+                <td title={hint}>{label}{hint && <span className="muted"> ⓘ</span>}</td>
+                {q.weeks.map((w) => <td key={w.since} className="num">{value(w)}</td>)}
+              </tr>
+            )),
+          ])}
+        </tbody>
+      </table>
+      <p className="pf-note">All time: {t.typed_by_hand} replies typed by hand, in {t.chats_by_hand} chats
+        (the &quot;Hand-typed chats&quot; runs learn from these) · {t.drafts_edited} drafts edited before approval
+        (kept since this was added) · {t.chats_flagged} chats flagged for finetuning.</p>
+    </>
+  );
+}
+
 /* ------------------------------------------------------------------ page */
 
 export function Finetune() {
@@ -776,7 +869,7 @@ export function Finetune() {
   const refresh = useCallback(() => { void reloadRuns(); void reloadInfo(); }, [reloadRuns, reloadInfo]);
 
   const tabs: [Tab, string][] = [["new", "New run"], ["runs", `Runs${runs?.length ? ` (${runs.length})` : ""}`],
-    ["template", `Template${industryName ? ` — ${industryName}` : ""}`]];
+    ["template", `Template${industryName ? ` — ${industryName}` : ""}`], ["quality", "Quality"]];
   const error = treeError || infoError || runsError;
 
   return (
@@ -809,6 +902,7 @@ export function Finetune() {
             <TemplateEditor key={`${info.industry.id}-${info.template.length}`} info={info}
                             onSaved={() => { void reloadInfo(); }} />
           )}
+          {tab === "quality" && <QualityView key={tenant.id} tenantId={tenant.id} />}
         </>}
       </div>
     </PageShell>

@@ -17,7 +17,8 @@ import { useLoader } from "@/lib/useLoader";
 type Tab = "open" | "reviewed" | "added_to_template" | "all";
 
 const TABS: [Tab, string][] = [["open", "Open"], ["reviewed", "Reviewed"], ["added_to_template", "Added to FAQ"], ["all", "All"]];
-const REASONS: Record<string, string> = {
+// Also the Finetune page's Quality tab.
+export const REASONS: Record<string, string> = {
   skipped: "not answered (limit / no-reply rule)", ai_error: "AI error", soft_off: "client switched off",
   paused: "chat paused / taken over", escalated: "escalated", policy_hold: "held by policy",
   fallback: "fallback reply", staging: "staging (not a test chat)",

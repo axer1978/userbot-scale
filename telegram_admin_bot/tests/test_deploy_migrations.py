@@ -223,7 +223,7 @@ async def test_upgrading_a_populated_0005_database_keeps_the_data_and_adds_the_r
 
     after = await table_rows(pool, tables)
     # tenants.channel has been there since 0002; 0006 only has to leave it alone.
-    new_cols = {"telegram_sessions": {"channel"}, "messages": {"wa_message_id", "sent_elsewhere"},  # sent_elsewhere: 0013
+    new_cols = {"telegram_sessions": {"channel"}, "messages": {"wa_message_id", "sent_elsewhere", "draft_text"},  # 0013, 0016
                 "bookings": {"provider_wa_message_id",
                              # 0011: arrival cleanup
                              "instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at",
