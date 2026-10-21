@@ -24,7 +24,7 @@ import controls
 import health
 import leasing
 import mailer
-from conftest import seed_session
+from conftest import migration_versions, seed_session
 
 pytestmark = [pytest.mark.requires_pg, pytest.mark.asyncio]
 
@@ -114,7 +114,7 @@ async def test_the_upgrade_turns_a_paused_account_into_a_manual_hold(pg_pool, tm
                                      "RETURNING id", sid)
         await pg_pool.execute("INSERT INTO session_config (session_id, tenant_id, config) VALUES ($1, $2, $3::jsonb)",
                               sid, tid, json.dumps({"behavior": {"global_pause": paused, "auto_send": True}}))
-    assert await pg_module.apply_migrations(pg_pool) == list(range(4, pg_module.latest_version() + 1))
+    assert await pg_module.apply_migrations(pg_pool) == migration_versions(4)
     rows = await pg_pool.fetch("SELECT t.session_id, h.kind, h.reason FROM tenant_holds h "
                                "JOIN tenants t ON t.id = h.tenant_id ORDER BY t.session_id")
     assert [tuple(r) for r in rows] == [("p1", "manual", "Paused before the upgrade"),

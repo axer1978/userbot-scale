@@ -105,6 +105,14 @@ async def pg_pool():
             await admin.close()
 
 
+def migration_versions(since: int = 1) -> list[int]:
+    """Every migration version on disk from `since` on, in order: what a
+    database at `since - 1` applies. Not range(since, latest + 1): two
+    branches each adding a migration (0017, 0018) may land in either
+    order, and until both have, the numbers have a gap."""
+    return [version for version, _, _ in pg_module._discover(pg_module.MIGRATIONS_DIR) if version >= since]
+
+
 async def seed_session(pool, session_id: str, *, active: bool = True, name: str = "", industry_id: int = 1) -> int:
     """A telegram_sessions row plus the tenant that owns it, the way
     SessionRegistry.create makes them. Returns the tenant id."""

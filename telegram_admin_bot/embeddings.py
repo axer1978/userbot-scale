@@ -88,6 +88,26 @@ async def embed(
     return Embedded(model=model, vectors=vectors)
 
 
+async def health(
+    *, client: Optional[httpx.AsyncClient] = None, timeout: float = TIMEOUT_SECONDS,
+) -> Optional[str]:
+    """The model the embedder runs, or None when it is not answering. For
+    the admin's status page, and to find vectors made by another model
+    before embedding anything."""
+    owns_client = client is None
+    http = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        response = await http.get(f"{url()}/health", timeout=timeout)
+        model = response.json().get("model") if response.status_code == 200 else None
+    except (httpx.HTTPError, ValueError, AttributeError) as exc:
+        log.warning("Embedder not reachable (%s).", type(exc).__name__)
+        return None
+    finally:
+        if owns_client:
+            await http.aclose()
+    return model if isinstance(model, str) and model else None
+
+
 def _parse(response: httpx.Response, count: int) -> tuple[str, Optional[list[list[float]]]]:
     try:
         data = response.json()

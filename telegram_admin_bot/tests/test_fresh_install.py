@@ -22,6 +22,7 @@ import pytest
 import pytest_asyncio
 
 import pg
+from conftest import migration_versions
 
 APP_DIR = Path(__file__).resolve().parent.parent
 PG_TEST_DSN = os.environ.get("PG_TEST_DSN")
@@ -104,7 +105,7 @@ async def test_fresh_database_migrates_then_every_service_accepts_it(fresh_db):
 
     first = _run_migrate(dsn)
     assert first.returncode == 0, first.stdout + first.stderr
-    assert f"applied migrations {list(range(1, latest + 1))}" in first.stdout
+    assert f"applied migrations {migration_versions()}" in first.stdout
 
     second = _run_migrate(dsn)
     assert second.returncode == 0, second.stdout + second.stderr
@@ -113,7 +114,7 @@ async def test_fresh_database_migrates_then_every_service_accepts_it(fresh_db):
     con = await asyncpg.connect(dsn)
     try:
         versions = [r["version"] for r in await con.fetch("SELECT version FROM schema_migrations ORDER BY version")]
-        assert versions == list(range(1, latest + 1))
+        assert versions == migration_versions() and versions[-1] == latest
         assert await con.fetchval("SELECT 1 FROM pg_extension WHERE extname = 'btree_gist'") == 1
     finally:
         await con.close()
