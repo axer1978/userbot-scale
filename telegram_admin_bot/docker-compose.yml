@@ -354,6 +354,34 @@ services:
       start_period: 30s
     logging: *logging
 
+  # OPTIONAL: turns short texts into vectors (embedder/app.py) so the bot can
+  # find past chat moments like the one it is answering; embeddings.py is
+  # the client. DeepSeek has no embeddings endpoint, so a small multilingual
+  # model runs here on the CPU and no text leaves the server. Only started
+  # with the `retrieval` profile (COMPOSE_PROFILES=public,retrieval). The
+  # app services reach it at http://embedder:8000; nothing breaks while it is
+  # off, they just get no vectors.
+  embedder:
+    build: ./embedder
+    container_name: userbot-embedder
+    profiles: ["retrieval"]
+    restart: unless-stopped
+    # No env_file and no ports: it needs no secret, and only the app
+    # services on this network talk to it.
+    environment:
+      EMBED_THREADS: "1"
+    # At most one of the server's CPUs and a memory ceiling, so a burst of
+    # embedding work can never starve the bots.
+    cpus: 1.0
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging: *logging
+
 volumes:
   # Postgres's data directory. Named (not bind-mounted) so its ownership/
   # permissions are managed by Docker instead of the host filesystem.

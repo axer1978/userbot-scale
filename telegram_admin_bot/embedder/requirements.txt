@@ -1,0 +1,5 @@
+# The embedder image only (embedder/Dockerfile). Pinned like the app's
+# requirements.txt: a server build installs exactly what was tested.
+fastembed==0.9.0
+fastapi==0.141.1
+uvicorn==0.53.0
