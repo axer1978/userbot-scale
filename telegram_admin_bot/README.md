@@ -35,6 +35,7 @@ account.
 | `wa-gateway` | The WhatsApp transport (`wa_gateway/`, Node + Baileys). Holds the WhatsApp sockets the way a worker holds Telethon clients, takes its orders from Python over Valkey and keeps the WhatsApp login state encrypted in Postgres. Transport only: it never decides to send anything. Exactly one runs (a Postgres lock); a second copy exits. See [WhatsApp accounts](#whatsapp-accounts) and `wa_gateway/README.md`. |
 | `caddy` | Optional. Serves the panel over public HTTPS. Off unless you enable it. See below. |
 | `booking-pages`, `caddy-booking` | Optional (`--profile booking-pages`). The public calendar feed per client and the read-only page per booking, on their own domain. See "Bookings". |
+| `embedder` | Optional (`--profile retrieval`). Turns short texts into vectors (`embedder/`, a small multilingual model on the CPU, files baked into the image), so the bot can find past chat moments like the one it is answering; `embeddings.py` is the client. No text leaves the server, nothing is published or stored, and it is capped at one CPU. Check it with `docker compose exec embedder python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/health').read())"`. |
 
 **Leasing** makes sure only one worker runs a given account at a time. A worker
 has to take a lease on the account's row in Postgres before it connects, and

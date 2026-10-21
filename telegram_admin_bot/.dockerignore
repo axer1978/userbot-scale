@@ -19,3 +19,5 @@ deploy/age-recipient.txt
 # and node_modules never belong in the Python image.
 wa_gateway/
 admin-web/
+# So is the embedder (embedder/Dockerfile).
+embedder/
