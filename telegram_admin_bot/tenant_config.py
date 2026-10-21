@@ -446,6 +446,42 @@ class Unanswered(_Strict):
     fallback_phrases: list[str] = Field(default_factory=list, max_length=100)
 
 
+class StyleCard(_Strict):
+    """How the business types, measured from the replies a person typed by
+    hand (stylecard.py) and given to the model as a short note: lengths,
+    capitals, punctuation, emojis, and the openers used in several chats.
+    Numbers and habits, never a whole line to copy."""
+    enabled: bool = Field(False, description=(
+        "Add the measured way of typing to every reply's prompt."))
+    scope: Literal["industry", "account"] = Field("industry", description=(
+        "Measure it from every account in the industry (one shared voice) or from this account only."))
+    days: int = Field(90, ge=7, le=365, description=(
+        "Only replies typed in the last this many days."))
+    min_replies: int = Field(30, ge=5, le=5000, description=(
+        "With fewer replies typed by hand than this, no note."))
+
+
+class Retrieval(_Strict):
+    """Earlier chat moments like the one being answered (examples.py), found
+    with the embedder and shown to the model as examples of how the business
+    handles them. Off until there are enough replies typed by hand to learn
+    from (Finetune → Quality shows how many)."""
+    enabled: bool = Field(False, description=(
+        "Show the model a few earlier moments like this one, with the business's real replies."))
+    k: int = Field(3, ge=1, le=8, description=(
+        "At most this many examples per reply."))
+    min_similarity: float = Field(0.55, ge=0, le=1, description=(
+        "How alike an earlier client message must be (0 to 1) to be shown."))
+    share_in_industry: bool = Field(True, description=(
+        "Also use examples from other accounts in the industry: only ones without any numbers "
+        "(a price or a time belongs to its own account)."))
+    max_chars: int = Field(1200, ge=200, le=4000, description=(
+        "At most this many characters of examples per reply."))
+    copy_guard: bool = Field(True, description=(
+        "A reply that copies an example nearly word for word is written again without examples: "
+        "the same text to many people gets a number flagged."))
+
+
 class TenantConfig(_Strict):
     timezone: str = "Europe/Riga"
     # Off: every reply waits in the panel for approval. On: replies that pass
@@ -495,6 +531,8 @@ class TenantConfig(_Strict):
     staging: Staging = Field(default_factory=Staging)
     digest: Digest = Field(default_factory=Digest)
     unanswered: Unanswered = Field(default_factory=Unanswered)
+    style_card: StyleCard = Field(default_factory=StyleCard)
+    retrieval: Retrieval = Field(default_factory=Retrieval)
 
     @field_validator("timezone")
     @classmethod

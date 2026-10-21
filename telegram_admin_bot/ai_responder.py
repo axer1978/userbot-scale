@@ -452,6 +452,8 @@ async def generate_reply(
     usage_sink: Optional[UsageSink] = None,
     no_reply_instruction: str = "",
     burst_keep_together: bool = True,
+    style_note: str = "",
+    examples_note: str = "",
 ) -> str:
     """Return the draft reply text, or raise AIResponderError with a safe message.
 
@@ -469,6 +471,13 @@ async def generate_reply(
     `system_prompt`, when given, is a tenant's rendered prompt layers
     (prompt_layers.render) and replaces the persona-built one; then
     `language_locked` says whether its language policy is fixed.
+
+    `style_note` is how the business types, measured from its hand-typed
+    replies (stylecard.py); the same for every reply of the account, so it
+    goes right after the prompt, inside the part DeepSeek caches.
+    `examples_note` holds earlier moments like this one with the business's
+    real replies (examples.py): before the appointments, which stay the
+    freshest thing the model reads.
     """
     if not api_key:
         raise AIResponderError("DEEPSEEK_API_KEY is not set.")
@@ -479,6 +488,8 @@ async def generate_reply(
     else:
         sections = [build_system_prompt(persona)]
         locked = language_is_pinned(persona)
+    if (style_note or "").strip():
+        sections.append(style_note.strip())
     samples = _samples_section(general_samples)
     if samples:
         sections.append(samples)
@@ -490,6 +501,8 @@ async def generate_reply(
     brief = _background_section(background)
     if brief:
         sections.append(brief)
+    if (examples_note or "").strip():
+        sections.append(examples_note.strip())
     if (booking_note or "").strip():
         sections.append(booking_note.strip())
     if (media_note or "").strip():

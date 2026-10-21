@@ -76,6 +76,7 @@ import commands
 import config_store
 import context_link
 import controls
+import examples
 import health
 import humanlike
 import leasing
@@ -84,6 +85,7 @@ import media
 import pg
 import policy
 import scheduler
+import stylecard
 import tenant_config
 import tenants
 import unanswered
@@ -213,6 +215,8 @@ class SessionRuntime:
         self.tenants = tenants.TenantStore(pool)
         self.tenant_id: Optional[int] = None
         self.bundle: Optional[tenants.Bundle] = None
+        # How the business types (stylecard.py), for every reply; "" when off.
+        self.style_note = ""
         # Two kinds of settings. `config` is the tenant's effective config
         # (tenant_config.py: platform <- industry <- client), everything
         # about how the bot behaves. `account` is this Telegram account's own
@@ -654,6 +658,11 @@ class SessionRuntime:
                 log.info("[%s] Imported %s bookings from bookings.json.", self.session_id, imported)
             self.off_reason = await controls.off_reason(self.pool, self.tenant_id)
         self._bound_at = time.monotonic()
+        try:
+            self.style_note = await stylecard.note_for(self.pool, self.tenant_id, self.config)
+        except Exception as exc:  # a note is a nicety: never a reason not to run
+            log.warning("[%s] No style note: %s: %s", self.session_id, type(exc).__name__, exc)
+            self.style_note = ""
 
     def utcnow(self) -> datetime:
         """The clock everything booking- and schedule-related reads (tests
@@ -1684,6 +1693,8 @@ class SessionRuntime:
             if media_note and (had := media.sent_line(self.media_library.for_ai(), history)):
                 media_note += "\n" + had
             prompt = self.bundle.prompt if self.bundle is not None else None
+            # Earlier moments like this one, with the business's real replies (config retrieval).
+            examples_note = "" if photos_only else await examples.note_for(self, chat_id, history)
 
             if photos_only:
                 text = "\n".join(f"[send {item['id']}]" for item in photos_only[:media.MAX_ATTACHMENTS_PER_REPLY])
@@ -1706,6 +1717,8 @@ class SessionRuntime:
                         burst_keep_together=self.config["burst"].get("keep_together", True),
                         usage_sink=self.usage_sink("reply"),
                         no_reply_instruction=no_reply,
+                        style_note=self.style_note,
+                        examples_note=examples_note,
                     )
 
             if no_reply and ai_responder.is_no_reply(text):
