@@ -160,6 +160,29 @@ def test_a_time_waiting_for_the_owner_is_never_an_example():
     assert make(["can I come at 23?"], ["yes come at 23"], phase=TIME_PENDING) == (None, "time_pending")
 
 
+NAMES_A_TIME = ["can I come at 22?", "22:30 ok?", "в 9 вечера можно?", "pl. 21 var?", "around 10pm", "можно к 11?",
+                "ap 23", "in 20 min", "через 20 минут буду", "pēc 20 min", "tomorrow 9.15", "в 2 часа можно?"]
+NAMES_NO_TIME = ["how much for 1h?", "200 for an hour?", "2 часа сколько?", "cik maksā 2 stundas?", "I am 25",
+                 "about 2 hours how much", "до 200 евро", "are you free now?", "price for 3 hours", "1.5h?"]
+
+
+@pytest.mark.parametrize("text", NAMES_A_TIME)
+def test_a_time_they_name_is_recognised(text):
+    assert examples.names_a_time(text)
+
+
+@pytest.mark.parametrize("text", NAMES_NO_TIME)
+def test_a_length_or_a_price_is_not_a_time(text):
+    assert not examples.names_a_time(text)
+
+
+def test_a_client_naming_a_time_is_never_an_example():
+    """Only the owner answers a time, even where no booking records the
+    request: her "yes come" must never teach the bot to say yes."""
+    assert make(["hi, can I come at 23?"], ["yes come love"]) == (None, "time_named")
+    assert make(["hi, how much for 1h?"], ["150 love"])[0] is not None
+
+
 def test_our_line_before_is_kept_as_context():
     example, _ = make(["ok"], ["when?"], context="Hi Toms, " + RATES_MESSAGE.replace("\n", " / "))
     assert example["context_text"].startswith("Hi [client], ")
@@ -472,9 +495,9 @@ async def test_the_turns_a_person_wrote_or_corrected_are_stored_masked(pg_pool, 
     await toms.say("panel", "for you 280 love 😘")              # typed in the panel
 
     edit = await Chat(pg_pool, account, 502, name="Ann").open()
-    await edit.say("client", "can I come at 22?")
-    await edit.say("approved", "let me check love", draft="yes come at 22")
-    await edit.say("approved", "one sec")
+    await edit.say("client", "do you do domination?")
+    await edit.say("approved", "yes love, +50 😘", draft="sorry love, I don't do that")
+    await edit.say("approved", "when do you want to come?")
     await edit.say("system", ADDRESS)
 
     good = await Chat(pg_pool, account, 503, name="Karlis").open()
@@ -505,10 +528,10 @@ async def test_the_turns_a_person_wrote_or_corrected_are_stored_masked(pg_pool, 
         (501, HAND, "good", BEFORE_TIME, "Hi, [client] here, free tonight? [number]",
          "hey [client] 😘 yes from 20, how long you want?"),
         (501, HAND, "good", BEFORE_TIME, "nice, how much for 2 hours then", "for you 280 love 😘"),
-        (502, EDITED, "good", BEFORE_TIME, "can I come at 22?", "let me check love\none sec"),
+        (502, EDITED, "good", BEFORE_TIME, "do you do domination?", "yes love, +50 😘\nwhen do you want to come?"),
         (503, FLAGGED, "good", BEFORE_TIME, "hello beautiful", "hey handsome 😘 what time are you thinking?"),
     ]
-    assert [r["has_figures"] for r in rows] == [True, True, False, False]
+    assert [r["has_figures"] for r in rows] == [True, True, True, False]
     assert rows[1]["context_text"] == ""  # a photo before it says nothing
     assert (rows[3]["outcome"], rows[3]["client_kind"]) == ("came", "serious")
     assert got["added"] == 4 and got["more"] is False
@@ -818,6 +841,17 @@ async def test_the_phase_must_match_and_a_time_with_the_owner_gets_nothing(app, 
 
     await booking(pg_pool, app.tenant_id, 7, "pending", now + timedelta(hours=8), session="test")
     assert await examples.note_for(app, 7, ASKING_PRICE) is examples.NOTHING
+
+
+@pytest.mark.requires_pg
+@pytest.mark.asyncio
+async def test_a_client_naming_a_time_gets_no_examples(app, pg_pool, embedder):
+    await example(pg_pool, app.tenant_id, "can I come over?", "yes love come")
+    retrieval_on(app)
+
+    naming = [{"role": "assistant", "content": "hey love"}, {"role": "user", "content": "can I come at 22?"}]
+    assert await examples.note_for(app, 7, naming) is examples.NOTHING
+    assert embedder["calls"] == []  # not even asked
 
 
 @pytest.mark.requires_pg

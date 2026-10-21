@@ -326,6 +326,31 @@ def _cut(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
+# A client naming a time: a clock time ("22:30", "9.15"), an hour after a
+# word like at / around / by ("at 22", "в 9", "к 11", "pl. 21", "ap 23"), an
+# am/pm hour ("10pm"), or minutes or hours from now ("in 20 min", "через 20
+# минут", "pēc 20 min"). Only the owner answers a time; a hand-typed "yes,
+# come at 23" must never teach the bot to say yes itself, even on an
+# account where no booking records the request (time_pending). A duration
+# ("1h", "2 часа", "2 stundas") is a price question, not a time.
+_HOUR = r"(?:[01]?\d|2[0-3])"
+_NAMES_A_TIME = re.compile(
+    rf"\b{_HOUR}[:.][0-5]\d\b"
+    # ("about 2 hours" is a length, "в 2 часа" a time: only English and
+    # Latvian hour words after the number are left out.)
+    rf"|\b(?:at|around|about|by|till|until|from|pl|ap|uz|в|к|около|после|до)\.?\s*{_HOUR}\b(?![.,]\d)"
+    r"(?!\s*(?:h|hrs?|hours?|stund\w*)\b)"
+    rf"|\b{_HOUR}\s*(?:am|pm|o'?clock)\b"
+    r"|\b(?:in|через|pēc|pec)\s*\d{1,3}\s*(?:min|mins|minutes|мин|минут\w*|minūt\w*|h|hours?|час\w*|stund\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def names_a_time(text: str) -> bool:
+    """Whether a client message names a time (see _NAMES_A_TIME)."""
+    return bool(_NAMES_A_TIME.search(text or ""))
+
+
 def build(turn: Turn, reply: Sequence[Row], *, source: str, phase: str,
           masks: Sequence[tuple[str, str]] = (), fixed: Sequence[str] = ()) -> tuple[Optional[dict[str, Any]], str]:
     """The example a turn makes, masked, or (None, why not) when a fixed rule
@@ -336,6 +361,8 @@ def build(turn: Turn, reply: Sequence[Row], *, source: str, phase: str,
     client = _cut(finetune.mask(client, masks), MAX_CLIENT_CHARS)
     if not client:
         return None, "no_client_text"
+    if names_a_time(client):
+        return None, "time_named"
     parts: list[str] = []
     for row in reply:
         if is_media(row.text, row.attachments):
@@ -1219,7 +1246,8 @@ async def _note_for(runtime: Any, chat_id: int, history: list[dict[str, str]], s
                                username=conversation.get("username") or "", address=booking.get("address", ""),
                                way_in=booking.get("arrival_instructions", ""))
     query = query_text(history, masks)
-    if not query:
+    # A time they name is the owner's to answer: no example may suggest one.
+    if not query or names_a_time(query):
         return NOTHING
     # While their time waits for the owner, only the owner answers: nothing
     # here may suggest an answer.
@@ -1279,6 +1307,10 @@ async def try_message(pool: asyncpg.Pool, *, tenant_id: int, industry_id: int, s
     rows = await example_rows(pool, [m.example_id for m in matches])
     note, used = pick(matches, rows, k=settings["k"], min_similarity=settings["min_similarity"],
                       max_chars=settings["max_chars"])
+    # As note_for: a message naming a time gets no examples (time_named says why).
+    time_named = names_a_time(text)
+    if time_named:
+        note, used = "", []
     shown = {e["id"] for e in used}
     texts = {r["id"]: (r["text"], r["generated"]) for r in await pool.fetch(
         "SELECT id, text, generated FROM example_queries WHERE id = ANY($1::bigint[])", [m.query_id for m in matches])}
@@ -1296,7 +1328,8 @@ async def try_message(pool: asyncpg.Pool, *, tenant_id: int, industry_id: int, s
             "account": row["account"], "chat_id": row["chat_id"], "chat": f"{row['account']}, chat {row['chat_id']}",
             "shown": row["id"] in shown,
         })
-    return {"model": embedded.model, "vectors": len(cache), "ms": round(took, 1), "results": results, "note": note}
+    return {"model": embedded.model, "vectors": len(cache), "ms": round(took, 1), "results": results, "note": note,
+            "time_named": time_named}
 
 
 # ------------------------------------------------------------------ status
