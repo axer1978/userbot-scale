@@ -616,8 +616,9 @@ export type FinetuneRun = {
   model: string;
   // screenshots: the vision model read images; text: transcribed chats;
   // examples: real chats flagged from the conversations view; hand: the
-  // chats a person typed replies in, picked by the server.
-  source: "screenshots" | "text" | "examples" | "hand";
+  // chats a person typed replies in, picked by the server; rules: a fold of
+  // the operator rules into the prompt (files are "rule-12", …).
+  source: "screenshots" | "text" | "examples" | "hand" | "rules";
   files: string[];
   industry_version: number;
   error: string;
@@ -625,12 +626,18 @@ export type FinetuneRun = {
   created_at: string;
   finished_at?: string | null;
   applied_at?: string | null;
-  // Only on a single run (GET /api/finetune/runs/{id}):
+  // Only on a single run (GET /api/finetune/runs/{id}). A part is null when
+  // the run does not touch it (a fold with no rules for it, or a block the
+  // model got wrong): applying leaves that part as it is.
   result?: {
     business_layer: BusinessLayer | null;
     industry_sections: Record<string, string> | null;
     notes: string;
     errors: string[];
+    // A fold only: the rule ids it had per part, and the ones its notes list
+    // as FOLDED and SKIPPED. Applying merges the folded ones of the parts
+    // applied; every other stays active.
+    rules?: { industry: number[]; account: number[]; folded: number[]; skipped: number[] };
   } | null;
   raw_output?: string;
   stale?: string;
@@ -721,6 +728,78 @@ export type Quality = {
   takeover_hours: number;
   weeks: QualityWeek[];
   totals: { typed_by_hand: number; chats_by_hand: number; drafts_edited: number; chats_flagged: number };
+};
+
+// An operator rule (rules.py): one short sentence added to every reply's
+// prompt while active, for the whole industry or one account, until a fold
+// writes it into the prompt itself (merged).
+export type RuleScope = "industry" | "account";
+export type RuleStatus = "proposed" | "active" | "merged" | "rejected" | "retired";
+
+export type PromptRule = {
+  id: number;
+  industry_id: number;
+  // null: industry-wide.
+  tenant_id: number | null;
+  scope: RuleScope;
+  section: string;
+  text: string;
+  // draft_edit: a draft an operator changed before approving it; correction:
+  // a correction on a flagged chat; manual: typed by the admin.
+  source: "draft_edit" | "correction" | "manual";
+  source_ref: { tenant_id?: number; message_id?: number; example_id?: number };
+  status: RuleStatus;
+  // The prompt version tag that holds it, once merged ("b1/i1v3/c2").
+  merged_into: string | null;
+  // "admin", or "suggested" by the model.
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RulesWaiting = { draft_edits: number; corrections: number };
+
+// GET /api/finetune/rules: the rules that reach one account (its
+// industry's and its own, in every status, oldest first).
+export type RulesView = {
+  tenant_id: number;
+  industry: { id: number; name: string };
+  rules: PromptRule[];
+  // Active rules per scope, at most.
+  cap: number;
+  counts: Record<RuleScope, { active: number; proposed: number }>;
+  // Edits and corrections no suggestion has read yet.
+  waiting: RulesWaiting;
+  // DEEPSEEK_PLATFORM_KEY is set: suggesting and folding need it.
+  platform_key: boolean;
+  sections: { key: string; heading: string }[];
+  last_fold: FinetuneRun | null;
+};
+
+export type RuleSuggestion = { rules: PromptRule[]; read: number; waiting: RulesWaiting };
+
+// GET /api/finetune/style-card (stylecard.py): how the business types,
+// measured from the replies typed by hand, even while the card is off.
+export type StyleCard = {
+  tenant_id: number;
+  enabled: boolean;
+  scope: RuleScope;
+  days: number;
+  min_replies: number;
+  // As the model would get it; "" below min_replies.
+  note: string;
+  stats: {
+    messages: number;
+    turns: number;
+    chats: number;
+    median_words: number;
+    median_messages_per_turn: number;
+    lower_start_share: number;
+    no_end_punctuation_share: number;
+    emoji_share: number;
+    top_emojis: { emoji: string; count: number }[];
+    openers: { text: string; chats: number }[];
+  };
 };
 
 export type ChatLine = { id: number; who: "client" | "business" | "event"; text: string; at: string };

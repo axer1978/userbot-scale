@@ -71,3 +71,24 @@
 /* The Quality tab: weeks side by side. */
 .ft-quality td.num { text-align: right; white-space: nowrap; }
 .ft-quality td:first-child { width: 40%; }
+
+/* A run that touches one part only (a fold): one column. */
+.ft-cols.one { grid-template-columns: 1fr; }
+
+/* Operator rules and the style card (Finetune → Rules). */
+.ft-rule { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: flex-start; padding: 8px 0;
+  border-bottom: 1px solid var(--border); font-size: 13px; }
+.ft-rule:last-child { border-bottom: none; }
+.ft-rule .grow { flex: 1 1 320px; min-width: 0; overflow-wrap: anywhere; }
+.ft-rule-text { white-space: pre-wrap; }
+.ft-rule-meta { margin-top: 3px; font-size: 12px; }
+.ft-rule-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ft-rule.editing { display: block; }
+.ft-rule.editing .pf-actions { margin-top: 8px; }
+.ft-rule-fields { display: flex; flex-direction: column; gap: 6px; }
+.pf-section .ft-rule-fields { margin-top: 8px; }
+.ft-rule-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ft-rule-row select { width: auto; max-width: 100%; }
+.ft-history > summary { cursor: pointer; }
+.ft-style { margin-bottom: 12px; }
+.ft-style td:first-child { width: 40%; }
