@@ -67,3 +67,7 @@
 .ft-example .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .ft-example-note { color: var(--muted); white-space: pre-wrap; margin-top: 2px; }
 .btn.small.ft-flagged { border-color: var(--ok); color: var(--ok); }
+
+/* The Quality tab: weeks side by side. */
+.ft-quality td.num { text-align: right; white-space: nowrap; }
+.ft-quality td:first-child { width: 40%; }

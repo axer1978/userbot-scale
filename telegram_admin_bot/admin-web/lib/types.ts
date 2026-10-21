@@ -699,6 +699,30 @@ export type HandChats = {
   limits: { chats: number; chars: number };
 };
 
+// stats.quality: one week of one account, in its timezone.
+export type QualityWeek = {
+  since: string;
+  until: string;
+  bookings: { booked: number; confirmed: number; completed: number; no_show: number; cancelled: number;
+    no_show_rate: number | null };
+  messages: { received: number; conversations: number; sent_by_bot: number; sent_by_hand: number;
+    chats_by_hand: number };
+  unanswered: number;
+  replies_written: number;
+  drafts: { approved: number; edited: number; rejected: number };
+  takeovers: number;
+  unanswered_by_reason: Record<string, number>;
+};
+
+export type Quality = {
+  tenant_id: number;
+  timezone: string;
+  auto_send: boolean;
+  takeover_hours: number;
+  weeks: QualityWeek[];
+  totals: { typed_by_hand: number; chats_by_hand: number; drafts_edited: number; chats_flagged: number };
+};
+
 export type ChatLine = { id: number; who: "client" | "business" | "event"; text: string; at: string };
 
 export type ChatExampleView = {

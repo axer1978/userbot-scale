@@ -521,6 +521,9 @@ class SessionRuntime:
                 raise ValueError(f"Draft is already {draft['status']}")
             text_override = args.get("text")
             text = (text_override if text_override is not None else draft["text"]).strip()
+            # Changed before approving (more than spacing): a correction to
+            # learn from, so what the bot wrote is kept beside it.
+            edited = text_override is not None and text.split() != (draft["text"] or "").split()
             attachments = [
                 i for i in (draft.get("attachments") or []) if self.media_library.get(i) is not None
             ]
@@ -530,7 +533,15 @@ class SessionRuntime:
             sent = await self.send_burst(
                 draft["chat_id"], parts, draft_id=draft_id, attachments=attachments,
                 actor=audit.ADMIN, reason="draft approved in the panel",
+                # Every message of the reply is the bot's, not only the first
+                # (the draft's row): unmarked, the rest counted as typed by hand.
+                llm_model=draft.get("llm_model"), prompt_version=draft.get("prompt_version"),
             )
+            # Once it went out: a send that is refused leaves the draft as it was.
+            if edited:
+                await self.db.update_message(draft_id, draft_text=draft["text"])
+            await self.write_audit(audit.DRAFT_APPROVED, actor=audit.ADMIN, reason="draft approved in the panel",
+                                   payload={"chat_id": draft["chat_id"], "message_id": draft_id, "edited": edited})
             await self.settle_outreach_draft(draft_id, OUT_SENT, text=text)
             return sent
 

@@ -751,13 +751,19 @@ class Database:
         telegram_id: Optional[int] = None,
         attachments: Optional[list[int]] = None,
         wa_message_id: Optional[str] = None,
+        draft_text: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
+        """`draft_text`: the bot's own draft, kept when someone changed it
+        before approving it (migration 0016)."""
         tid = await self.tenant_id()
         sets: list[str] = []
         params: list[Any] = [tid, message_id]
         if text is not None:
             params.append(_clean(text))
             sets.append(f"text = ${len(params)}")
+        if draft_text is not None:
+            params.append(_clean(draft_text))
+            sets.append(f"draft_text = ${len(params)}")
         if attachments is not None:
             params.append(list(attachments))
             sets.append(f"attachments = ${len(params)}")

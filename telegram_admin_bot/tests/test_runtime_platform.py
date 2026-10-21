@@ -154,6 +154,71 @@ async def test_approving_a_held_draft_is_audited_as_the_admin(app, db, pg_pool, 
 
     [sent] = await audit_events(pg_pool, audit.MESSAGE_SENT)
     assert (sent["actor"], sent["reason"]) == ("admin", "draft approved in the panel")
+    [approved] = await audit_events(pg_pool, audit.DRAFT_APPROVED)
+    assert approved["actor"] == "admin"
+    assert approved["payload"] == {"chat_id": 7, "message_id": draft["id"], "edited": False}
+
+
+async def _sent_rows(pool, tenant_id):
+    return await pool.fetch("SELECT id, text, draft_text, llm_model, prompt_version FROM messages "
+                            "WHERE tenant_id = $1 AND direction = 'out' AND status = 'sent' ORDER BY id", tenant_id)
+
+
+async def test_an_edited_draft_keeps_what_the_bot_wrote(app, db, pg_pool, model, outbox, clock):
+    """An edit is a correction to learn from: the bot's draft stays beside
+    what went out, and every message of the reply is still the bot's."""
+    await incoming(db)
+    model["reply"] = "Yes, tomorrow at 10\nSee you!"
+    await app.draft_worker(7)
+    [draft] = await db.pending_drafts(7)
+
+    await app.handle_command("approve_draft", {"draft_id": draft["id"], "text": "Yes, tomorrow at 11\nSee you!"})
+
+    assert outbox == ["Yes, tomorrow at 11", "See you!"]
+    first, second = await _sent_rows(pg_pool, app.tenant_id)
+    assert (first["id"], first["text"], first["draft_text"]) == (draft["id"], "Yes, tomorrow at 11",
+                                                                 "Yes, tomorrow at 10\nSee you!")
+    assert second["draft_text"] is None
+    # Both messages are the bot's reply; before, the second counted as typed by hand.
+    assert first["llm_model"] == second["llm_model"] == draft["llm_model"] is not None
+    assert first["prompt_version"] == second["prompt_version"] == draft["prompt_version"]
+    [approved] = await audit_events(pg_pool, audit.DRAFT_APPROVED)
+    assert approved["payload"] == {"chat_id": 7, "message_id": draft["id"], "edited": True}
+
+
+async def test_an_edited_draft_that_could_not_be_sent_is_not_counted(app, db, pg_pool, model, outbox, clock,
+                                                                      monkeypatch):
+    await incoming(db)
+    model["reply"] = "Yes, tomorrow at 10"
+    await app.draft_worker(7)
+    [draft] = await db.pending_drafts(7)
+
+    async def refused(peer, chat_id, text, typing):
+        raise ConnectionError("network down")
+
+    monkeypatch.setattr(app, "deliver", refused)
+    with pytest.raises(ConnectionError):
+        await app.handle_command("approve_draft", {"draft_id": draft["id"], "text": "Yes, tomorrow at 11"})
+
+    assert await pg_pool.fetchval("SELECT draft_text FROM messages WHERE id = $1", draft["id"]) is None
+    assert await audit_events(pg_pool, audit.DRAFT_APPROVED) == []
+
+
+async def test_a_draft_approved_unchanged_or_respaced_is_not_an_edit(app, db, pg_pool, model, outbox, clock):
+    await incoming(db)
+    model["reply"] = "Yes, tomorrow at 10\nSee you!"
+    await app.draft_worker(7)
+    [draft] = await db.pending_drafts(7)
+
+    # The panel sends the text back when its editor was opened, even unchanged.
+    await app.handle_command("approve_draft", {"draft_id": draft["id"], "text": "Yes,  tomorrow at 10 \nSee you! "})
+
+    assert outbox == ["Yes,  tomorrow at 10", "See you!"]
+    rows = await _sent_rows(pg_pool, app.tenant_id)
+    assert [r["draft_text"] for r in rows] == [None, None]
+    assert all(r["llm_model"] == draft["llm_model"] for r in rows)
+    [approved] = await audit_events(pg_pool, audit.DRAFT_APPROVED)
+    assert approved["payload"]["edited"] is False
 
 
 async def test_a_message_in_quiet_hours_is_answered_when_they_end(app, db, model, outbox, clock, pg_pool):

@@ -27,6 +27,12 @@ MIGRATION = "migration"
 # Events
 MESSAGE_SENT = "message_sent"
 MESSAGES_DELETED = "messages_deleted"
+# A draft approved in the panel. payload: chat_id, message_id (the draft),
+# edited (whether its text was changed first; the bot's own text is then
+# kept in messages.draft_text).
+DRAFT_APPROVED = "draft_approved"
+# payload: chat_id, message_id.
+DRAFT_REJECTED = "draft_rejected"
 POLICY_HOLD = "policy_hold"
 TENANT_CREATED = "tenant_created"
 TENANT_UPDATED = "tenant_updated"

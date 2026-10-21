@@ -1314,6 +1314,11 @@ async def api_reject(session_id: str, draft_id: int) -> dict[str, Any]:
     if draft is None:
         raise HTTPException(status_code=404, detail="Unknown draft")
     row = await db.update_message(draft_id, status=STATUS_REJECTED)
+    if draft["status"] == STATUS_PENDING:
+        # Counted on the Finetune page's Quality tab (stats.quality).
+        await audit.record(pool, tenant_id=await db.tenant_id(), actor=audit.ADMIN, event=audit.DRAFT_REJECTED,
+                           reason="draft rejected in the panel",
+                           payload={"chat_id": draft["chat_id"], "message_id": draft_id})
     if row is not None:
         await publish(session_id, {"type": "message", "message": row, "conversation": await db.get_conversation(draft["chat_id"])})
     item = await db.outreach_for_draft(draft_id)
