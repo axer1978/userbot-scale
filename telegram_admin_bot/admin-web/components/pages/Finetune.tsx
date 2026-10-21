@@ -11,23 +11,29 @@
 // Nothing changes until a run is applied; applying saves ordinary prompt
 // versions, which the Clients page can roll back. Screenshots and typed
 // chats are never stored. The Quality tab counts how the bot did week by
-// week, to see whether a run made it better.
+// week, to see whether a run made it better. The Rules tab turns the
+// operators' corrections into short rules every reply's prompt carries
+// (rules_api.py), folded into the prompt itself by a run of their own, and
+// shows the style card: how the business types, measured. The Examples tab
+// (FinetuneReplyExamples.tsx) holds the real moments retrieval shows the bot.
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDialogs, useToast } from "@/components/feedback";
 import { CLIENT_KINDS, OUTCOMES, verdictLabel } from "@/components/FinetuneExampleDialog";
+import { ReplyExamplesTab } from "@/components/FinetuneReplyExamples";
 import { REASONS as UNANSWERED_REASONS } from "@/components/pages/Unanswered";
 import { PageShell, Tabs } from "@/components/ui";
 import { api, errorText } from "@/lib/api";
 import { cx, fmtDateTime } from "@/lib/format";
 import type {
-  BusinessLayer, FinetuneExample, FinetuneIndustry, FinetuneRun, HandChats, PlatformTree, Quality, QualityWeek,
+  BusinessLayer, FinetuneExample, FinetuneIndustry, FinetuneRun, HandChats, PlatformTree, PromptRule, Quality,
+  QualityWeek, RuleScope, RuleStatus, RuleSuggestion, RulesView, StyleCard,
 } from "@/lib/types";
 import { useLoader } from "@/lib/useLoader";
 import "@/app/finetune.css";
 
-type Tab = "new" | "runs" | "template" | "quality";
+type Tab = "new" | "runs" | "rules" | "examples" | "template" | "quality";
 type Mark = "" | "good" | "bad";
 type Shot = { file: File; base: string; ext: string; mark: Mark };
 type Chat = { id: number; name: string; mark: Mark; text: string };
@@ -47,12 +53,23 @@ function sourceCount(run: FinetuneRun): string {
   const s = n === 1 ? "" : "s";
   if (run.source === "examples") return `${n} flagged chat${s}`;
   if (run.source === "hand") return `${n} hand-typed chat${s}`;
+  if (run.source === "rules") return `${n} rule${s}`;
   return run.source === "text" ? `${n} typed conversation${s}` : `${n} screenshot${s}`;
 }
 
 const SOURCE_NAME: Record<FinetuneRun["source"], string> = {
   screenshots: "Screenshots", text: "Conversations", examples: "Flagged chats", hand: "Hand-typed chats",
+  rules: "Rules fold",
 };
+
+/** A fold reads no chats, so its running state says what it does instead. */
+function statusText(run: FinetuneRun): string {
+  return run.status === "running" && run.source === "rules" ? "folding the rules in…" : STATUS[run.status];
+}
+
+function plural(n: number, one: string): string {
+  return `${n} ${one}${n === 1 ? "" : "s"}`;
+}
 
 /** "03a-good.png" → base "03a", mark "good", ext ".png". */
 function splitName(name: string): Omit<Shot, "file"> {
@@ -516,13 +533,58 @@ function editorsFor(run: FinetuneRun): Editor[] {
   });
 }
 
+type FoldResult = NonNullable<NonNullable<FinetuneRun["result"]>["rules"]>;
+
+// What a fold did with each rule it had, by the rule's text (the run only
+// keeps ids), so the admin can check each one went in before applying.
+function FoldRules({ tenantId, fold }: { tenantId: number; fold: FoldResult }) {
+  const fetchRules = useCallback(() => api<RulesView>("GET", `/api/finetune/rules?tenant_id=${tenantId}`), [tenantId]);
+  const { data } = useLoader(fetchRules);
+  const byId = new Map((data?.rules ?? []).map((r) => [r.id, r]));
+  const unlisted = [...fold.industry, ...fold.account].filter((id) => !fold.folded.includes(id) && !fold.skipped.includes(id));
+  const groups: [label: string, ids: number[], hint: string][] = [
+    ["Folded in", fold.folded, ""],
+    ["Skipped", fold.skipped, "The notes above say why. They stay active, added to every reply as now."],
+    ["Not in the notes", unlisted, "Check whether they went in anyway. They stay active after applying."],
+  ];
+
+  return (
+    <div className="pf-section">
+      <div className="title">Rules in this run</div>
+      {groups.filter(([, ids]) => ids.length).map(([label, ids, hint]) => (
+        <div key={label}>
+          <div className="rv-label">{label} ({ids.length})</div>
+          <ul className="ft-list">
+            {ids.map((id) => {
+              const rule = byId.get(id);
+              const part = fold.account.includes(id) ? "this client" : "the industry";
+              return <li key={id}>Rule {id} ({part}{rule ? `, ${rule.section}` : ""}){rule ? `: ${rule.text}` : ""}</li>;
+            })}
+          </ul>
+          {hint && <p className="pf-note">{hint}</p>}
+        </div>
+      ))}
+      <p className="pf-note">Applying a part merges the rules folded into it: they move to History under Rules and stop
+        being added to replies separately. Every other rule, and one edited since the run started, stays active for the
+        next fold.</p>
+    </div>
+  );
+}
+
 function RunReview({ run, onChanged }: { run: FinetuneRun; onChanged: (run: FinetuneRun) => void }) {
   const toast = useToast();
   const { confirm } = useDialogs();
   const [editors, setEditors] = useState<Editor[]>(() => editorsFor(run));
   const [addendum, setAddendum] = useState(run.result?.business_layer?.addendum ?? "");
-  const [applyIndustry, setApplyIndustry] = useState(!!run.result?.industry_sections);
-  const [applyBusiness, setApplyBusiness] = useState(!!run.result?.business_layer);
+  // A part the run leaves out (null) is neither shown nor sent: a fold has
+  // none for the part it had no rules for, and an empty business layer sent
+  // in its place would wipe the client's.
+  const hasIndustry = !!run.result?.industry_sections;
+  const hasBusiness = !!run.result?.business_layer;
+  const [applyIndustry, setApplyIndustry] = useState(hasIndustry);
+  const [applyBusiness, setApplyBusiness] = useState(hasBusiness);
+  const withIndustry = hasIndustry && applyIndustry;
+  const withBusiness = hasBusiness && applyBusiness;
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const current = run.current;
@@ -538,15 +600,15 @@ function RunReview({ run, onChanged }: { run: FinetuneRun; onChanged: (run: Fine
       if (e.industry.trim()) industry_sections[e.key] = e.industry;
       if (e.mode !== "inherit" && e.text.trim()) overrides[e.key] = { mode: e.mode, text: e.text };
     }
-    const what = [applyIndustry && "the industry standard (every client in the industry)", applyBusiness && "this client's layer"]
+    const what = [withIndustry && "the industry standard (every client in the industry)", withBusiness && "this client's layer"]
       .filter(Boolean).join(" and ");
     if (!what) { toast("Choose what to apply."); return; }
     if (!(await confirm(`Apply ${what} as new prompt versions? They go live at once and can be rolled back under Clients.`))) return;
     setBusy(true);
     try {
       onChanged(await api<FinetuneRun>("POST", `/api/finetune/runs/${run.id}/apply`, {
-        industry_sections: applyIndustry ? industry_sections : null,
-        business_layer: applyBusiness ? { overrides, addendum } : null,
+        industry_sections: withIndustry ? industry_sections : null,
+        business_layer: withBusiness ? { overrides, addendum } : null,
         note: note.trim(),
       }));
       toast("Applied.", "info");
@@ -562,12 +624,15 @@ function RunReview({ run, onChanged }: { run: FinetuneRun; onChanged: (run: Fine
   return (
     <>
       <div className="rv-top">
-        <span className={cx("bk-state", `ft-${run.status}`)}>{STATUS[run.status]}</span>
+        <span className={cx("bk-state", `ft-${run.status}`)}>{statusText(run)}</span>
         <span>Run {run.id}</span>
         <span className="muted">{fmtDateTime(run.created_at)} · {run.model} · {sourceCount(run)}</span>
       </div>
       <details className="ft-files"><summary className="muted">{SOURCE_NAME[run.source] ?? "Screenshots"}</summary>{run.files.join(", ")}</details>
-      {run.status === "running" && <div className="empty">The model is reading the chats. This can take a few minutes.</div>}
+      {run.status === "running" && (
+        <div className="empty">{run.source === "rules" ? "The model is writing the rules into the prompt."
+          : "The model is reading the chats."} This can take a few minutes.</div>
+      )}
       {run.error && <div className="pf-errors">{run.error}</div>}
       {run.status === "applied" && run.applied && (
         <p className="pf-note">Saved{run.applied.industry_version ? ` industry template v${run.applied.industry_version}` : ""}
@@ -592,67 +657,88 @@ function RunReview({ run, onChanged }: { run: FinetuneRun; onChanged: (run: Fine
             <div className="inherited-text">{run.result.notes}</div>
           </div>
         )}
+        {run.result.rules && <FoldRules tenantId={run.tenant_id} fold={run.result.rules} />}
 
-        {reviewable && <>
+        {reviewable && (hasIndustry || hasBusiness) && <>
           <div className="sub">Proposal, section by section</div>
-          <p className="pf-note">Left: the industry standard, applied to every client in the industry. Right: this
-            client&apos;s own layer on top of it. Grey text is what is live now.</p>
+          <p className="pf-note">
+            {hasIndustry && hasBusiness
+              ? "Left: the industry standard, applied to every client in the industry. Right: this client's own layer on top of it."
+              : hasIndustry
+                ? "The industry standard, applied to every client in the industry. This run leaves this client's own layer as it is."
+                : "This client's own layer on top of the industry standard. This run leaves the industry standard as it is."}
+            {" "}Grey text is what is live now; a section the proposal changes is marked.</p>
           {editors.map((e, i) => {
             const live = current?.industry_sections[e.key] ?? "";
             const liveOverride = current?.business_layer?.overrides?.[e.key];
+            // A fold touches a few sections of many: mark them, so they are
+            // not lost among the ones it left as they are.
+            const changed = (hasIndustry && e.industry.trim() !== live.trim())
+              || (hasBusiness && (e.mode === "inherit" ? !!liveOverride
+                : e.mode !== liveOverride?.mode || e.text.trim() !== (liveOverride?.text ?? "").trim()));
             return (
-              <div key={e.key} className="pf-section ft-pair">
-                <div className="title">{e.heading}</div>
-                <div className="ft-cols">
-                  <div>
-                    <div className="rv-label">Industry standard</div>
-                    <div className="inherited-text">{live || "(empty now)"}</div>
-                    <textarea rows={4} value={e.industry} disabled={!applyIndustry}
-                              onChange={(ev) => edit(i, { industry: ev.target.value })} />
-                  </div>
-                  <div>
-                    <div className="rv-label ft-mode">This client
-                      <select value={e.mode} disabled={!applyBusiness}
-                              onChange={(ev) => edit(i, { mode: ev.target.value as Mode })}>
-                        <option value="inherit">Inherit</option>
-                        {!e.appendOnly && <option value="override">Override</option>}
-                        <option value="append">Append</option>
-                      </select>
+              <div key={e.key} className={cx("pf-section ft-pair", changed && "overridden")}>
+                <div className="title">{e.heading}{changed && <span className="muted">changed</span>}</div>
+                <div className={cx("ft-cols", !(hasIndustry && hasBusiness) && "one")}>
+                  {hasIndustry && (
+                    <div>
+                      <div className="rv-label">Industry standard</div>
+                      <div className="inherited-text">{live || "(empty now)"}</div>
+                      <textarea rows={4} value={e.industry} disabled={!applyIndustry}
+                                onChange={(ev) => edit(i, { industry: ev.target.value })} />
                     </div>
-                    <div className="inherited-text">
-                      {liveOverride ? `${liveOverride.mode}: ${liveOverride.text}` : "(inherits now)"}</div>
-                    {e.mode !== "inherit" && (
-                      <textarea rows={4} value={e.text} disabled={!applyBusiness}
-                                onChange={(ev) => edit(i, { text: ev.target.value })} />
-                    )}
-                  </div>
+                  )}
+                  {hasBusiness && (
+                    <div>
+                      <div className="rv-label ft-mode">This client
+                        <select value={e.mode} disabled={!applyBusiness}
+                                onChange={(ev) => edit(i, { mode: ev.target.value as Mode })}>
+                          <option value="inherit">Inherit</option>
+                          {!e.appendOnly && <option value="override">Override</option>}
+                          <option value="append">Append</option>
+                        </select>
+                      </div>
+                      <div className="inherited-text">
+                        {liveOverride ? `${liveOverride.mode}: ${liveOverride.text}` : "(inherits now)"}</div>
+                      {e.mode !== "inherit" && (
+                        <textarea rows={4} value={e.text} disabled={!applyBusiness}
+                                  onChange={(ev) => edit(i, { text: ev.target.value })} />
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );
           })}
-          <div className="pf-section">
-            <div className="title">Additional notes from the business (this client)</div>
-            {current?.business_layer?.addendum && <div className="inherited-text">{current.business_layer.addendum}</div>}
-            <textarea rows={3} maxLength={run.addendum_limit} value={addendum} disabled={!applyBusiness}
-                      onChange={(ev) => setAddendum(ev.target.value)} />
-            <div className="pf-note">{addendum.length} / {run.addendum_limit} characters</div>
-          </div>
+          {hasBusiness && (
+            <div className="pf-section">
+              <div className="title">Additional notes from the business (this client)</div>
+              {current?.business_layer?.addendum && <div className="inherited-text">{current.business_layer.addendum}</div>}
+              <textarea rows={3} maxLength={run.addendum_limit} value={addendum} disabled={!applyBusiness}
+                        onChange={(ev) => setAddendum(ev.target.value)} />
+              <div className="pf-note">{addendum.length} / {run.addendum_limit} characters</div>
+            </div>
+          )}
 
           <div className="pf-actions">
-            <label className="check"><input type="checkbox" checked={applyIndustry}
-                                            onChange={(ev) => setApplyIndustry(ev.target.checked)} /> Apply the industry standard</label>
-            <label className="check"><input type="checkbox" checked={applyBusiness}
-                                            onChange={(ev) => setApplyBusiness(ev.target.checked)} /> Apply this client&apos;s layer</label>
+            {hasIndustry && (
+              <label className="check"><input type="checkbox" checked={applyIndustry}
+                                              onChange={(ev) => setApplyIndustry(ev.target.checked)} /> Apply the industry standard</label>
+            )}
+            {hasBusiness && (
+              <label className="check"><input type="checkbox" checked={applyBusiness}
+                                              onChange={(ev) => setApplyBusiness(ev.target.checked)} /> Apply this client&apos;s layer</label>
+            )}
           </div>
           <div className="pf-actions">
             <input placeholder="Note saved with the new versions (optional)" value={note} onChange={(ev) => setNote(ev.target.value)} />
             <button type="button" className="btn" disabled={busy} onClick={discard}>Discard</button>
-            <button type="button" className="btn primary" disabled={busy || (!applyIndustry && !applyBusiness)} onClick={apply}>
+            <button type="button" className="btn primary" disabled={busy || (!withIndustry && !withBusiness)} onClick={apply}>
               Apply</button>
           </div>
         </>}
       </>}
-      {(run.status === "failed" || (run.status === "done" && run.stale)) && (
+      {(run.status === "failed" || (run.status === "done" && (run.stale || !(hasIndustry || hasBusiness)))) && (
         <div className="pf-actions"><button type="button" className="btn" onClick={discard}>Discard</button></div>
       )}
       {run.raw_output && (
@@ -695,7 +781,7 @@ function RunList({ runs, onOpen }: { runs: FinetuneRun[]; onOpen: (id: number) =
         <div key={r.id} className={cx("bk-row", `ft-row-${r.status}`)}>
           <div className="bk-head" role="button" tabIndex={0} onClick={() => onOpen(r.id)}
                onKeyDown={(ev) => { if (ev.key === "Enter") onOpen(r.id); }}>
-            <span className={cx("bk-state", `ft-${r.status}`)}>{STATUS[r.status]}</span>
+            <span className={cx("bk-state", `ft-${r.status}`)}>{statusText(r)}</span>
             <span className="bk-time">{fmtDateTime(r.created_at)}</span>
             <span>Run {r.id}</span>
             <span className="muted">{sourceCount(r)} · {r.model}</span>
@@ -844,6 +930,330 @@ function QualityView({ tenantId }: { tenantId: number }) {
   );
 }
 
+/* ----------------------------------------------------------------- rules */
+
+type RuleDraft = { text: string; section: string; scope: RuleScope };
+type RulePatch = Partial<RuleDraft> & { status?: RuleStatus };
+type OnPatch = (rule: PromptRule, body: RulePatch, done: string) => Promise<boolean>;
+
+const MAX_RULE_CHARS = 400;
+const RULE_SOURCE: Record<PromptRule["source"], string> = {
+  draft_edit: "from an edited draft", correction: "from a correction on a flagged chat", manual: "added by hand",
+};
+const RULE_ENDED: Partial<Record<RuleStatus, string>> = {
+  merged: "folded into the prompt", rejected: "rejected", retired: "retired",
+};
+
+function scopeLabel(scope: RuleScope, industry: string): string {
+  return scope === "industry" ? `Whole industry (${industry})` : "This account only";
+}
+
+/** The text, section and scope of a rule, for adding one and for editing. */
+function RuleFields({ draft, view, onChange }: { draft: RuleDraft; view: RulesView; onChange: (draft: RuleDraft) => void }) {
+  return (
+    <div className="ft-rule-fields">
+      <textarea rows={2} maxLength={MAX_RULE_CHARS} value={draft.text} aria-label="The rule"
+                placeholder="One short, general sentence the bot must follow. No names, numbers or prices."
+                onChange={(ev) => onChange({ ...draft, text: ev.target.value })} />
+      <div className="ft-rule-row">
+        <select value={draft.section} aria-label="Section of the prompt"
+                onChange={(ev) => onChange({ ...draft, section: ev.target.value })}>
+          {view.sections.map((s) => <option key={s.key} value={s.key}>{s.heading}</option>)}
+        </select>
+        <select value={draft.scope} aria-label="Who the rule is for"
+                onChange={(ev) => onChange({ ...draft, scope: ev.target.value as RuleScope })}>
+          <option value="industry">{scopeLabel("industry", view.industry.name)}</option>
+          <option value="account">{scopeLabel("account", view.industry.name)}</option>
+        </select>
+        <span className="muted">{draft.text.length} / {MAX_RULE_CHARS}</span>
+      </div>
+    </div>
+  );
+}
+
+function RuleItem({ rule, view, onPatch }: { rule: PromptRule; view: RulesView; onPatch: OnPatch }) {
+  const { confirm } = useDialogs();
+  const [draft, setDraft] = useState<RuleDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const heading = view.sections.find((s) => s.key === rule.section)?.heading ?? rule.section;
+  const live = rule.status === "active";
+  const ended = RULE_ENDED[rule.status];
+
+  const send = async (body: RulePatch, done: string) => {
+    setBusy(true);
+    if (await onPatch(rule, body, done)) setDraft(null);
+    setBusy(false);
+  };
+  const retire = async () => {
+    if (!(await confirm("Retire this rule? It stops being added to replies at once."))) return;
+    await send({ status: "retired" }, "Retired: it is under History.");
+  };
+
+  if (draft) {
+    return (
+      <div className="ft-rule editing">
+        <RuleFields draft={draft} view={view} onChange={setDraft} />
+        <div className="pf-actions">
+          <span className="muted grow">{live ? "Saving changes every reply's prompt at once." : ""}</span>
+          <button type="button" className="btn small" disabled={busy} onClick={() => setDraft(null)}>Cancel</button>
+          <button type="button" className={cx("btn small", live && "primary")} disabled={busy || !draft.text.trim()}
+                  onClick={() => send(draft, "Saved.")}>Save</button>
+          {rule.status === "proposed" && (
+            <button type="button" className="btn small primary" disabled={busy || !draft.text.trim()}
+                    onClick={() => send({ ...draft, status: "active" }, "Saved and accepted: every reply's prompt has it now.")}>
+              Save and accept</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="ft-rule">
+      <div className="grow">
+        <div className="ft-rule-text">{rule.text}</div>
+        <div className="muted ft-rule-meta">
+          <span className="badge">{heading}</span> {scopeLabel(rule.scope, view.industry.name)} ·{" "}
+          {RULE_SOURCE[rule.source]} · {fmtDateTime(rule.created_at)}
+          {ended && ` · ${ended} ${fmtDateTime(rule.updated_at)}${rule.merged_into ? ` (prompt version ${rule.merged_into})` : ""}`}
+        </div>
+      </div>
+      <div className="ft-rule-actions">
+        {rule.status === "proposed" && (
+          <button type="button" className="btn small primary" disabled={busy}
+                  onClick={() => send({ status: "active" }, "Accepted: every reply's prompt has it now.")}>Accept</button>
+        )}
+        {(rule.status === "proposed" || live) && (
+          <button type="button" className="btn small" disabled={busy}
+                  onClick={() => setDraft({ text: rule.text, section: rule.section, scope: rule.scope })}>Edit</button>
+        )}
+        {rule.status === "proposed" && (
+          <button type="button" className="btn small" disabled={busy}
+                  onClick={() => send({ status: "rejected" }, "Rejected: it is under History.")}>Reject</button>
+        )}
+        {live && <button type="button" className="btn small" disabled={busy} onClick={retire}>Retire</button>}
+        {/* A rejected or retired rule can come back for another look; a merged one is part of the prompt now. */}
+        {(rule.status === "rejected" || rule.status === "retired") && (
+          <button type="button" className="btn small" disabled={busy}
+                  onClick={() => send({ status: "proposed" }, "Back under Proposed.")}>Propose again</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Typed by the admin: created active, since writing it is the decision.
+function AddRule({ tenantId, view, onAdded }: { tenantId: number; view: RulesView; onAdded: () => void }) {
+  const toast = useToast();
+  const [draft, setDraft] = useState<RuleDraft>(() => ({
+    text: "", scope: "industry",
+    section: view.sections.some((s) => s.key === "booking") ? "booking" : (view.sections[0]?.key ?? ""),
+  }));
+  const [busy, setBusy] = useState(false);
+
+  const add = async () => {
+    setBusy(true);
+    try {
+      await api<PromptRule>("POST", "/api/finetune/rules", { tenant_id: tenantId, ...draft });
+      setDraft((d) => ({ ...d, text: "" }));
+      toast("Added: every reply's prompt has it now.", "info");
+      onAdded();
+    } catch (err) { toast(errorText(err)); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="pf-section">
+      <div className="title">Add a rule</div>
+      <RuleFields draft={draft} view={view} onChange={setDraft} />
+      <div className="pf-actions">
+        <span className="muted grow">It goes live at once, with no review step, for {draft.scope === "industry"
+          ? `every account in ${view.industry.name}` : "this account only"}.</span>
+        <button type="button" className="btn primary" disabled={busy || !draft.text.trim()} onClick={add}>
+          {busy ? "Adding…" : "Add"}</button>
+      </div>
+    </div>
+  );
+}
+
+// Operator rules (rules_api.py): the operators' corrections as short rules
+// that every reply's prompt carries while active, at most `cap` per scope,
+// until a fold writes them into the prompt itself. Nothing the model
+// suggests goes live by itself: proposed rules wait for the admin here.
+function RulesTab({ tenantId, tenantName, onOpenRun, onFolded }: {
+  tenantId: number; tenantName: string; onOpenRun: (id: number) => void; onFolded: (run: FinetuneRun) => void;
+}) {
+  const toast = useToast();
+  const fetchRules = useCallback(() => api<RulesView>("GET", `/api/finetune/rules?tenant_id=${tenantId}`), [tenantId]);
+  const { data: v, error, reload } = useLoader(fetchRules);
+  const [suggesting, setSuggesting] = useState(false);
+  const [folding, setFolding] = useState(false);
+  if (!v) return error ? <div className="pf-errors">{error}</div> : <div className="empty">Loading…</div>;
+
+  const industry = v.industry.name;
+  const proposed = v.rules.filter((r) => r.status === "proposed");
+  const active = v.rules.filter((r) => r.status === "active");
+  // The latest change first: what was just rejected or folded in is on top.
+  const history = v.rules.filter((r) => r.status !== "proposed" && r.status !== "active")
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  const waiting = [v.waiting.draft_edits && plural(v.waiting.draft_edits, "edited draft"),
+    v.waiting.corrections && plural(v.waiting.corrections, "correction")].filter(Boolean).join(" and ");
+  const lastFold = v.last_fold;
+  const foldRunning = lastFold?.status === "running";
+
+  // Moving a rule to one account moves it to the client picked above.
+  const patch: OnPatch = async (rule, body, done) => {
+    try {
+      await api<PromptRule>("PATCH", `/api/finetune/rules/${rule.id}`,
+        body.scope === "account" ? { ...body, tenant_id: tenantId } : body);
+      toast(done, "info");
+      void reload();
+      return true;
+    } catch (err) { toast(errorText(err)); return false; }
+  };
+
+  const suggest = async () => {
+    setSuggesting(true);
+    try {
+      const out = await api<RuleSuggestion>("POST", "/api/finetune/rules/suggest", { tenant_id: tenantId });
+      const left = out.waiting.draft_edits + out.waiting.corrections;
+      toast(`Read ${out.read}: ${out.rules.length ? `${plural(out.rules.length, "rule")} proposed, waiting for you below`
+        : "nothing general enough for a rule"}.${left ? ` ${left} more wait: press Suggest again.` : ""}`, "info");
+    } catch (err) { toast(errorText(err)); } finally { setSuggesting(false); void reload(); }
+  };
+
+  const fold = async () => {
+    setFolding(true);
+    try { onFolded(await api<FinetuneRun>("POST", "/api/finetune/rules/fold", { tenant_id: tenantId })); }
+    catch (err) { toast(errorText(err)); void reload(); } finally { setFolding(false); }
+  };
+
+  return (
+    <>
+      {error && <div className="pf-errors">{error}</div>}
+      <p className="pf-note">When an operator edits a draft before approving it, or writes a correction on a flagged
+        chat, the model can turn it into a short rule. Each active rule is a line in every reply&apos;s prompt. A rule
+        for the whole industry reaches every account in {industry}: they share one tuning, so that is the usual
+        choice. A rule for this account only reaches {tenantName}.</p>
+      <p className="pf-note">
+        {(["industry", "account"] as const).map((scope, i) => {
+          const full = v.counts[scope].active >= v.cap;
+          return (
+            <span key={scope} className={cx(full && "warn-note")}>{i > 0 && " · "}{scopeLabel(scope, industry)}:{" "}
+              <b>{v.counts[scope].active} of {v.cap}</b> active{full && " (full: fold them in, or retire one)"}</span>
+          );
+        })}
+      </p>
+      {!v.platform_key && (
+        <div className="pf-errors">Suggesting and folding need DEEPSEEK_PLATFORM_KEY in the server&apos;s .env. Rules
+          added by hand work without it.</div>
+      )}
+      {lastFold && (
+        <div className="pf-actions">
+          <span className="muted grow">Last fold: run {lastFold.id} ({statusText(lastFold)}), started{" "}
+            {fmtDateTime(lastFold.created_at)}.{lastFold.status === "done" ? " Nothing changes until you apply it." : ""}</span>
+          <button type="button" className="btn small" onClick={() => onOpenRun(lastFold.id)}>Open in Runs</button>
+        </div>
+      )}
+      <div className="pf-actions">
+        <span className="muted grow">{waiting
+          ? `Not read yet: ${waiting}. The model reads each with a few masked lines of the chat before it, and `
+            + "proposes a rule only for what is general (not a typo or a one-off)."
+          : "Nothing new to read: every edited draft and correction so far has been read."}</span>
+        <button type="button" className="btn primary" disabled={!waiting || !v.platform_key || suggesting} onClick={suggest}>
+          {suggesting ? "Reading… (up to a minute)" : waiting ? `Suggest rules from ${waiting}` : "Suggest rules"}</button>
+      </div>
+
+      <div className="sub">Proposed, waiting for you ({proposed.length})</div>
+      {proposed.length > 0 ? <>
+        <p className="pf-note">None of these is live until you accept it. Check the scope: a rule about this business
+          alone (its services, prices, hours or place) belongs to this account.</p>
+        <div className="ft-shots">{proposed.map((r) => <RuleItem key={r.id} rule={r} view={v} onPatch={patch} />)}</div>
+      </> : <p className="pf-note">None. Suggest some from the corrections above, or add one by hand below.</p>}
+
+      <div className="sub">Active, in every reply&apos;s prompt ({active.length})</div>
+      {active.length > 0
+        ? <div className="ft-shots">{active.map((r) => <RuleItem key={r.id} rule={r} view={v} onPatch={patch} />)}</div>
+        : <p className="pf-note">None.</p>}
+      <div className="pf-actions">
+        <span className="muted grow">Folding writes the active rules into the prompt itself (the industry&apos;s into
+          the {industry} standard, this account&apos;s into its own layer) as an ordinary run under Runs. It also starts
+          on its own every Monday (the industry&apos;s rules on its first client). Nothing changes until the run is
+          applied; the rules it folded in then move to History and stop being added separately.</span>
+        <button type="button" className="btn primary" disabled={!active.length || !v.platform_key || folding || foldRunning}
+                onClick={fold}>{folding ? "Starting…" : foldRunning ? "A fold is running" : "Fold into the prompt now"}</button>
+      </div>
+
+      <AddRule tenantId={tenantId} view={v} onAdded={() => { void reload(); }} />
+
+      {history.length > 0 && (
+        <details className="ft-history">
+          <summary className="sub">History ({history.length}): folded in, rejected, retired</summary>
+          <div className="ft-shots">{history.map((r) => <RuleItem key={r.id} rule={r} view={v} onPatch={patch} />)}</div>
+        </details>
+      )}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------ style card */
+
+function share(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+// The style card (stylecard.py): how the business types, in numbers, given
+// to the model as a short note when it is on. It is measured even while it
+// is off, so it can be checked before it is turned on.
+function StyleCardView({ tenantId, tenantName, industryId, industryName }: {
+  tenantId: number; tenantName: string; industryId: number; industryName: string;
+}) {
+  const fetchCard = useCallback(() => api<StyleCard>("GET", `/api/finetune/style-card?tenant_id=${tenantId}`), [tenantId]);
+  const { data: card, error } = useLoader(fetchCard);
+  const s = card?.stats;
+  const rows: [string, string | number][] = s ? [
+    ["Replies typed by hand", `${plural(s.messages, "message")}, sent as ${s.turns} repl${s.turns === 1 ? "y" : "ies"} `
+      + `in ${plural(s.chats, "chat")}`],
+    ["Words per message (median)", s.median_words],
+    ["Messages in a row per reply (median)", s.median_messages_per_turn],
+    ["Starts with a small letter", share(s.lower_start_share)],
+    ["No . ! or ? at the end", share(s.no_end_punctuation_share)],
+    ["With an emoji", share(s.emoji_share)],
+    ["Emojis used most", s.top_emojis.map((e) => `${e.emoji} ${e.count}`).join(" · ") || "—"],
+    ["Opens replies with (in 3 or more chats)", s.openers.map((o) => `"${o.text}" (${o.chats})`).join(", ") || "—"],
+  ] : [];
+
+  return (
+    <>
+      <div className="sub">Style card</div>
+      <p className="pf-note">How the business types, measured from the replies a person typed by hand: how long the
+        messages are, capitals, punctuation, emojis, how replies open. The bot gets it as a short note of habits, never
+        a line to copy.</p>
+      {error && <div className="pf-errors">{error}</div>}
+      {!card && !error && <div className="empty">Loading…</div>}
+      {card && s && <>
+        <p className="pf-note"><b>{card.enabled ? "On" : "Off"}</b> for {tenantName}: measured from{" "}
+          {card.scope === "industry" ? `every account in ${industryName}` : "this account only"}, over the last{" "}
+          {card.days} days.</p>
+        {card.note ? <>
+          <div className="rv-label">{card.enabled ? "What the bot is told" : "What the bot would be told"}</div>
+          <pre className="pf-rendered">{card.note}</pre>
+        </> : (
+          <div className="empty">Not enough replies typed by hand yet ({s.messages} of {card.min_replies}).</div>
+        )}
+        {s.messages > 0 && (
+          <table className="cfg-table ft-style">
+            <tbody>{rows.map(([label, value]) => <tr key={label}><td>{label}</td><td>{value}</td></tr>)}</tbody>
+          </table>
+        )}
+        <p className="pf-note">To turn it on: <Link href={`/clients?node=tenant-${tenantId}&tab=config`}>
+          Clients → {tenantName} → Config</Link>, press Override on <code>style_card.enabled</code>, tick it and save;
+          or for every client of {industryName} at once, the same under{" "}
+          <Link href={`/clients?node=industry-${industryId}&tab=config`}>Clients → {industryName} → Default config</Link>.
+          Its scope, days and min_replies are set there too.</p>
+      </>}
+    </>
+  );
+}
+
 /* ------------------------------------------------------------------ page */
 
 export function Finetune() {
@@ -869,7 +1279,9 @@ export function Finetune() {
   const refresh = useCallback(() => { void reloadRuns(); void reloadInfo(); }, [reloadRuns, reloadInfo]);
 
   const tabs: [Tab, string][] = [["new", "New run"], ["runs", `Runs${runs?.length ? ` (${runs.length})` : ""}`],
-    ["template", `Template${industryName ? ` — ${industryName}` : ""}`], ["quality", "Quality"]];
+    ["rules", "Rules"], ["examples", "Examples"], ["template", `Template${industryName ? ` — ${industryName}` : ""}`], ["quality", "Quality"]];
+  // Open a run in the Runs tab, as starting one from New run does.
+  const showRun = (id: number) => { void reloadRuns(); setTab("runs"); setOpenRun(id); };
   const error = treeError || infoError || runsError;
 
   return (
@@ -888,16 +1300,22 @@ export function Finetune() {
           </div>
           <Tabs tabs={tabs} value={tab} onChange={(key) => { setTab(key); setOpenRun(null); }} />
           {info && tree && tab === "new" && (
-            <NewRun key={tenant.id} tenantId={tenant.id} info={info} tree={tree} onStarted={(run) => {
-              void reloadRuns();
-              setTab("runs");
-              setOpenRun(run.id);
-            }} />
+            <NewRun key={tenant.id} tenantId={tenant.id} info={info} tree={tree} onStarted={(run) => showRun(run.id)} />
           )}
           {tab === "runs" && (openRun !== null
             ? <RunView runId={openRun} onBack={() => setOpenRun(null)}
                        onChanged={refresh} />
             : <RunList runs={runs ?? []} onOpen={setOpenRun} />)}
+          {tab === "rules" && <>
+            <RulesTab key={tenant.id} tenantId={tenant.id} tenantName={tenant.name} onOpenRun={showRun}
+                      onFolded={(run) => showRun(run.id)} />
+            <StyleCardView key={`style-${tenant.id}`} tenantId={tenant.id} tenantName={tenant.name}
+                           industryId={tenant.industry_id} industryName={industryName} />
+          </>}
+          {tab === "examples" && (
+            <ReplyExamplesTab key={tenant.id} tenantId={tenant.id} tenantName={tenant.name}
+                              industryId={tenant.industry_id} industryName={industryName} />
+          )}
           {info && tab === "template" && (
             <TemplateEditor key={`${info.industry.id}-${info.template.length}`} info={info}
                             onSaved={() => { void reloadInfo(); }} />

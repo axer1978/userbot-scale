@@ -75,6 +75,7 @@ import context_link
 import controls
 import media
 import pg
+import examples_api
 import finetune_api
 import platform_api
 import manager_admin_api
@@ -85,6 +86,7 @@ import owner_admin_api
 import owner_api
 import owner_review_api
 import review_admin_api
+import rules_api
 import review_api
 import safety_api
 import staff
@@ -1634,8 +1636,10 @@ app.include_router(booking_api.router, dependencies=[Depends(require_auth)])
 safety_api.bind(get_pool=lambda: pool, get_bus=lambda: bus)
 app.include_router(safety_api.router, dependencies=[Depends(require_auth)])
 # Phase 4. Admin only: client logins, the unanswered queue, review batches;
-# manager logins, the terms of service and the sign-up switch; finetune runs.
-for _module in (owner_admin_api, unanswered_api, review_api, manager_admin_api, terms_admin_api, finetune_api):
+# manager logins, the terms of service and the sign-up switch; finetune runs,
+# operator rules and reply examples.
+for _module in (owner_admin_api, unanswered_api, review_api, manager_admin_api, terms_admin_api, finetune_api,
+                rules_api, examples_api):
     _module.bind(get_pool=lambda: pool, get_bus=lambda: bus)
     app.include_router(_module.router, dependencies=[Depends(require_auth)])
 # Verification videos and photo review: admin only (review.py).

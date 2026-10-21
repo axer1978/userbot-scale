@@ -19,6 +19,9 @@ Mounted by panel.py behind the admin login.
   industry standard first, then the business layer, and reloads the
   accounts affected, as platform_api does. Either part can be left out,
   and both can be edited before applying.
+- Operator rules (rules.py) are folded into the prompt by a run of their
+  own (source 'rules'), reviewed and applied here like any other; applying
+  it marks the rules it folded in as merged.
 - Quality: how the bot did, week by week (stats.quality), as a baseline
   for seeing whether an applied run made its replies better.
 """
@@ -61,6 +64,8 @@ FINETUNE_DISCARDED = "finetune_discarded"
 # A run still "running" after this was cut off by a restart: its task is gone.
 STALE_MINUTES = 20
 RUN_PATH = "/api/finetune/runs"
+# A run that folds the operator's rules into the prompt (rules.py).
+RULES_SOURCE = "rules"
 TEXT_RUN_PATH = "/api/finetune/text-runs"
 
 _get_pool: Callable[[], Any] = lambda: None  # noqa: E731
@@ -86,11 +91,12 @@ async def load_template(industry_id: int) -> str:
 
 
 async def businesses_so_far(industry_id: int) -> int:
-    """Businesses whose run updated this industry's standard."""
+    """Businesses whose run updated this industry's standard. A fold of the
+    operator's rules learned nothing from a business's chats: not counted."""
     return await _get_pool().fetchval(
         "SELECT count(DISTINCT tenant_id) FROM finetune_runs "
-        "WHERE industry_id = $1 AND status = 'applied' AND applied ? 'industry_version'",
-        industry_id,
+        "WHERE industry_id = $1 AND status = 'applied' AND applied ? 'industry_version' AND source <> $2",
+        industry_id, RULES_SOURCE,
     )
 
 
@@ -122,8 +128,8 @@ _SELECT = (f"SELECT *, (status = 'running' AND created_at < now() - interval '{S
            "AS interrupted FROM finetune_runs")
 
 
-async def _get_run(run_id: int) -> dict[str, Any]:
-    row = await _get_pool().fetchrow(_SELECT + " WHERE id = $1", run_id)
+async def _get_run(run_id: int, pool: Any = None) -> dict[str, Any]:
+    row = await (pool or _get_pool()).fetchrow(_SELECT + " WHERE id = $1", run_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Unknown finetune run")
     return _run(row)
@@ -312,26 +318,32 @@ async def api_start_text(body: TextRunBody) -> dict[str, Any]:
 
 
 async def _launch(tenant_id: int, industry: dict[str, Any], *, model: str, source: str, files: list[str],
-                  call: Callable[[Any], Awaitable[str]]) -> dict[str, Any]:
+                  call: Callable[[Any], Awaitable[str]],
+                  parse: Callable[[str], dict[str, Any]] = finetune.parse_output,
+                  pool: Any = None, actor: str = ACTOR) -> dict[str, Any]:
     """Record the run and start it in the background. `call(meter)` is the
-    model call; only names are recorded, never the chats themselves."""
-    pool = _get_pool()
+    model call; only names are recorded, never the chats themselves.
+    `parse` reads its answer into the run's result (rules.py folds use their
+    own). `pool` and `actor` are for a run the scheduler starts (rules.py's
+    weekly fold): it runs outside the panel, where this module is bound."""
+    pool = pool or _get_pool()
     async with pool.acquire() as con, con.transaction():
         run_id = await con.fetchval(
             "INSERT INTO finetune_runs (tenant_id, industry_id, model, source, files, industry_version, created_by) "
             "VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) RETURNING id",
-            tenant_id, industry["id"], model, source, json.dumps(files), industry["template_version"], ACTOR,
+            tenant_id, industry["id"], model, source, json.dumps(files), industry["template_version"], actor,
         )
-        await audit.record(con, tenant_id=tenant_id, actor=ACTOR, event=FINETUNE_STARTED,
+        await audit.record(con, tenant_id=tenant_id, actor=actor, event=FINETUNE_STARTED,
                            payload={"run_id": run_id, "model": model, "source": source, "files": files})
-    task = asyncio.create_task(_execute(run_id, call))
+    task = asyncio.create_task(_execute(run_id, call, parse, pool))
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
-    return await _get_run(run_id)
+    return await _get_run(run_id, pool)
 
 
-async def _execute(run_id: int, call: Callable[[Any], Awaitable[str]]) -> None:
-    pool = _get_pool()
+async def _execute(run_id: int, call: Callable[[Any], Awaitable[str]],
+                   parse: Callable[[str], dict[str, Any]] = finetune.parse_output, pool: Any = None) -> None:
+    pool = pool or _get_pool()
 
     async def meter(used_model: str, usage: dict[str, int]) -> None:
         # Platform spend, like the config helper: the admin started it.
@@ -340,18 +352,18 @@ async def _execute(run_id: int, call: Callable[[Any], Awaitable[str]]) -> None:
     try:
         raw = await call(meter)
     except vision.VisionError as exc:
-        await _finish(run_id, status="failed", error=str(exc))
+        await _finish(run_id, status="failed", error=str(exc), pool=pool)
         return
     except Exception:
         log.exception("Finetune run %s failed", run_id)
-        await _finish(run_id, status="failed", error="Unexpected error; see the panel log.")
+        await _finish(run_id, status="failed", error="Unexpected error; see the panel log.", pool=pool)
         return
-    await _finish(run_id, status="done", raw=raw, result=finetune.parse_output(raw))
+    await _finish(run_id, status="done", raw=raw, result=parse(raw), pool=pool)
 
 
 async def _finish(run_id: int, *, status: str, raw: str = "", result: Optional[dict[str, Any]] = None,
-                  error: str = "") -> None:
-    await _get_pool().execute(
+                  error: str = "", pool: Any = None) -> None:
+    await (pool or _get_pool()).execute(
         "UPDATE finetune_runs SET status = $2, raw_output = $3, result = $4::jsonb, error = $5, "
         "finished_at = now() WHERE id = $1 AND status = 'running'",
         run_id, status, raw, json.dumps(result) if result is not None else None, error,
@@ -415,6 +427,13 @@ async def api_apply(run_id: int, body: ApplyBody) -> dict[str, Any]:
         await con.execute("UPDATE finetune_runs SET applied = $2::jsonb WHERE id = $1", run_id, json.dumps(applied))
         await audit.record(con, tenant_id=tenant["id"], actor=ACTOR, event=FINETUNE_APPLIED, reason=note,
                            payload={"run_id": run_id, **applied})
+    if run["source"] == RULES_SOURCE:
+        # The rules this run folded in are in the prompt now: they stop being
+        # added separately (before the reload below, which drops them).
+        # rules.py builds on this module, so it is imported only here.
+        import rules
+
+        await rules.on_applied(pool, run, applied, actor=ACTOR)
     if sections is not None:
         await platform_api._reload_industry(industry["id"])
     else:

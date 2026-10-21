@@ -22,7 +22,7 @@ import pytest
 import pytest_asyncio
 
 import pg as pg_module
-from conftest import PG_TEST_DSN, TEST_MASTER_KEY
+from conftest import PG_TEST_DSN, TEST_MASTER_KEY, migration_versions
 
 pytestmark = [pytest.mark.requires_pg, pytest.mark.asyncio]
 
@@ -89,10 +89,11 @@ async def table_rows(pool, tables) -> dict[str, list[dict]]:
 async def test_migrations_on_an_empty_database_then_again_change_nothing(empty_pool):
     latest = pg_module.latest_version()
     assert await pg_module.current_version(empty_pool) == 0
-    assert await pg_module.apply_migrations(empty_pool) == list(range(1, latest + 1))
+    assert await pg_module.apply_migrations(empty_pool) == migration_versions()
     first = await catalog(empty_pool)
-    assert [v for v, _ in first["migrations"]] == list(range(1, latest + 1))
-    assert len({n for _, n in first["migrations"]}) == latest  # every version recorded with its file name
+    assert [v for v, _ in first["migrations"]] == migration_versions() and migration_versions()[-1] == latest
+    # every version recorded with its file name
+    assert len({n for _, n in first["migrations"]}) == len(migration_versions())
 
     # Second run: nothing to apply, nothing re-applied, the catalog untouched.
     assert await pg_module.apply_migrations(empty_pool) == []
@@ -126,7 +127,7 @@ async def test_migrate_entrypoint_runs_twice_on_the_same_database(empty_pool):
     try:
         first = _run_entrypoint(dsn)
         assert first.returncode == 0, first.stdout + first.stderr
-        assert f"applied migrations {list(range(1, pg_module.latest_version() + 1))}" in first.stdout
+        assert f"applied migrations {migration_versions()}" in first.stdout
 
         second = _run_entrypoint(dsn)
         assert second.returncode == 0, second.stdout + second.stderr
@@ -218,7 +219,7 @@ async def test_upgrading_a_populated_0005_database_keeps_the_data_and_adds_the_r
         before = await table_rows(pool, tables)
         assert before["tenant_holds"] and before["sessions_health"] and before["alerts"]
 
-    assert await pg_module.apply_migrations(pool) == list(range(6, pg_module.latest_version() + 1))
+    assert await pg_module.apply_migrations(pool) == migration_versions(6)
     assert await pg_module.apply_migrations(pool) == []
 
     after = await table_rows(pool, tables)

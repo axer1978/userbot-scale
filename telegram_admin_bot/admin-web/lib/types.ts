@@ -616,8 +616,9 @@ export type FinetuneRun = {
   model: string;
   // screenshots: the vision model read images; text: transcribed chats;
   // examples: real chats flagged from the conversations view; hand: the
-  // chats a person typed replies in, picked by the server.
-  source: "screenshots" | "text" | "examples" | "hand";
+  // chats a person typed replies in, picked by the server; rules: a fold of
+  // the operator rules into the prompt (files are "rule-12", …).
+  source: "screenshots" | "text" | "examples" | "hand" | "rules";
   files: string[];
   industry_version: number;
   error: string;
@@ -625,12 +626,18 @@ export type FinetuneRun = {
   created_at: string;
   finished_at?: string | null;
   applied_at?: string | null;
-  // Only on a single run (GET /api/finetune/runs/{id}):
+  // Only on a single run (GET /api/finetune/runs/{id}). A part is null when
+  // the run does not touch it (a fold with no rules for it, or a block the
+  // model got wrong): applying leaves that part as it is.
   result?: {
     business_layer: BusinessLayer | null;
     industry_sections: Record<string, string> | null;
     notes: string;
     errors: string[];
+    // A fold only: the rule ids it had per part, and the ones its notes list
+    // as FOLDED and SKIPPED. Applying merges the folded ones of the parts
+    // applied; every other stays active.
+    rules?: { industry: number[]; account: number[]; folded: number[]; skipped: number[] };
   } | null;
   raw_output?: string;
   stale?: string;
@@ -721,6 +728,198 @@ export type Quality = {
   takeover_hours: number;
   weeks: QualityWeek[];
   totals: { typed_by_hand: number; chats_by_hand: number; drafts_edited: number; chats_flagged: number };
+};
+
+// An operator rule (rules.py): one short sentence added to every reply's
+// prompt while active, for the whole industry or one account, until a fold
+// writes it into the prompt itself (merged).
+export type RuleScope = "industry" | "account";
+export type RuleStatus = "proposed" | "active" | "merged" | "rejected" | "retired";
+
+export type PromptRule = {
+  id: number;
+  industry_id: number;
+  // null: industry-wide.
+  tenant_id: number | null;
+  scope: RuleScope;
+  section: string;
+  text: string;
+  // draft_edit: a draft an operator changed before approving it; correction:
+  // a correction on a flagged chat; manual: typed by the admin.
+  source: "draft_edit" | "correction" | "manual";
+  source_ref: { tenant_id?: number; message_id?: number; example_id?: number };
+  status: RuleStatus;
+  // The prompt version tag that holds it, once merged ("b1/i1v3/c2").
+  merged_into: string | null;
+  // "admin", or "suggested" by the model.
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RulesWaiting = { draft_edits: number; corrections: number };
+
+// GET /api/finetune/rules: the rules that reach one account (its
+// industry's and its own, in every status, oldest first).
+export type RulesView = {
+  tenant_id: number;
+  industry: { id: number; name: string };
+  rules: PromptRule[];
+  // Active rules per scope, at most.
+  cap: number;
+  counts: Record<RuleScope, { active: number; proposed: number }>;
+  // Edits and corrections no suggestion has read yet.
+  waiting: RulesWaiting;
+  // DEEPSEEK_PLATFORM_KEY is set: suggesting and folding need it.
+  platform_key: boolean;
+  sections: { key: string; heading: string }[];
+  last_fold: FinetuneRun | null;
+};
+
+export type RuleSuggestion = { rules: PromptRule[]; read: number; waiting: RulesWaiting };
+
+// GET /api/finetune/style-card (stylecard.py): how the business types,
+// measured from the replies typed by hand, even while the card is off.
+export type StyleCard = {
+  tenant_id: number;
+  enabled: boolean;
+  scope: RuleScope;
+  days: number;
+  min_replies: number;
+  // As the model would get it; "" below min_replies.
+  note: string;
+  stats: {
+    messages: number;
+    turns: number;
+    chats: number;
+    median_words: number;
+    median_messages_per_turn: number;
+    lower_start_share: number;
+    no_end_punctuation_share: number;
+    emoji_share: number;
+    top_emojis: { emoji: string; count: number }[];
+    openers: { text: string; chats: number }[];
+  };
+};
+
+// Reply examples (examples.py, examples_api.py): real moments of the chats,
+// masked, shown to the model as examples when config retrieval is on.
+export type RetrievalSettings = {
+  enabled: boolean;
+  // At most this many examples a reply, at least this alike (0 to 1), in at
+  // most this many characters.
+  k: number;
+  min_similarity: number;
+  max_chars: number;
+  // Also the industry's other accounts' examples without numbers.
+  share_in_industry: boolean;
+  copy_guard: boolean;
+};
+
+// hand: typed by a person; edited: a draft an operator changed before
+// approving it; flagged: in a chat the admin flagged.
+export type ReplyExampleSource = "hand" | "edited" | "flagged";
+// A time waiting for the owner is never an example, so never a phase here.
+export type ReplyExamplePhase = "before_time" | "booked" | "after";
+
+export type ReplyExamplesStatus = {
+  tenant_id: number;
+  industry_id: number;
+  retrieval: RetrievalSettings;
+  // Some account of the industry has retrieval on, so the hourly round
+  // keeps this account's examples up to date.
+  in_hourly_round: boolean;
+  counts: {
+    total: number;
+    active: number;
+    with_figures: number;
+    embedded: number;
+    not_embedded: number;
+    // Examples with wordings, and the wordings in all.
+    worded: number;
+    wordings: number;
+    by_source: Record<ReplyExampleSource, number>;
+    by_phase: Record<ReplyExamplePhase, number>;
+    // The industry's other accounts' active examples without numbers.
+    shared_in_industry: number;
+  };
+  embedder: { up: boolean; model: string | null };
+  // DEEPSEEK_PLATFORM_KEY is set: wording needs it.
+  wordings_ready: boolean;
+  last_ingest_at: string | null;
+};
+
+export type ReplyExample = {
+  id: number;
+  tenant_id: number;
+  chat_id: number;
+  source: ReplyExampleSource;
+  verdict: "good" | "plain";
+  phase: ReplyExamplePhase;
+  outcome: string;
+  client_kind: string;
+  has_figures: boolean;
+  active: boolean;
+  // What the business had just said, the client's message, her reply: masked.
+  context_text: string;
+  client_text: string;
+  reply_text: string;
+  embedded: boolean;
+  // The client side reworded by the model.
+  wordings: string[];
+  created_at: string;
+};
+
+export type ReplyExamplePage = { total: number; items: ReplyExample[] };
+
+export type ReplyExamplesRebuild = ReplyExamplesStatus & {
+  // more: there are chats left to read; call again to go on.
+  ingest: { chats: number; turns: number; added: number; removed: number; more: boolean;
+    skipped: Record<string, number> };
+  embedded: number;
+};
+
+export type ReplyExamplesWorded = ReplyExamplesStatus & {
+  result: { examples: number; wordings: number; calls: number; error: string };
+};
+
+export type ReplyExampleMatch = {
+  id: number;
+  similarity: number;
+  // The text that matched best, and whether it is a generated wording.
+  matched: string;
+  generated: boolean;
+  client_text: string;
+  reply_text: string;
+  context_text: string;
+  source: ReplyExampleSource;
+  verdict: "good" | "plain";
+  phase: ReplyExamplePhase;
+  has_figures: boolean;
+  // From this account, not another of the industry.
+  own: boolean;
+  tenant_id: number;
+  account: string;
+  chat_id: number;
+  chat: string;
+  // In the note the bot would get.
+  shown: boolean;
+};
+
+// POST /api/finetune/reply-examples/try, whether retrieval is on or not.
+export type ReplyExampleTry = {
+  tenant_id: number;
+  phase: ReplyExamplePhase | null;
+  retrieval: RetrievalSettings;
+  model: string;
+  vectors: number;
+  ms: number;
+  // The best ten, best first.
+  results: ReplyExampleMatch[];
+  // As the model would get it; "" when nothing is shown.
+  note: string;
+  // The message names a time: only the owner answers, so nothing is shown.
+  time_named: boolean;
 };
 
 export type ChatLine = { id: number; who: "client" | "business" | "event"; text: string; at: string };

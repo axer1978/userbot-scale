@@ -60,7 +60,8 @@ message, exactly once — except in "except_categories" — and "never_says" lis
 phrases no reply may contain (any case). --candidate takes {"client": {...},
 "industry_boundaries": "...", "config": {...}} to try a prompt (and client
 config) before saving it; "industry": {section: text} tries a whole industry
-template.
+template; "rules": [...] tries other operator rules than the active ones
+(rules.py), [] none.
 """
 
 from __future__ import annotations
@@ -536,9 +537,12 @@ async def render(pool, tenant_id: int, candidate: Optional[Path]) -> tuple[tenan
         # over what the client has, validated like a save.
         bundle.resolved = tenant_config.resolve(bundle.industry["default_config"],
                                                 _deep_merge(bundle.tenant.get("config_json") or {}, cand["config"]))
+    # The operator's rules as live (rules.py), or the ones to try: [] tries
+    # a folded prompt without them.
+    rules = cand["rules"] if "rules" in cand else bundle.layers["rules"]
     return bundle, prompt_layers.render(base=bundle.layers["base"], industry=industry, client=client,
                                         business_name=bundle.tenant["name"],
-                                        language_policy=bundle.config["language_policy"])
+                                        language_policy=bundle.config["language_policy"], rules=rules)
 
 
 def report(results: list[Result], verbose: bool) -> str:
