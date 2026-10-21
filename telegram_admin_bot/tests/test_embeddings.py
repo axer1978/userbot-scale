@@ -155,6 +155,24 @@ async def test_the_timeout_reaches_the_request():
     assert seen[1]["read"] == 30.0
 
 
+
+@pytest.mark.asyncio
+async def test_health_names_the_model_or_says_none(monkeypatch):
+    monkeypatch.setenv("EMBEDDER_URL", "http://embedder.test:8000")
+    seen: list[str] = []
+
+    def healthy(request):
+        seen.append(f"{request.method} {request.url}")
+        return httpx.Response(200, json={"model": "m-1", "dim": 384})
+
+    async with _client(healthy) as client:
+        assert await embeddings.health(client=client) == "m-1"
+    assert seen == ["GET http://embedder.test:8000/health"]
+    for handler in (_raises(httpx.ConnectError("refused")), _status(500), _status(200, {"dim": 3}),
+                    lambda request: httpx.Response(200, content=b"not json")):
+        async with _client(handler) as client:
+            assert await embeddings.health(client=client) is None
+
 def test_similarity_of_unit_vectors():
     a, b = _unit(1, 0, 0), _unit(1, 1, 0)
     assert embeddings.similarity(a, a) == pytest.approx(1.0)

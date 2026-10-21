@@ -13,7 +13,7 @@ import pytest
 import audit
 import controls
 import pg as pg_module
-from conftest import seed_session
+from conftest import migration_versions, seed_session
 from database import SessionRegistry
 
 pytestmark = [pytest.mark.requires_pg, pytest.mark.asyncio]
@@ -132,7 +132,7 @@ async def test_upgrading_a_database_with_telegram_data_keeps_it_all(pg_pool, tmp
             for t in ("conversations", "messages", "bookings", "tenant_holds")
         }
 
-    assert await pg_module.apply_migrations(pg_pool) == list(range(6, pg_module.latest_version() + 1))
+    assert await pg_module.apply_migrations(pg_pool) == migration_versions(6)
 
     assert await channels(pg_pool, "tg1") == ("telegram", "telegram")
     async with pg_pool.acquire() as con:
