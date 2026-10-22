@@ -230,6 +230,104 @@ def test_the_owner_request_names_the_number_and_how_to_answer():
     assert "YES 7" in text and "NO 7" in text and "7 15:30" in text
 
 
+def test_the_request_names_her_and_the_extras_he_asked_for():
+    text = bookings.format_request(_b(service="", notes="Asked for now first.", extras="domination +50"),
+                                   name="Pamella")
+    assert text.split("\n")[:6] == [
+        "📅 Booking request #7",
+        "Customer: Anna (@anna)",
+        "Girl: Pamella",
+        "Extras: domination +50",
+        "When: Sun 04 Oct 2026, 15:00–16:00",
+        "Notes: Asked for now first.",
+    ]
+    assert text.endswith("Reply YES 7 or NO 7, or a new time like 7 15:30 or 7 04.10 15:30.")
+    assert "Booking request #7 (new time)" in bookings.format_request(_b(), changed=True, name="Lola")
+    # No extras in the chat: said so. No name: no line.
+    assert "Extras: none mentioned" in bookings.format_request(_b())
+    assert "Girl:" not in bookings.format_request(_b())
+
+
+def test_owner_updates_start_with_her_name():
+    moved = _b(state=bs.CONFIRMED, proposed_by=bs.CUSTOMER,
+               proposed_starts_at=datetime(2026, 10, 4, 13, 0, tzinfo=timezone.utc),
+               proposed_ends_at=datetime(2026, 10, 4, 14, 0, tzinfo=timezone.utc))
+    assert bookings.format_move_request(moved, name="Lola").startswith("🔁 Lola — #7: Anna (@anna) asks")
+    assert bookings.format_owner_update(_b(), "lapsed.", name="Lola").startswith("Lola — #7 Anna (@anna), ")
+    # No name: as before.
+    assert bookings.format_owner_update(_b(), "lapsed.").startswith("#7 Anna (@anna), ")
+
+
+def test_the_extraction_asks_for_the_extras():
+    assert '"extras"' in bookings.EXTRACT_SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize("text, loose", [
+    ("YES 7", False), ("yes", False), ("ok!", False), ("NO 7", False),
+    ("ok in 20 min", True), ("yes, see you", True), ("YES 7 after 3", True), ("no 7 sorry", True),
+])
+def test_a_yes_or_no_with_words_after_it_is_loose(text, loose):
+    cmd = bookings.parse_owner_reply(text, today=date(2026, 10, 4))
+    assert cmd is not None and cmd.loose is loose
+
+
+def test_strict_commands_are_never_loose():
+    for text in ("CANCEL 7", "DONE 7", "7 15:30", "LIST", "READY 7"):
+        assert not bookings.parse_owner_reply(text, today=date(2026, 10, 4)).loose
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ('{"action": "yes", "number": 8, "start": null, "in_minutes": null}',
+     {"action": "yes", "number": 8, "start": None, "in_minutes": None}),
+    ('Sure: ```{"action": "ready_at", "number": "#8", "in_minutes": 20.0}```',
+     {"action": "ready_at", "number": 8, "start": None, "in_minutes": 20}),
+    ('{"action": "time", "number": null, "start": "2026-10-20T15:30"}',
+     {"action": "time", "number": None, "start": "2026-10-20T15:30", "in_minutes": None}),
+    ('{"action": "ready_at", "number": 0, "in_minutes": -5}',
+     {"action": "ready_at", "number": None, "start": None, "in_minutes": None}),
+])
+def test_the_owner_answer_is_cleaned(raw, expected):
+    assert bookings.parse_owner_answer(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ['{"action": "none"}', '{"action": "maybe"}', "yes", "", '{"action": '])
+def test_no_owner_answer_when_not_about_a_booking_or_unusable(raw):
+    assert bookings.parse_owner_answer(raw) is None
+
+
+@pytest.mark.parametrize("hm, expected", [((12, 20, 0), (12, 20)), ((12, 21, 0), (12, 25)), ((12, 20, 30), (12, 25)),
+                                          ((23, 58, 0), (0, 0))])
+def test_her_ready_time_is_a_five_minute_mark(hm, expected):
+    at = datetime(2026, 10, 20, *hm, tzinfo=timezone.utc)
+    got = bookings.ready_time(at)
+    assert (got.hour, got.minute) == expected and got >= at
+
+
+def test_the_owner_reader_sees_each_booking_and_what_he_asked_for():
+    note = bookings.owner_state_note([
+        _b(extras="domination +50"),
+        _b(number=8, state=bs.CONFIRMED, customer_name="Khan", notes="Outcall.", ready_at=None),
+        _b(number=9, state=bs.CONFIRMED, proposed_by=bs.CUSTOMER, customer_name="Ivo",
+           proposed_starts_at=datetime(2026, 10, 4, 13, 0, tzinfo=timezone.utc),
+           proposed_ends_at=datetime(2026, 10, 4, 14, 0, tzinfo=timezone.utc)),
+    ], outcall_taxi=True)
+    lines = note.split("\n")
+    assert lines[0] == ("#7 Anna: the customer asks for Sun 04 Oct 2026, 15:00–16:00, waiting for their answer; "
+                        "extras: domination +50")
+    assert lines[1].startswith("#8 Khan: confirmed for Sun 04 Oct 2026, 15:00–16:00; outcall: send READY 8")
+    assert "asks to move it to Sun 04 Oct 2026, 16:00–17:00, waiting for their answer" in lines[2]
+    prompt = bookings.owner_answer_prompt("them: ready in 20", "Europe/Riga",
+                                          now=datetime(2026, 10, 4, 14, 40, tzinfo=ZoneInfo("Europe/Riga")),
+                                          state_note=note, latest="ready in 20", replying_to=7)
+    assert "Sunday 2026-10-04 14:40 (Europe/Riga)" in prompt and "replies to the message about booking #7" in prompt
+    assert prompt.endswith("Their latest message, the one to decide on: ready in 20")
+
+
+def test_her_name_line_says_when_to_tell_it():
+    line = bookings.own_name_line("Lola")
+    assert "Your name is Lola" in line and "confirmed" in line and "arrived" in line
+
+
 def test_a_pending_booking_is_never_presented_as_confirmed():
     line = bookings.standing_line(_b())
     assert "Do NOT say it is confirmed" in line

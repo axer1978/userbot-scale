@@ -128,7 +128,7 @@ def decline(booking: Mapping[str, Any], *, actor: str, now: datetime, reason: st
 
 def change_request(
     booking: Mapping[str, Any], *, starts_at: datetime, ends_at: datetime, blocked_until: datetime,
-    now: datetime, service: Optional[str] = None,
+    now: datetime, service: Optional[str] = None, extras: Optional[str] = None,
 ) -> Change:
     """The customer asked for a different time before the owner answered.
     Same booking, same number; it goes back to the owner."""
@@ -140,6 +140,8 @@ def change_request(
     }
     if service is not None:
         fields["service"] = service
+    if extras is not None:
+        fields["extras"] = extras
     return Change("change_request", state, REQUESTED, fields)
 
 

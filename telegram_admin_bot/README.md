@@ -631,11 +631,34 @@ the opening hours, the calendar link and AI usage.
   *Booking request #7 … Reply YES 7 or NO 7, or a new time like 7 15:30.*
   Numbers count per client from 1. **Nothing is confirmed until a person
   says yes**: the owner by text, or you in the panel.
+- The request lists who asks, her name (`Girl:`), the **extras** he asked
+  for in the chat (`Extras: domination +50, …`, read with the time; kept on
+  the booking and shown on the Bookings page), when, and notes.
+- `booking.name` (her name): the request's `Girl:` line, and updates to the
+  owner start with it (*Lola — #7 …*; empty: the account's name). The reply
+  writer tells the customer the name when the booking is confirmed and when
+  they arrive (empty: no name is told).
 - The owner can answer `YES 7`, `NO 7`, a new time (`7 15:30`,
   `7 04.10 15:30`, `7 tomorrow 15:30`), `CANCEL 7`, `DONE 7`, `NOSHOW 7`,
   `LIST`, and for an outcall `READY 7` / `IN 7` (below). A bare `yes` works as a reply to the request message, or when only
   one request is open. When the owner proposes a time, the customer is asked;
   if they take it, it is confirmed (the owner wrote that time).
+- **Her own words** (`booking.owner_free_text`, on): anything that is not a
+  plain command is read by the model against the open bookings and what each
+  customer asked for. *yes I confirm* = YES; *I'm ready in 20 minutes* /
+  *I can meet in 1 hour* = YES when that is by the time he asked (5 min
+  slack), otherwise that time (next 5-minute mark) is proposed to him;
+  *can he come at 15:30?* = a new time; *I'm ready* / *in the taxi* = the
+  outcall steps. Which booking: the request she replies to, the one she
+  names, or the only one waiting. Unclear → she is asked again with the
+  commands; not about a booking → ordinary reply. The answer always says what
+  was done (*#8 confirmed ✅ …*, *#8: … proposed to Khan*). A strict command
+  costs no model call; a *yes* with words after it (*ok in 20 min*) is read
+  by the model, and stays a yes when the model can't be asked. To see how
+  well the real model reads her: `docker compose exec manager python
+  owner_check.py --tenant <id>` (the answers in
+  `replay_scenarios/owner-answers.json`, English, Russian and Latvian; one
+  small model call each on the account's own key; nothing is sent).
 - The customer can change the time before the owner answers (same number),
   ask to move a confirmed booking (the owner answers `YES 7` / `NO 7`), or
   cancel. Every change is in the booking's history and the audit log.

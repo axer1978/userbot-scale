@@ -257,6 +257,15 @@ class Booking(_Strict):
     # The owner's Telegram (username, phone or id). Requests go there from
     # this account; the owner answers YES n, NO n or with a new time.
     provider: str = Field("", max_length=64)
+    name: str = Field("", max_length=64, description=(
+        "Her name: the 'Girl:' line of a booking request to the owner, and updates to the owner start with it "
+        "(empty: the account's name). The customer is told it when the booking is confirmed and when they "
+        "arrive (empty: no name)."))
+    # Read the owner's answers in her own words too ("I'm ready in 20
+    # minutes", "yes I confirm", "can he come at 15:30?"), against what the
+    # customer asked for: one small model call per message that is not a
+    # plain command, only while a booking is open. Off: commands only.
+    owner_free_text: bool = True
     # Where the e-mail record of each confirmation, change and cancellation
     # goes. Needs SMTP_* in .env; empty = no e-mail.
     owner_email: str = Field("", max_length=254)

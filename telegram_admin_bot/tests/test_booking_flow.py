@@ -55,7 +55,8 @@ class FakeEvent:
 @pytest_asyncio.fixture
 async def world(app, db, monkeypatch):
     sent: dict[int, list[str]] = {}
-    script = {"extract": None, "arrived": False, "reply": "ok", "notes": [], "calls": 0, "extract_calls": 0}
+    script = {"extract": None, "arrived": False, "reply": "ok", "notes": [], "calls": 0, "extract_calls": 0,
+              "owner_answer": None, "owner_calls": []}
     clock = {"now": NOW}
     msg_ids = iter(range(500, 10_000))
 
@@ -74,6 +75,13 @@ async def world(app, db, monkeypatch):
 
     async def fake_arrival(**kw):
         return script["arrived"]
+
+    async def fake_owner_answer(**kw):
+        script["owner_calls"].append(kw)
+        answer, script["owner_answer"] = script["owner_answer"], None
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
     async def fake_reply(**kw):
         script["calls"] += 1
@@ -105,6 +113,7 @@ async def world(app, db, monkeypatch):
     monkeypatch.setattr(session_runtime.asyncio, "sleep", nothing)
     monkeypatch.setattr(ai_responder, "extract_booking", fake_extract)
     monkeypatch.setattr(ai_responder, "extract_arrival", fake_arrival)
+    monkeypatch.setattr(ai_responder, "read_owner_answer", fake_owner_answer)
     monkeypatch.setattr(ai_responder, "generate_reply", fake_reply)
     app.deepseek_key = "k"
     app.config["auto_send"] = True
@@ -165,6 +174,30 @@ async def test_a_request_goes_to_the_owner_and_yes_confirms_it(world):
     # The customer is told in a reply started by the confirmation itself.
     assert "has just been CONFIRMED" in w.script["notes"][-1]
     assert (await only_booking(w))["customer_notice"] is None
+
+
+async def test_her_name_heads_the_owner_request_and_is_told_to_the_customer(world):
+    w = world
+    w.app.config["booking"]["name"] = "Lola"
+    await customer(w, "hi")
+    # No booking in the chat yet: no name.
+    assert "Your name is" not in w.script["notes"][-1]
+
+    await customer(w, "tomorrow at 15?", book())
+    assert w.sent[OWNER][-1].startswith("📅 Booking request #1\nCustomer: Anna (@anna)\nGirl: Lola\n")
+
+    await owner(w, "YES 1")
+    assert "has just been CONFIRMED" in w.script["notes"][-1]
+    assert "Your name is Lola" in w.script["notes"][-1]
+
+
+async def test_without_her_name_the_owner_sees_the_account_name_and_the_customer_none(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    assert f"\nGirl: {w.app.bundle.tenant['name']}\n" in w.sent[OWNER][-1]
+
+    await owner(w, "YES 1")
+    assert "Your name is" not in w.script["notes"][-1]
 
 
 async def test_the_address_follows_the_reply_that_says_it_is_confirmed(world):
@@ -645,6 +678,170 @@ async def test_a_bare_yes_answers_the_only_open_request_or_asks_which(world):
     await owner(w, "yes", reply_to=b1["provider_message_id"])
     assert (await w.store.by_number(1))["state"] == bs.CONFIRMED
     assert (await w.store.by_number(2))["state"] == bs.PENDING
+
+
+# ------------------------------------------------ the owner's own words
+
+
+def said(action, number=None, start=None, in_minutes=None):
+    return {"action": action, "number": number, "start": start, "in_minutes": in_minutes}
+
+
+async def test_the_request_shows_the_extras_he_asked_for_and_keeps_them(world):
+    w = world
+    await customer(w, "tomorrow at 15, with domination", book(extras="domination  +50"))
+    assert "\nExtras: domination +50\n" in w.sent[OWNER][-1]
+    assert (await only_booking(w))["extras"] == "domination +50"
+    # A new time before her answer: the extras he names then replace them.
+    await customer(w, "17 better, and cum on face", book("2030-03-05T17:00", extras="domination +50, cum on face +50"))
+    assert "\nExtras: domination +50, cum on face +50\n" in w.sent[OWNER][-1]
+
+
+async def test_yes_i_confirm_in_her_words_confirms_the_request(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book(extras="domination +50"))
+    w.script["owner_answer"] = said("yes")
+    await owner(w, "yes i confirm")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1].startswith("#1 confirmed")
+    [call] = w.script["owner_calls"]
+    assert call["latest"] == "yes i confirm" and call["usage_sink"] is not None
+    assert "#1 Anna: the customer asks for Tue 05 Mar 2030, 15:00–16:00" in call["state_note"]
+    assert "extras: domination +50" in call["state_note"]
+    # The model sees her chat, the request in it.
+    assert any("Booking request #1" in m["content"] for m in call["history"])
+
+
+async def test_ready_in_20_minutes_for_a_now_request_proposes_that_time(world):
+    w = world
+    await customer(w, "can I come now?", {"intent": "book", "asap": True, "start": None})
+    assert (await only_booking(w))["starts_at"].astimezone(RIGA).strftime("%H:%M") == "12:05"
+    w.script["owner_answer"] = said("ready_at", in_minutes=20)
+    await owner(w, "I'm ready in 20 minutes")
+    b = await only_booking(w)
+    assert b["state"] == bs.PENDING and b["proposed_by"] == bs.OWNER
+    assert b["proposed_starts_at"].astimezone(RIGA).strftime("%H:%M") == "12:20"
+    assert "12:20" in w.sent[OWNER][-1] and "proposed to Anna" in w.sent[OWNER][-1]
+    assert "proposes Mon 04 Mar 2030, 12:20–13:20" in w.script["notes"][-1]
+
+
+async def test_ready_by_the_time_he_asked_for_is_a_yes(world):
+    w = world
+    await customer(w, "12:30 today?", book("2030-03-04T12:30"))
+    w.script["owner_answer"] = said("ready_at", in_minutes=20)
+    await owner(w, "I'll be ready in 20 min")
+    b = await only_booking(w)
+    assert b["state"] == bs.CONFIRMED and b["proposed_by"] is None
+    assert b["starts_at"].astimezone(RIGA).strftime("%H:%M") == "12:30"
+
+
+async def test_able_to_meet_in_an_hour_proposes_the_hour(world):
+    w = world
+    await customer(w, "12:30 today?", book("2030-03-04T12:30"))
+    w.script["owner_answer"] = said("ready_at", in_minutes=60)
+    await owner(w, "I will be able to meet in 1 hour")
+    b = await only_booking(w)
+    assert b["proposed_by"] == bs.OWNER and b["proposed_starts_at"].astimezone(RIGA).strftime("%H:%M") == "13:00"
+
+
+async def test_a_time_she_names_in_her_words_is_proposed(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = said("time", start="2030-03-05T17:00")
+    await owner(w, "can he come at 5 instead?")
+    b = await only_booking(w)
+    assert b["proposed_starts_at"].astimezone(RIGA).hour == 17
+    # The very time he asked for: a yes.
+    w.script["owner_answer"] = said("time", start="2030-03-05T15:00")
+    await owner(w, "ok actually 15 is fine")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+
+
+async def test_her_words_answer_the_request_she_replies_to(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 17?", book("2030-03-05T17:00"), chat=43)
+    b2 = await w.store.by_number(2)
+    w.script["owner_answer"] = said("yes")
+    await owner(w, "this one yes, I confirm", reply_to=b2["provider_message_id"])
+    assert w.script["owner_calls"][-1]["replying_to"] == 2
+    assert (await w.store.by_number(2))["state"] == bs.CONFIRMED
+    assert (await w.store.by_number(1))["state"] == bs.PENDING
+
+
+async def test_unclear_words_get_the_commands_back(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = said("unclear")
+    await owner(w, "hmm maybe, who is he?")
+    assert w.sent[OWNER][-1].startswith("#1: I did not get that. Reply YES 1 or NO 1")
+    assert (await only_booking(w))["state"] == bs.PENDING
+
+
+async def test_words_not_about_a_booking_get_an_ordinary_reply(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    calls = w.script["calls"]
+    await owner(w, "how are you?")
+    assert len(w.script["owner_calls"]) == 1 and w.script["calls"] == calls + 1
+    assert (await only_booking(w))["state"] == bs.PENDING
+
+
+async def test_no_model_call_for_a_command_or_when_nothing_is_open(world):
+    w = world
+    await owner(w, "hi there")
+    assert w.script["owner_calls"] == []
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    assert w.script["owner_calls"] == []
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+
+
+async def test_a_yes_with_words_stands_when_the_model_cannot_be_asked(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "ok see you")
+    assert len(w.script["owner_calls"]) == 1
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+
+
+async def test_her_words_read_as_ok_in_20_are_not_a_plain_yes(world):
+    w = world
+    await customer(w, "can I come now?", {"intent": "book", "asap": True, "start": None})
+    w.script["owner_answer"] = said("ready_at", 1, in_minutes=20)
+    await owner(w, "ok in 20 min")
+    b = await only_booking(w)
+    assert b["state"] == bs.PENDING and b["proposed_starts_at"].astimezone(RIGA).strftime("%H:%M") == "12:20"
+
+
+async def test_a_yes_to_a_confirmed_booking_changes_nothing(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    w.script["owner_answer"] = said("yes", 1)
+    await owner(w, "yes yes he is coming")
+    assert w.sent[OWNER][-1] == "#1 stays as it is: Tue 05 Mar 2030, 15:00–16:00."
+
+
+async def test_reading_her_words_can_be_switched_off(world):
+    w = world
+    w.app.config["booking"]["owner_free_text"] = False
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "I'm ready in 20 minutes")
+    assert w.script["owner_calls"] == []
+    assert (await only_booking(w))["proposed_by"] is None
+
+
+async def test_her_ready_in_words_starts_the_outcall_taxi_steps(world):
+    w = world
+    await customer(w, "come to my hotel tomorrow at 15", book(outcall=True))
+    await owner(w, "YES 1")
+    w.clock["now"] = datetime(2030, 3, 5, 14, 20, tzinfo=RIGA)
+    w.script["owner_answer"] = said("ready")
+    await owner(w, "I'm ready, he can order the taxi")
+    assert (await only_booking(w))["ready_at"] is not None
+    assert "is asked to order the taxi" in w.sent[OWNER][-1]
 
 
 async def test_the_owner_proposes_a_time_and_the_customer_takes_it(world):
