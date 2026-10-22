@@ -7,7 +7,9 @@ import copy
 import functools
 import logging
 import re
-from typing import Any, Awaitable, Callable, Optional
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any, Awaitable, Callable, Optional, Sequence
 
 import httpx
 
@@ -433,6 +435,98 @@ def _retry_after(response: httpx.Response, attempt: int) -> float:
     return BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
 
 
+# ------------------------------------------------------------------ clock
+# A chat reaches the model with no times in it: without these, "tonight"
+# written two days ago reads like tonight, a client back after a day reads
+# like the same minute, and "are you free now?" is answered by guessing
+# what day and hour it is.
+
+# A message this long after the one before it gets its time written in front.
+TIME_GAP = timedelta(hours=2)
+_TIME_MARK = re.compile(r"⟦[^⟧\n]{0,80}⟧[ \t]*")
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
+           "October", "November", "December")
+CLOCK_NOTE = (
+    "Times in ⟦ ⟧ in front of messages show when they were sent; the system adds them, never write them "
+    "yourself. Now, today, tonight and tomorrow in an earlier message meant the day it was written."
+)
+
+
+@dataclass(frozen=True)
+class Clock:
+    """When this reply is written, in the account's timezone (`zone` names
+    it), and when each message of the history was sent, one per message."""
+    now: datetime
+    sent_at: tuple[Optional[datetime], ...] = ()
+    zone: str = ""
+
+
+def _day(at: datetime) -> str:
+    return f"{_WEEKDAYS[at.weekday()]} {at.day} {_MONTHS[at.month - 1]}"
+
+
+def when(at: datetime, now: datetime) -> str:
+    """A message's time as the model reads it: "today 21:05", "yesterday
+    23:40" or "Wednesday 21 October, 22:10"."""
+    at = at.astimezone(now.tzinfo)
+    days = (now.date() - at.date()).days
+    if days == 0:
+        return f"today {at:%H:%M}"
+    if days == 1:
+        return f"yesterday {at:%H:%M}"
+    return f"{_day(at)}, {at:%H:%M}"
+
+
+def ago(delta: timedelta) -> str:
+    minutes = int(delta.total_seconds() // 60)
+    if minutes < 2:
+        return "just now"
+    if minutes < 60:
+        return f"{minutes} minutes ago"
+    hours = minutes // 60
+    if hours < 48:
+        return "1 hour ago" if hours == 1 else f"{hours} hours ago"
+    return f"{hours // 24} days ago"
+
+
+def with_times(history: Sequence[dict[str, str]], clock: Clock) -> list[dict[str, str]]:
+    """The history with ⟦its time⟧ in front of the first message and of
+    every message sent TIME_GAP or more after the one before it. A copy:
+    the caller's list stays as it is. Unmarked when the times do not line
+    up with the messages."""
+    if len(clock.sent_at) != len(history):
+        return [copy.copy(message) for message in history]
+    marked: list[dict[str, str]] = []
+    previous: Optional[datetime] = None
+    for message, at in zip(history, clock.sent_at):
+        message = copy.copy(message)
+        if at is not None:
+            if previous is None or at - previous >= TIME_GAP:
+                message["content"] = f"⟦{when(at, clock.now)}⟧ {message.get('content') or ''}"
+            previous = at
+        marked.append(message)
+    return marked
+
+
+def clock_note(history: Sequence[dict[str, str]], clock: Clock) -> str:
+    """What time it is now and how long ago they last wrote, for the end of
+    the conversation, where the model reads it last."""
+    zone = f" ({clock.zone})" if clock.zone else ""
+    lines = [f"Now it is {_day(clock.now)}, {clock.now:%H:%M}{zone}."]
+    if len(clock.sent_at) == len(history):
+        theirs = [at for message, at in zip(history, clock.sent_at) if message.get("role") == "user" and at]
+        if theirs:
+            lines.append(f"Their last message came {ago(clock.now - theirs[-1])}.")
+    lines.append(CLOCK_NOTE)
+    return " ".join(lines)
+
+
+def without_time_marks(text: str) -> str:
+    """The reply without a ⟦time⟧ the model copied from the history."""
+    return _TIME_MARK.sub("", text or "")
+
+
 async def generate_reply(
     *,
     api_key: str,
@@ -454,6 +548,7 @@ async def generate_reply(
     burst_keep_together: bool = True,
     style_note: str = "",
     examples_note: str = "",
+    clock: Optional[Clock] = None,
 ) -> str:
     """Return the draft reply text, or raise AIResponderError with a safe message.
 
@@ -478,6 +573,11 @@ async def generate_reply(
     `examples_note` holds earlier moments like this one with the business's
     real replies (examples.py): before the appointments, which stay the
     freshest thing the model reads.
+
+    `clock`, when given, puts the times of the history in front of its
+    messages (with_times) and what time it is now after the conversation
+    (clock_note): last, so the cached prompt before it stays the same from
+    one minute to the next. A time the model copies is taken out again.
     """
     if not api_key:
         raise AIResponderError("DEEPSEEK_API_KEY is not set.")
@@ -512,23 +612,27 @@ async def generate_reply(
         sections.append(no_reply_section(no_reply_instruction))
 
     messages = [{"role": "system", "content": "\n\n".join(sections)}]
-    messages.extend(_merge_consecutive_turns(history))
+    messages.extend(_merge_consecutive_turns(with_times(history, clock) if clock is not None else history))
     if len(messages) == 1:
         raise AIResponderError("No conversation history to reply to.")
+    closing = [clock_note(history, clock)] if clock is not None else []
     if messages[-1].get("role") == "assistant":
         # Nothing new from them: a booking update, a reminder or a waitlist
         # offer starts this message. Ending on our own turn, the model tends
         # to repeat or continue it, or to answer with nothing usable.
-        messages.append({"role": "system", "content": own_initiative_note(booking_note)})
+        closing.append(own_initiative_note(booking_note))
     elif news := _news_lines(booking_note):
         # News for a reply to them (a confirmation after their time went
         # unanswered, a time that is taken) goes where the model reads last
         # too: far up in the system prompt it was answered as if absent.
-        messages.append({"role": "system", "content": NEWS_NOTE + "\n" + "\n".join(news)})
+        closing.append(NEWS_NOTE + "\n" + "\n".join(news))
+    if closing:
+        messages.append({"role": "system", "content": "\n\n".join(closing)})
 
-    return await _complete(
+    text = await _complete(
         api_key=api_key, messages=messages, ai_config=ai_config, client=client, **_sink(usage_sink)
     )
+    return without_time_marks(text) if clock is not None else text
 
 
 OWN_INITIATIVE_NOTE = (

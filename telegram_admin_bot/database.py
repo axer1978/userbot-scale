@@ -711,18 +711,21 @@ class Database:
             )
         return [_message(r) for r in rows]
 
-    async def get_history_for_ai(self, chat_id: int, limit: int = 30) -> list[dict[str, str]]:
+    async def get_history_for_ai(self, chat_id: int, limit: int = 30, *,
+                                 with_times: bool = False) -> list[dict[str, Any]]:
         """Recent exchange as OpenAI-style role/content pairs.
 
         Drafts that were never approved, rejections and error rows are left
         out — only what actually crossed the wire is context for the model.
+        `with_times` adds "at", when the row was stored (the reply's clock,
+        ai_responder.Clock); the caller takes it out before the API sees it.
         """
         tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             rows = await con.fetch(
                 """
                 SELECT * FROM (
-                    SELECT direction, text, id FROM messages
+                    SELECT direction, text, id, created_at FROM messages
                      WHERE tenant_id = $1
                        AND chat_id = $2
                        AND status = ANY($3)
@@ -737,10 +740,14 @@ class Database:
                 [DIR_IN, DIR_OUT],
                 limit,
             )
-        return [
+        history: list[dict[str, Any]] = [
             {"role": "user" if r["direction"] == DIR_IN else "assistant", "content": r["text"]}
             for r in rows
         ]
+        if with_times:
+            for message, r in zip(history, rows):
+                message["at"] = r["created_at"]
+        return history
 
     async def update_message(
         self,
