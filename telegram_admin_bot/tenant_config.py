@@ -196,6 +196,9 @@ class AI(_Strict):
     max_tokens: int = Field(400, ge=1, le=8192)
     temperature: float = Field(1.0, ge=0.0, le=2.0)
     max_concurrent_requests: int = Field(4, ge=1, le=32)
+    history_messages: int = Field(60, ge=10, le=200, description=(
+        "How many of the chat's latest messages the model reads to write a reply (both sides). "
+        "Older ones are not seen at all."))
 
 
 class Safety(_Strict):
@@ -255,8 +258,9 @@ class Booking(_Strict):
     # this account; the owner answers YES n, NO n or with a new time.
     provider: str = Field("", max_length=64)
     name: str = Field("", max_length=64, description=(
-        "Her name. Booking requests and updates to the owner start with it (empty: the account's name), "
-        "and the customer is told it when the booking is confirmed and when they arrive (empty: no name)."))
+        "Her name: the 'Girl:' line of a booking request to the owner, and updates to the owner start with it "
+        "(empty: the account's name). The customer is told it when the booking is confirmed and when they "
+        "arrive (empty: no name)."))
     # Read the owner's answers in her own words too ("I'm ready in 20
     # minutes", "yes I confirm", "can he come at 15:30?"), against what the
     # customer asked for: one small model call per message that is not a

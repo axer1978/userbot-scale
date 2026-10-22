@@ -110,6 +110,43 @@ async def test_drafting_uses_the_tenant_prompt_and_burst_limit(app, db, pg_pool,
     assert draft["llm_model"] == "deepseek-chat"
 
 
+async def test_a_reply_knows_the_time_and_when_each_message_came(app, db, pg_pool, model, outbox, clock):
+    """Without a clock "tonight" from two days ago read like tonight: the
+    reply gets now in the account's timezone and the time of every message,
+    and the rows the checks read stay role/content only."""
+    await db.upsert_conversation(7, "Ann", None, False, 1)
+    await db.record_message(7, DIR_IN, STATUS_RECEIVED, "free tonight?", telegram_id=1)
+    await db.record_message(7, DIR_IN, STATUS_RECEIVED, "hey, and now?", telegram_id=2)
+    two_days_ago = clock["now"] - timedelta(days=2)
+    async with pg_pool.acquire() as con:
+        await con.execute("UPDATE messages SET created_at = $1 WHERE chat_id = 7 AND text = 'free tonight?'",
+                          two_days_ago)
+    model["reply"] = "yes love"
+
+    await app.draft_worker(7)
+
+    call = model["calls"][0]
+    assert all(set(m) == {"role", "content"} for m in call["history"])
+    stamp = call["clock"]
+    assert isinstance(stamp, ai_responder.Clock)
+    assert stamp.now == clock["now"] and stamp.zone == "Europe/Riga"
+    assert len(stamp.sent_at) == len(call["history"]) == 2
+    assert stamp.sent_at[0] == two_days_ago
+
+
+async def test_a_reply_reads_as_many_messages_as_the_config_says(app, db, model, outbox, clock):
+    await db.upsert_conversation(7, "Ann", None, False, 1)
+    for i in range(14):
+        await db.record_message(7, DIR_IN, STATUS_RECEIVED, f"question {i}?", telegram_id=i + 1)
+    app.config["ai"]["history_messages"] = 10
+    model["reply"] = "ok"
+
+    await app.draft_worker(7)
+
+    history = model["calls"][0]["history"]
+    assert [m["content"] for m in history] == [f"question {i}?" for i in range(4, 14)]
+
+
 async def test_an_auto_reply_is_sent_audited_and_metered(app, db, pg_pool, model, outbox, clock):
     app.config["auto_send"] = True
     await incoming(db)

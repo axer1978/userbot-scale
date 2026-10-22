@@ -152,6 +152,9 @@ STORE_RETRY_SECONDS = 2.0
 # again up to this many times, DRAFT_RETRY_SECONDS × the attempt later.
 DRAFT_DB_RETRIES = 3
 DRAFT_RETRY_SECONDS = 10.0
+# A reply is written from this many of the chat's latest messages when the
+# config has no ai.history_messages (tenant_config.AI has the same default).
+HISTORY_MESSAGES = 60
 
 
 class SendBlocked(Exception):
@@ -1173,6 +1176,11 @@ class SessionRuntime:
         """Now, in the tenant's timezone."""
         return self.utcnow().astimezone(bookings.tzinfo_for(self.config["timezone"]))
 
+    def history_messages(self) -> int:
+        """How many of a chat's latest messages a reply is written from
+        (ai.history_messages; older configs have none)."""
+        return int((self.config.get("ai") or {}).get("history_messages") or HISTORY_MESSAGES)
+
     def quiet_seconds_left(self, at: Optional[datetime] = None) -> float:
         """How long until quiet hours end (0 outside them) at `at`, now by default."""
         return humanlike.seconds_until_quiet_ends(at or self.local_now(), self.config["quiet_hours"])
@@ -1648,10 +1656,13 @@ class SessionRuntime:
                 await self.staging_skip(chat_id, None)
                 return
 
-            history = await self.db.get_history_for_ai(chat_id, limit=30)
+            history = await self.db.get_history_for_ai(chat_id, limit=self.history_messages(), with_times=True)
             if not history:
                 log.info("[%s] No usable history for chat %s; skipping draft.", self.session_id, chat_id)
                 return
+            # When each message was sent, for the reply's clock; out of the
+            # rows, which go on to the checks below as they always did.
+            sent_at = tuple(message.pop("at", None) for message in history)
 
             # The booking check for this message decides what the reply
             # has to say (taken, confirmed, offered times).
@@ -1721,6 +1732,7 @@ class SessionRuntime:
                     burst_keep_together=self.config["burst"].get("keep_together", True),
                     no_reply_instruction=no_reply,
                     style_note=self.style_note,
+                    clock=ai_responder.Clock(now=self.local_now(), sent_at=sent_at, zone=self.config["timezone"]),
                 )
                 async with self.ai_gate():
                     text = await ai_responder.generate_reply(
