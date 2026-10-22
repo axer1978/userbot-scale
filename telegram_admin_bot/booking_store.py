@@ -48,7 +48,7 @@ class BookingNotFound(LookupError):
 # Columns apply()/set_fields() may write. Anything else is a programming
 # error, not something a caller can smuggle in.
 _WRITABLE = {
-    "starts_at", "ends_at", "blocked_until", "service", "notes",
+    "starts_at", "ends_at", "blocked_until", "service", "notes", "extras",
     "proposed_starts_at", "proposed_ends_at", "proposed_by",
     "provider_chat_id", "provider_message_id", "provider_wa_message_id", "calendar_event_id",
     "customer_notice", "cancelled_by", "cancel_reason", "decided_by", "decided_at",
@@ -189,7 +189,7 @@ class BookingStore:
     async def create(
         self, *, chat_id: int, customer_name: str, customer_username: Optional[str],
         starts_at: datetime, ends_at: datetime, buffer_minutes: int, tz: str,
-        service: str = "", notes: str = "", actor: str = bs.CUSTOMER, reason: str = "",
+        service: str = "", notes: str = "", extras: str = "", actor: str = bs.CUSTOMER, reason: str = "",
     ) -> dict[str, Any]:
         """A new request, state `requested`, with the tenant's next number."""
         blocked_until = ends_at + timedelta(minutes=buffer_minutes)
@@ -199,10 +199,11 @@ class BookingStore:
                 number = await self._next_number(con)
                 row = await con.fetchrow(
                     "INSERT INTO bookings (tenant_id, session_id, number, chat_id, customer_ref, customer_name, "
-                    "customer_username, service, notes, starts_at, ends_at, blocked_until, tz, state) "
-                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'requested') RETURNING *",
+                    "customer_username, service, notes, extras, starts_at, ends_at, blocked_until, tz, state) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'requested') RETURNING *",
                     self.tenant_id, self.session_id, number, chat_id, ref, customer_name[:200],
-                    customer_username, service[:120], notes[:500], starts_at, ends_at, blocked_until, tz,
+                    customer_username, service[:120], notes[:500], extras[:300], starts_at, ends_at, blocked_until,
+                    tz,
                 )
                 await self._event(con, row["id"], None, bs.REQUESTED, "create", actor, reason)
                 await audit.record(

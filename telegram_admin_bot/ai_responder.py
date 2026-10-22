@@ -7,6 +7,7 @@ import copy
 import functools
 import logging
 import re
+from datetime import datetime
 from typing import Any, Awaitable, Callable, Optional
 
 import httpx
@@ -729,7 +730,7 @@ async def extract_booking(
     latest = next((m.get("content") or "" for m in reversed(history) if m.get("role") == "user"), "")
     extract_config = {
         **ai_config,
-        "max_tokens": 200,
+        "max_tokens": 300,
         "temperature": 0.0,
     }
     text = await _complete(
@@ -744,6 +745,39 @@ async def extract_booking(
         **_sink(usage_sink),
     )
     return bookings.parse_extraction(text)
+
+
+async def read_owner_answer(
+    *,
+    api_key: str,
+    history: list[dict[str, str]],
+    latest: str,
+    tz_name: str,
+    now: datetime,
+    state_note: str,
+    ai_config: dict[str, Any],
+    replying_to: Optional[int] = None,
+    client: Optional[httpx.AsyncClient] = None,
+    usage_sink: Optional[UsageSink] = None,
+) -> Optional[dict[str, Any]]:
+    """What the owner's answer in her own words means for the bookings in
+    `state_note` ("ready in 20 minutes", "yes I confirm"), as
+    bookings.parse_owner_answer returns it. None when it is not about them."""
+    import bookings
+
+    text = await _complete(
+        api_key=api_key,
+        messages=[
+            {"role": "system", "content": bookings.OWNER_ANSWER_SYSTEM_PROMPT},
+            {"role": "user", "content": bookings.owner_answer_prompt(
+                render_transcript(history), tz_name, now=now, state_note=state_note, latest=latest,
+                replying_to=replying_to)},
+        ],
+        ai_config={**ai_config, "max_tokens": 80, "temperature": 0.0},
+        client=client,
+        **_sink(usage_sink),
+    )
+    return bookings.parse_owner_answer(text)
 
 
 async def extract_arrival(

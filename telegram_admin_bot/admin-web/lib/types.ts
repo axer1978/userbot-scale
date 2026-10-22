@@ -142,6 +142,7 @@ export type Booking = {
   customer_name?: string | null;
   customer_username?: string | null;
   service?: string | null;
+  extras?: string | null;
   notes?: string | null;
   cancel_reason?: string | null;
   proposed_starts_at?: string | null;

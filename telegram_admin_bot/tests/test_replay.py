@@ -80,6 +80,13 @@ def test_the_address_tag_is_offered_and_the_address_follows_only_a_confirmation(
     assert "already sent the entry instructions" in replay.booking_note("way_in_sent", now, "Europe/Riga")
 
 
+def test_her_name_is_told_with_a_booking_as_in_the_runtime():
+    now = datetime(2026, 10, 5, 19, 20, tzinfo=timezone.utc)
+    assert "Your name is Lola" in replay.booking_note("confirmed_news", now, "Europe/Riga", name="Lola")
+    assert "Your name is" not in replay.booking_note(None, now, "Europe/Riga", name="Lola")
+    assert "Your name is" not in replay.booking_note("confirmed_news", now, "Europe/Riga")
+
+
 def test_the_outcall_taxi_chats_load_with_the_others():
     data = replay.load_all(["maria", "outcall-taxi"])
     taxi = [s for s in data["scenarios"] if s.get("outcall")]

@@ -128,6 +128,7 @@ function BookingRow({ b, tz, open, onToggle, onChanged }: {
         <div className="bk-detail">
           <Fact label="When" value={when(b.starts_at, tz, SHORT) + "–" + when(b.ends_at, tz, { hour: "2-digit", minute: "2-digit" })} />
           <Fact label="Customer" value={(b.customer_name || "") + (b.customer_username ? ` (@${b.customer_username})` : "")} />
+          <Fact label="Extras" value={b.extras} />
           <Fact label="Notes" value={b.notes} />
           <Fact label="Cancelled" value={b.cancel_reason} />
           <Fact label="Coming" value={b.attendance_confirmed_at ? "confirmed by the customer" : ""} />

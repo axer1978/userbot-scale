@@ -220,7 +220,8 @@ def fake_booking(state: str, now: datetime, tz: str, start: Optional[datetime] =
 
 def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[datetime] = None,
                  address_follows: bool = False, address_set: bool = False, quiet: bool = False,
-                 outcall: bool = False, outcall_taxi: bool = True, ready_minutes: int = 20) -> str:
+                 outcall: bool = False, outcall_taxi: bool = True, ready_minutes: int = 20,
+                 name: str = "") -> str:
     """The booking part of the reply prompt, as BookingFlow.reply_note
     writes it for a chat in this state."""
     lines = []
@@ -241,6 +242,8 @@ def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[d
             lines.append(bookings.TAXI_LINK_LINE)
         if state == "confirmed_news" and address_follows:
             lines.append(bookings.ADDRESS_FOLLOWS_LINE)
+        if name:
+            lines.append(bookings.own_name_line(name))
     if address_set:
         lines.append(bookings.ADDRESS_TAG_LINE)
     return bookings.context_for_reply(lines)
@@ -381,6 +384,7 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
     way_in = (ctx.config["booking"].get("arrival_instructions") or "").strip()
     taxi = bool(ctx.config["booking"].get("outcall_taxi", True))
     ready_minutes = int(ctx.config["booking"].get("outcall_ready_minutes", 20))
+    name = (ctx.config["booking"].get("name") or "").strip()
     for step in scenario["steps"]:
         if "bot" in step:
             history.append({"role": "assistant", "content": step["bot"]})
@@ -460,7 +464,7 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
             booking_note=booking_note(state, now, ctx.tz, start,
                                       address_follows=bool(address) and not outcall and not address_sent,
                                       address_set=bool(address), quiet=quiet, outcall=outcall,
-                                      outcall_taxi=taxi, ready_minutes=ready_minutes),
+                                      outcall_taxi=taxi, ready_minutes=ready_minutes, name=name),
             system_prompt=ctx.prompt.text,
             media_note="\n".join(filter(None, [ctx.media_note, ctx.media_note and media.sent_line(ctx.photos, history)])),
             language_locked=ctx.config["language_policy"] != "mirror", burst_max=burst["max_messages"],
