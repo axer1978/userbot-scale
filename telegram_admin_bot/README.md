@@ -654,7 +654,11 @@ the opening hours, the calendar link and AI usage.
   commands; not about a booking → ordinary reply. The answer always says what
   was done (*#8 confirmed ✅ …*, *#8: … proposed to Khan*). A strict command
   costs no model call; a *yes* with words after it (*ok in 20 min*) is read
-  by the model, and stays a yes when the model can't be asked.
+  by the model, and stays a yes when the model can't be asked. To see how
+  well the real model reads her: `docker compose exec manager python
+  owner_check.py --tenant <id>` (the answers in
+  `replay_scenarios/owner-answers.json`, English, Russian and Latvian; one
+  small model call each on the account's own key; nothing is sent).
 - The customer can change the time before the owner answers (same number),
   ask to move a confirmed booking (the owner answers `YES 7` / `NO 7`), or
   cancel. Every change is in the booking's history and the audit log.

@@ -528,6 +528,61 @@ def ready_time(at: datetime) -> datetime:
     return at + timedelta(minutes=-at.minute % 5)
 
 
+# "Ready in 20 minutes" when he asked for 20 past is a yes, and so is a few
+# minutes after it ("now" is the next 5-minute mark; she rounds).
+READY_SLACK = timedelta(minutes=5)
+
+
+def awaits_owner(booking: Mapping[str, Any]) -> bool:
+    """A request, or a move the customer asked for (BookingStore.awaiting_owner)."""
+    return booking["state"] in (bs.REQUESTED, bs.PENDING) or (
+        booking["state"] == bs.CONFIRMED and booking.get("proposed_by") == bs.CUSTOMER)
+
+
+def is_settled(booking: Mapping[str, Any]) -> bool:
+    """Confirmed with nothing to answer: a yes to it changes nothing."""
+    return booking["state"] == bs.CONFIRMED and booking.get("proposed_by") != bs.CUSTOMER
+
+
+def owner_command_from(
+    data: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], *, now: datetime, tz_name: str,
+    replied: Optional[Mapping[str, Any]] = None, outcall_taxi: bool = True,
+) -> Optional[OwnerCommand]:
+    """What the reader of her words found (parse_owner_answer), as the
+    command it amounts to for the bookings in `rows`. None: nothing to do
+    (an outcall step while the taxi steps are off)."""
+    action = data["action"]
+    number = data["number"] or (replied["number"] if replied else None)
+    booking = next((b for b in rows if b["number"] == number), None)
+    if action not in ("ready_at", "time"):
+        if action in ("ready", "in_taxi") and not outcall_taxi:
+            return None
+        if action == "yes" and booking is not None and is_settled(booking):
+            return OwnerCommand("stays", number)
+        return OwnerCommand(action, number)
+    # A moment she named.
+    awaiting = [b for b in rows if awaits_owner(b)]
+    if booking is None and number is None and len(awaiting) == 1:
+        booking = awaiting[0]
+    if booking is None:
+        return OwnerCommand("unclear", number)
+    if data.get("start"):
+        at = parse_local(data["start"], tz_name)
+    elif data.get("in_minutes") is not None:
+        at = now + timedelta(minutes=data["in_minutes"])
+    else:
+        at = None
+    if at is None:
+        return OwnerCommand("unclear", booking["number"])
+    at = ready_time(at)
+    asked = booking["proposed_starts_at"] if booking.get("proposed_by") == bs.CUSTOMER else booking["starts_at"]
+    # Ready by the time he asked for, or that very time: a yes.
+    if at == asked or (action == "ready_at" and at <= asked + READY_SLACK):
+        return OwnerCommand("stays" if is_settled(booking) else "yes", booking["number"])
+    local = at.astimezone(tzinfo_for(booking["tz"]))
+    return OwnerCommand("propose", booking["number"], at=local.time(), day=local.date())
+
+
 # ------------------------------------------------------- the customer's side
 
 REMINDER_YES = {"1", "1.", "yes", "jā", "да", "👍", "✅"}

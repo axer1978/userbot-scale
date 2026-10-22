@@ -65,9 +65,6 @@ OUTCALL_AFTER_END = timedelta(minutes=30)
 OWNER_LOOKBACK = timedelta(hours=12)
 OWNER_LOOKAHEAD = timedelta(days=7)
 OWNER_HISTORY = 10
-# "Ready in 20 minutes" when he asked for 20 past is a yes, and so is a few
-# minutes after it ("now" is the next 5-minute mark; she rounds).
-READY_SLACK = timedelta(minutes=5)
 
 
 @dataclass
@@ -579,8 +576,7 @@ class BookingFlow:
         if not self.settings.get("owner_free_text", True) or not text.strip():
             return None
         now = self.now()
-        awaiting = await self.store.awaiting_owner()
-        open_ = {b["id"]: b for b in awaiting}
+        open_ = {b["id"]: b for b in await self.store.awaiting_owner()}
         if self.outcall_taxi():
             open_.update((b["id"], b) for b in await self.outcalls_under_way())
         open_.update((b["id"], b) for b in await self.store.between(
@@ -604,39 +600,11 @@ class BookingFlow:
             return None
         if data is None:
             return None
-        action = data["action"]
-        number = data["number"] or (replied["number"] if replied else None)
-        log.info("[%s]   owner's answer read as %s #%s", self.rt.session_id, action, number)
-        kind = {"cancel": "cancel", "done": "done", "noshow": "noshow", "list": "list", "ready": "ready",
-                "in_taxi": "in_taxi", "yes": "yes", "no": "no", "unclear": "unclear"}.get(action)
-        booking = next((b for b in rows if b["number"] == number), None)
-        if kind is not None:
-            if kind in ("ready", "in_taxi") and not self.outcall_taxi():
-                return None
-            if kind == "yes" and booking is not None and _settled(booking):
-                return bookings.OwnerCommand("stays", number)
-            return bookings.OwnerCommand(kind, number)
-        # ready_at / time: a moment she named.
-        if booking is None and number is None and len(awaiting) == 1:
-            booking = awaiting[0]
-        if booking is None:
-            return bookings.OwnerCommand("unclear", number)
-        if data["start"]:
-            at = bookings.parse_local(data["start"], self.tz)
-        elif data["in_minutes"] is not None:
-            at = now + timedelta(minutes=data["in_minutes"])
-        else:
-            at = None
-        if at is None:
-            return bookings.OwnerCommand("unclear", booking["number"])
-        at = bookings.ready_time(at)
-        asked = (booking["proposed_starts_at"] if booking.get("proposed_by") == bs.CUSTOMER
-                 else booking["starts_at"])
-        # Ready by the time he asked for, or that very time: a yes.
-        if at == asked or (action == "ready_at" and at <= asked + READY_SLACK):
-            return bookings.OwnerCommand("stays" if _settled(booking) else "yes", booking["number"])
-        local = at.astimezone(bookings.tzinfo_for(booking["tz"]))
-        return bookings.OwnerCommand("propose", booking["number"], at=local.time(), day=local.date())
+        cmd = bookings.owner_command_from(data, rows, now=now, tz_name=self.tz, replied=replied,
+                                          outcall_taxi=self.outcall_taxi())
+        log.info("[%s]   owner's answer read as %s → %s #%s", self.rt.session_id, data["action"],
+                 cmd.kind if cmd else "nothing", cmd.number if cmd else "-")
+        return cmd
 
     async def _accept(self, booking: dict[str, Any], actor: str) -> bs.Change:
         start, end = booking["proposed_starts_at"], booking["proposed_ends_at"]
@@ -1533,11 +1501,6 @@ class BookingFlow:
                               body="\n".join(lines) + "\n", ics=attachment)
         except (mailer.MailError, ValueError) as exc:
             await self.rt.push_error(after["chat_id"], f"E-mail record not sent: {exc}")
-
-
-def _settled(booking: dict[str, Any]) -> bool:
-    """Confirmed with nothing to answer: a yes to it changes nothing."""
-    return booking["state"] == bs.CONFIRMED and booking.get("proposed_by") != bs.CUSTOMER
 
 
 def _minutes(booking: dict[str, Any]) -> int:

@@ -1,0 +1,104 @@
+{
+  "now": "2026-10-20T12:40",
+  "bookings": {
+    "one": [
+      {"number": 8, "customer": "Khan", "state": "pending", "start": "2026-10-20T13:00", "extras": "domination +50"}
+    ],
+    "asap": [
+      {"number": 9, "customer": "Ivo", "state": "pending", "start": "2026-10-20T12:45",
+       "notes": "Customer wants to come now."}
+    ],
+    "two": [
+      {"number": 8, "customer": "Khan", "state": "pending", "start": "2026-10-20T13:00", "extras": "domination +50"},
+      {"number": 10, "customer": "Marco", "state": "pending", "start": "2026-10-20T18:00",
+       "extras": "cum on face +50"}
+    ],
+    "move": [
+      {"number": 5, "customer": "Toms", "state": "confirmed", "start": "2026-10-20T16:00",
+       "move_to": "2026-10-20T17:00"}
+    ],
+    "confirmed": [
+      {"number": 6, "customer": "Juris", "state": "confirmed", "start": "2026-10-20T15:00"}
+    ],
+    "past": [
+      {"number": 4, "customer": "Peter", "state": "confirmed", "start": "2026-10-20T11:00"}
+    ],
+    "outcall": [
+      {"number": 7, "customer": "Alex", "state": "confirmed", "start": "2026-10-20T13:30", "outcall": true,
+       "notes": "Hotel Radisson."}
+    ],
+    "outcall_link": [
+      {"number": 7, "customer": "Alex", "state": "confirmed", "start": "2026-10-20T13:30", "outcall": true,
+       "notes": "Hotel Radisson.", "ready": true, "taxi_link": true}
+    ]
+  },
+  "cases": [
+    {"id": "en-yes-confirm", "bookings": "one", "latest": "yes i confirm", "expect": "yes 8"},
+    {"id": "en-yes-let-him-come", "bookings": "one", "latest": "ok sure let him come", "expect": "yes 8"},
+    {"id": "en-yes-thumbs", "bookings": "one", "latest": "👍 yes", "expect": "yes 8"},
+    {"id": "en-yes-fine-babe", "bookings": "one", "latest": "fine babe, tell him to come", "expect": "yes 8"},
+    {"id": "en-ready-by-his-time", "bookings": "one", "latest": "I'm ready in 20 minutes", "expect": "yes 8"},
+    {"id": "en-ready-in-5", "bookings": "one", "latest": "5 min and I'm ready", "expect": "yes 8"},
+    {"id": "en-give-me-30", "bookings": "one", "latest": "give me 30 min", "expect": "propose 8 13:10"},
+    {"id": "en-meet-in-an-hour", "bookings": "one", "latest": "I will be able to meet in 1 hour",
+     "expect": "propose 8 13:40"},
+    {"id": "en-yes-but-40", "bookings": "one", "latest": "yes but in 40 min", "expect": "propose 8 13:20"},
+    {"id": "en-free-after-15", "bookings": "one", "latest": "free after 15:00", "expect": "propose 8 15:00"},
+    {"id": "en-come-at-1530", "bookings": "one", "latest": "can he come at 15:30 instead?",
+     "expect": "propose 8 15:30"},
+    {"id": "en-better-at-8", "bookings": "one", "latest": "better at 8 tonight", "expect": "propose 8 20:00"},
+    {"id": "en-tomorrow-12", "bookings": "one", "latest": "not today, tomorrow at 12 is ok",
+     "expect": "propose 8 2026-10-21 12:00"},
+    {"id": "en-no-busy", "bookings": "one", "latest": "no sorry I'm busy today", "expect": "no 8"},
+    {"id": "en-no-cant", "bookings": "one", "latest": "can't, I'm out", "expect": "no 8"},
+    {"id": "en-chat-how-are-you", "bookings": "one", "latest": "how are you?", "expect": "none"},
+    {"id": "en-chat-thanks", "bookings": "one", "latest": "thanks babe", "expect": ["none", "unclear"]},
+    {"id": "en-question-who", "bookings": "one", "latest": "who is he? is he nice?", "expect": ["none", "unclear"]},
+    {"id": "en-list", "bookings": "two", "latest": "what do I have waiting?", "expect": "list"},
+
+    {"id": "ru-yes-confirm", "bookings": "one", "latest": "да, подтверждаю", "expect": "yes 8"},
+    {"id": "ru-ready-by-his-time", "bookings": "one", "latest": "буду готова через 20 минут", "expect": "yes 8"},
+    {"id": "ru-meet-in-an-hour", "bookings": "one", "latest": "через час смогу", "expect": "propose 8 13:40"},
+    {"id": "ru-no-today", "bookings": "one", "latest": "нет, сегодня не могу", "expect": "no 8"},
+    {"id": "ru-come-at-1530", "bookings": "one", "latest": "пусть приходит в 15:30", "expect": "propose 8 15:30"},
+    {"id": "ru-chat", "bookings": "one", "latest": "привет, как дела?", "expect": "none"},
+
+    {"id": "lv-yes-confirm", "bookings": "one", "latest": "jā, apstiprinu", "expect": "yes 8"},
+    {"id": "lv-ready-by-his-time", "bookings": "one", "latest": "būšu gatava pēc 20 minūtēm", "expect": "yes 8"},
+    {"id": "lv-meet-in-an-hour", "bookings": "one", "latest": "pēc stundas varu", "expect": "propose 8 13:40"},
+    {"id": "lv-no-today", "bookings": "one", "latest": "nē, šodien nevaru", "expect": "no 8"},
+
+    {"id": "en-asap-ready-in-20", "bookings": "asap", "latest": "ready in 20 minutes", "expect": "propose 9 13:00"},
+    {"id": "en-asap-ok-in-5", "bookings": "asap", "latest": "ok in 5", "expect": "yes 9"},
+    {"id": "en-asap-tell-him-13", "bookings": "asap", "latest": "tell him 13:00", "expect": "propose 9 13:00"},
+    {"id": "ru-asap-half-hour", "bookings": "asap", "latest": "через полчаса", "expect": "propose 9 13:10"},
+
+    {"id": "en-two-by-name", "bookings": "two", "latest": "yes to Marco", "expect": "yes 10"},
+    {"id": "en-two-reply-to", "bookings": "two", "reply_to": 10, "latest": "yes i confirm", "expect": "yes 10"},
+    {"id": "en-two-reply-to-ready", "bookings": "two", "reply_to": 8, "latest": "ready in 30 min",
+     "expect": "propose 8 13:10"},
+    {"id": "en-two-by-number", "bookings": "two", "latest": "8 is fine, ready in 20", "expect": "yes 8"},
+    {"id": "en-two-no-telling", "bookings": "two", "latest": "yes i confirm", "expect": ["yes -", "unclear"]},
+
+    {"id": "en-move-ok", "bookings": "move", "latest": "ok he can move", "expect": "yes 5"},
+    {"id": "en-move-keep", "bookings": "move", "latest": "no, keep it at 4", "expect": "no 5"},
+    {"id": "en-move-17-fine", "bookings": "move", "latest": "17 is fine", "expect": "yes 5"},
+
+    {"id": "en-confirmed-cancel", "bookings": "confirmed", "latest": "cancel Juris, I'm sick", "expect": "cancel 6"},
+    {"id": "en-confirmed-yes-again", "bookings": "confirmed", "latest": "yes yes he's coming",
+     "expect": ["stays 6", "none"]},
+    {"id": "en-past-done", "bookings": "past", "latest": "he came, all good", "expect": "done 4"},
+    {"id": "en-past-noshow", "bookings": "past", "latest": "he never showed up", "expect": "noshow 4"},
+    {"id": "ru-past-noshow", "bookings": "past", "latest": "он так и не пришёл", "expect": "noshow 4"},
+
+    {"id": "en-outcall-ready", "bookings": "outcall", "latest": "I'm ready, he can order the taxi",
+     "expect": "ready 7"},
+    {"id": "en-outcall-ready-in-20", "bookings": "outcall", "latest": "ready in 20", "expect": ["stays 7", "none"]},
+    {"id": "ru-outcall-ready", "bookings": "outcall", "latest": "готова, пусть заказывает такси", "expect": "ready 7"},
+    {"id": "lv-outcall-ready", "bookings": "outcall", "latest": "esmu gatava", "expect": "ready 7"},
+    {"id": "en-outcall-in-taxi", "bookings": "outcall_link", "latest": "in the taxi now", "expect": "in_taxi 7"},
+    {"id": "en-outcall-in-the-car", "bookings": "outcall_link", "latest": "sitting in the car, 15 min",
+     "expect": "in_taxi 7"},
+    {"id": "ru-outcall-in-taxi", "bookings": "outcall_link", "latest": "я в такси", "expect": "in_taxi 7"}
+  ]
+}
