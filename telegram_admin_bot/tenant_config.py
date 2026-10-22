@@ -196,6 +196,9 @@ class AI(_Strict):
     max_tokens: int = Field(400, ge=1, le=8192)
     temperature: float = Field(1.0, ge=0.0, le=2.0)
     max_concurrent_requests: int = Field(4, ge=1, le=32)
+    history_messages: int = Field(60, ge=10, le=200, description=(
+        "How many of the chat's latest messages the model reads to write a reply (both sides). "
+        "Older ones are not seen at all."))
 
 
 class Safety(_Strict):

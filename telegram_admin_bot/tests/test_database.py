@@ -76,6 +76,20 @@ async def test_incoming_and_outgoing_map_to_the_right_roles(db):
 
 
 @pytest.mark.asyncio
+async def test_history_can_say_when_each_message_was_stored(db):
+    """For the reply's clock; without asking, the rows stay role/content
+    only, since they go to the API as they are."""
+    await db.upsert_conversation(1, "A", None, False, 1)
+    await db.record_message(1, DIR_IN, STATUS_RECEIVED, "them", telegram_id=1)
+    await db.record_message(1, DIR_OUT, STATUS_SENT, "us", telegram_id=2)
+
+    assert all(set(m) == {"role", "content"} for m in await db.get_history_for_ai(1))
+    timed = await db.get_history_for_ai(1, with_times=True)
+    assert [m["content"] for m in timed] == ["them", "us"]
+    assert all(m["at"].tzinfo is not None for m in timed) and timed[0]["at"] <= timed[1]["at"]
+
+
+@pytest.mark.asyncio
 async def test_history_limit_keeps_the_most_recent(db):
     await db.upsert_conversation(1, "A", None, False, 1)
     for i in range(10):
