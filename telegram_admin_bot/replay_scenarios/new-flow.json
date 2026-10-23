@@ -1,0 +1,183 @@
+{
+ "note": "The booking flow of 2026-10-23 (escort industry template): the first reply is a greeting and his time, with the greeting video; the rates message (and the address) only when he asks for the price; the extras message is never sent, one extra at a time with 'yes I can', its price and his total; outcalls ask for a photo of the place, then the taxi. Run with: python replay.py --tenant <id> --scenarios new-flow",
+ "first_reply_address": false,
+ "greeting_video": true,
+ "outcall_proof": true,
+ "never_says": [
+  "let me check",
+  "checking",
+  "i'll ask",
+  "i will ask",
+  "my manager",
+  "the agency",
+  "our girls",
+  "check with",
+  "i'll check",
+  "i will check",
+  "let you know"
+ ],
+ "scenarios": [
+  {
+   "id": "nf-hi-1",
+   "category": "first reply",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false, "photos": false,
+     "expect": {"has_any": ["time", "when", "what hour", "come"]}}
+   ]
+  },
+  {
+   "id": "nf-hi-2",
+   "category": "first reply",
+   "steps": [
+    {"customer": "Hello beautiful, are you available tonight?", "details": false, "address": false,
+     "expect": {"has_any": ["time", "when", "what hour"]}}
+   ]
+  },
+  {
+   "id": "nf-hi-ru",
+   "category": "first reply",
+   "steps": [
+    {"customer": "привет", "details": false, "address": false}
+   ]
+  },
+  {
+   "id": "nf-hi-lv",
+   "category": "first reply",
+   "steps": [
+    {"customer": "čau, vari šodien?", "details": false, "address": false}
+   ]
+  },
+  {
+   "id": "nf-price-first",
+   "category": "price when asked",
+   "steps": [
+    {"customer": "hi how much?", "details": true, "address": true}
+   ]
+  },
+  {
+   "id": "nf-price-later",
+   "category": "price when asked",
+   "steps": [
+    {"customer": "hey", "details": false, "address": false},
+    {"customer": "what are your prices?", "details": true, "address": true},
+    {"customer": "ok and for 30 min?", "details": false, "address": false}
+   ]
+  },
+  {
+   "id": "nf-price-ru",
+   "category": "price when asked",
+   "steps": [
+    {"customer": "привет", "details": false, "address": false},
+    {"customer": "сколько за час?", "details": true, "address": true}
+   ]
+  },
+  {
+   "id": "nf-where",
+   "category": "price when asked",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "where are you located?", "details": false, "address": true}
+   ]
+  },
+  {
+   "id": "nf-extra-domination",
+   "category": "one extra",
+   "steps": [
+    {"customer": "hi", "details": false},
+    {"customer": "do you do domination?", "details": false, "address": false,
+     "expect": {"has_all": ["50"], "has_any": ["yes", "can"]}}
+   ]
+  },
+  {
+   "id": "nf-extra-total",
+   "category": "one extra",
+   "steps": [
+    {"customer": "hello", "details": false},
+    {"customer": "how much for 1 hour?", "details": true},
+    {"customer": "and with cum on face?", "details": false,
+     "expect": {"has_all": ["50"]}}
+   ]
+  },
+  {
+   "id": "nf-extra-two",
+   "category": "one extra",
+   "steps": [
+    {"customer": "hi babe", "details": false},
+    {"customer": "strapon and domination for 1 hour, how much all together?", "details": false,
+     "expect": {"has_any": ["yes", "can", "have"]}}
+   ]
+  },
+  {
+   "id": "nf-extras-list",
+   "category": "extras list",
+   "steps": [
+    {"customer": "hi", "details": false},
+    {"customer": "what extras do you have?", "details": false, "address": false,
+     "expect": {"has_any": ["what would you", "what do you", "what you", "like", "want", "?"]}}
+   ]
+  },
+  {
+   "id": "nf-extras-list-ru",
+   "category": "extras list",
+   "steps": [
+    {"customer": "привет, какие у тебя доп услуги?", "details": false, "address": false}
+   ]
+  },
+  {
+   "id": "nf-time-question",
+   "category": "time or outcall",
+   "steps": [
+    {"customer": "hi", "details": false},
+    {"customer": "how much?", "details": true},
+    {"customer": "ok nice", "details": false,
+     "expect": {"has_any": ["time", "when", "what hour"]}}
+   ]
+  },
+  {
+   "id": "nf-outcall-proof",
+   "category": "outcall proof",
+   "outcall": true,
+   "steps": [
+    {"customer": "hi, can you come to my hotel?", "details": false,
+     "expect": {"has_any": ["yes", "time", "when", "where", "which"]}},
+    {"customer": "hotel Bellevue tonight at 22:00", "booking": "requested", "intent": "book"},
+    {"event": "confirmed", "booking": "confirmed_news", "address": false,
+     "expect": {"has_any": ["photo", "pic", "card"],
+                "lacks": ["send me the link", "order the taxi now", "order a taxi now", "order me a taxi"]}},
+    {"customer": "why do you need it?", "booking": "outcall_proof_wait",
+     "expect": {"has_any": ["place", "right", "sure", "safe", "know"],
+                "lacks": ["order the taxi now", "order a taxi now", "order me a taxi"]}},
+    {"customer": "[photo for the outcall]", "booking": "outcall_proof_news", "address": true,
+     "expect": {"has_all": ["taxi"]}},
+    {"customer": "https://bolt.eu/ride/a1b2c3", "booking": "outcall_link", "address": false,
+     "expect": {"lacks": ["bolt.eu", "i'm in the taxi", "im in the taxi"]}},
+    {"event": "in taxi", "booking": "outcall_in_taxi_news", "address": false,
+     "expect": {"has_any": ["taxi", "way", "coming"]}},
+    {"customer": "room 312, 3rd floor", "booking": "outcall_in_taxi", "address": false}
+   ]
+  },
+  {
+   "id": "nf-outcall-no-photo",
+   "category": "outcall proof",
+   "outcall": true,
+   "steps": [
+    {"customer": "outcall to my apartment at 23?", "booking": "requested", "intent": "book"},
+    {"event": "confirmed", "booking": "confirmed_news",
+     "expect": {"has_any": ["photo", "pic", "card"]}},
+    {"customer": "I'm at Kaleju iela 12, just come, order the taxi?", "booking": "outcall_proof_wait",
+     "expect": {"has_any": ["photo", "pic"],
+                "lacks": ["order the taxi now", "order a taxi now", "order me a taxi", "send me the link"]}}
+   ]
+  },
+  {
+   "id": "nf-outcall-ru",
+   "category": "outcall proof",
+   "outcall": true,
+   "steps": [
+    {"customer": "приедешь ко мне в отель сегодня в 21?", "booking": "requested", "intent": "book"},
+    {"event": "confirmed", "booking": "confirmed_news"},
+    {"customer": "[photo for the outcall]", "booking": "outcall_proof_news", "address": true}
+   ]
+  }
+ ]
+}

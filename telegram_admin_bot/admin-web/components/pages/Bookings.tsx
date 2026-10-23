@@ -94,6 +94,8 @@ function BookingRow({ b, tz, open, onToggle, onChanged }: {
       : b.arrival_photo_match === false ? " (photo did not match)" : "") : "";
   // An outcall by taxi (booking_flow.py): until half an hour after its end,
   // she can be marked ready / in the taxi here when she says so another way.
+  // With booking.outcall_proof his photo of the place comes first; "She is
+  // ready" skips it.
   const hhmm = (iso: string) => when(iso, tz, { hour: "2-digit", minute: "2-digit" });
   const outcall = b.state === "confirmed" && (b.notes || "").toLowerCase().includes("outcall");
   const underWay = outcall && new Date(new Date(b.ends_at).getTime() + 30 * 60_000) > new Date();
@@ -101,8 +103,9 @@ function BookingRow({ b, tz, open, onToggle, onChanged }: {
     : b.in_taxi_at ? `in the taxi since ${hhmm(b.in_taxi_at)}` +
         (b.in_taxi_by === "system" ? " (no IN came; the customer was told anyway)" : "")
     : b.taxi_link_at ? `taxi link came at ${hhmm(b.taxi_link_at)}; waiting for her IN ${b.number}`
+    : b.proof_at ? `his photo of the place came at ${hhmm(b.proof_at)}; waiting for his taxi link`
     : b.ready_at ? `ready since ${hhmm(b.ready_at)}; waiting for his taxi link`
-    : `getting ready; waiting for her READY ${b.number}`;
+    : `waiting for his photo of the place, or her READY ${b.number}`;
   const taxiLink = b.taxi_link
     ? <a href={/^https?:\/\//i.test(b.taxi_link) ? b.taxi_link : `https://${b.taxi_link}`}
          target="_blank" rel="noopener noreferrer">{b.taxi_link}</a>
@@ -137,7 +140,8 @@ function BookingRow({ b, tz, open, onToggle, onChanged }: {
           <Fact label="Taxi link" value={taxiLink} />
           <div className="bk-actions">
             {underWay && !b.ready_at && !b.in_taxi_at &&
-              <button type="button" className="btn small" onClick={() => act("ready")}>She is ready</button>}
+              <button type="button" className="btn small" onClick={() => act("ready")}
+                      title="He is asked to order the taxi now (without his photo of the place)">She is ready</button>}
             {underWay && !b.in_taxi_at &&
               <button type="button" className="btn small" onClick={() => act("in_taxi")}>She is in the taxi</button>}
             {b.state === "requested" && <button type="button" className="btn small" onClick={() => act("resend")}>Send to the owner again</button>}

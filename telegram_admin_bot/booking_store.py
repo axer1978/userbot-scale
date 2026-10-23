@@ -54,7 +54,7 @@ _WRITABLE = {
     "customer_notice", "cancelled_by", "cancel_reason", "decided_by", "decided_at",
     "attendance_confirmed_at", "arrived_at", "arrival_photo_match", "instructions_sent_at",
     "instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at",
-    "ready_at", "ready_reminded_at", "taxi_link", "taxi_link_at", "in_taxi_at", "in_taxi_by",
+    "ready_at", "ready_reminded_at", "taxi_link", "taxi_link_at", "in_taxi_at", "in_taxi_by", "proof_at",
     "customer_name", "customer_username",
 }
 

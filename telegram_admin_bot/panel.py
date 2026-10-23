@@ -1473,12 +1473,14 @@ class MediaFlagsBody(BaseModel):
     model_config = {"extra": "forbid"}
     view_once: Optional[bool] = None
     send_on_arrival: Optional[bool] = None
+    greeting: Optional[bool] = None
 
 
 @app.patch("/api/sessions/{session_id}/media/{item_id}/flags", dependencies=[Depends(require_auth)])
 async def api_media_flags(session_id: str, item_id: int, body: MediaFlagsBody) -> dict[str, Any]:
-    """View once (Telegram shows it once), and send on arrival (goes out
-    with the arrival instructions, never sent by the AI)."""
+    """View once (Telegram shows it once), send on arrival (goes out with
+    the arrival instructions, never sent by the AI), and greeting (goes out
+    with the first reply in every new chat)."""
     library = await media_library_for(session_id)
     flags = {k: v for k, v in body.model_dump().items() if v is not None}
     if not flags:

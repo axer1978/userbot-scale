@@ -119,6 +119,8 @@ export type MediaItem = {
   view_once?: boolean;
   // Sent with the arrival instructions (and deleted with them); never by the AI.
   send_on_arrival?: boolean;
+  // Sent with the first reply in every new chat.
+  greeting?: boolean;
 };
 
 export type OutreachItem = {
@@ -156,6 +158,8 @@ export type Booking = {
   taxi_link_at?: string | null;
   in_taxi_at?: string | null;
   in_taxi_by?: "owner" | "admin" | "system" | null;
+  // His photo of the place reached her (booking.outcall_proof).
+  proof_at?: string | null;
 };
 
 export type BookingEvent = {

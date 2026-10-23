@@ -37,7 +37,9 @@ ROLES = (ARRIVAL_REFERENCE,)
 # send_on_arrival: sent with the arrival instructions (a photo of the door,
 #   the stairs) and deleted with them. Kept from the AI, which must never
 #   send the way in before the customer has arrived.
-FLAGS = ("view_once", "send_on_arrival")
+# greeting: sent by the system with the first reply in a chat (a short
+#   video saying hi), right after its text, whatever the reply says.
+FLAGS = ("view_once", "send_on_arrival", "greeting")
 
 # `[send 3]`, `[send: 3]`, `[SEND #3]`, `[send photo 3]`, `[[send 3]]` — the
 # model is asked for the first form and produces all of them.
@@ -209,6 +211,10 @@ class MediaLibrary:
         """What goes out with the arrival instructions, in library order."""
         return [item for item in self.all() if item.get("send_on_arrival")]
 
+    def greeting_items(self) -> list[dict[str, Any]]:
+        """What goes out with the first reply in a chat, in library order."""
+        return [item for item in self.all() if item.get("greeting") and not item.get("send_on_arrival")]
+
     def for_ai(self) -> list[dict[str, Any]]:
         """What the AI may attach: everything but the arrival items."""
         return [item for item in self.all() if not item.get("send_on_arrival")]
@@ -354,6 +360,13 @@ def prompt_section(items: list[dict[str, Any]], ask_before_video: bool = True) -
     if ask_before_video and any(item.get("kind") == VIDEO for item in items):
         lines.append(ASK_FIRST_RULE)
     return "\n".join(lines)
+
+
+def greeting_line(items: list[dict[str, Any]]) -> str:
+    """For the first reply's prompt: the greeting files go with it anyway."""
+    names = ", ".join(label(item) for item in items)
+    return (f"With this first reply the system sends {names} by itself, right after your text: write no [send] "
+            "tag for it and do not mention it.")
 
 
 def split_attachments(text: str) -> tuple[str, list[int]]:

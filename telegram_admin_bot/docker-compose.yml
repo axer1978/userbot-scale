@@ -46,7 +46,10 @@ services:
   # Shared state store for the whole fleet: every panel/manager/worker talks
   # to this one Postgres instead of each account having its own SQLite file.
   postgres:
-    image: postgres:16
+    # Postgres 16 with pgvector (migration 0021). The same major version and
+    # Debian release as the plain postgres:16 image, so an existing pgdata
+    # volume is used as it is; 17+ would move the data directory.
+    image: pgvector/pgvector:0.8.7-pg16-trixie
     container_name: userbot-postgres
     restart: unless-stopped
     environment:

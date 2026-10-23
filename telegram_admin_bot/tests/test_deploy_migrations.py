@@ -102,6 +102,15 @@ async def test_migrations_on_an_empty_database_then_again_change_nothing(empty_p
     await pg_module.assert_version(empty_pool, latest)  # what panel/manager check at boot
 
 
+async def test_pgvector_is_switched_on_wherever_the_server_has_it(empty_pool):
+    await pg_module.apply_migrations(empty_pool)
+    async with empty_pool.acquire() as con:
+        available = await con.fetchval("SELECT count(*) FROM pg_available_extensions WHERE name = 'vector'")
+        installed = await con.fetchval("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+    # Without pgvector (a plain postgres:16) the migration is skipped, never failed.
+    assert bool(installed) == bool(available)
+
+
 def _run_entrypoint(dsn: str) -> subprocess.CompletedProcess:
     env = dict(os.environ, DATABASE_URL=dsn, USERBOT_MASTER_KEY=TEST_MASTER_KEY)
     env.pop("USERBOT_MASTER_KEY_FILE", None)
@@ -232,7 +241,9 @@ async def test_upgrading_a_populated_0005_database_keeps_the_data_and_adds_the_r
                              "ready_at", "ready_reminded_at", "taxi_link", "taxi_link_at", "in_taxi_at",
                              "in_taxi_by",
                              # 0019: the extras he asked for
-                             "extras"}}
+                             "extras",
+                             # 0020: his photo of the place (outcall proof)
+                             "proof_at"}}
     for table, rows in before.items():
         added = new_cols.get(table, set())
         assert [{k: v for k, v in r.items() if k not in added} for r in after[table]] == rows, table

@@ -508,7 +508,7 @@ class BookingFlow:
     async def owner_command(self, cmd: bookings.OwnerCommand, reply_to: Optional[int]) -> str:
         if cmd.kind == "list":
             outcalls = await self.outcalls_under_way() if self.outcall_taxi() else []
-            return bookings.format_list(await self.store.awaiting_owner(), outcalls)
+            return bookings.format_list(await self.store.awaiting_owner(), outcalls, proof=self.outcall_proof())
         if cmd.kind in ("ready", "in_taxi"):
             return await self.outcall_command(cmd)
         booking = await self._target(cmd, reply_to)
@@ -553,7 +553,8 @@ class BookingFlow:
             return f"#{booking['number']}: that time now overlaps another booking."
         except booking_store.StaleBooking:
             return f"#{booking['number']} changed meanwhile; send LIST to see where things stand."
-        return bookings.format_acknowledgement(updated, change.action, outcall_taxi=self.outcall_taxi())
+        return bookings.format_acknowledgement(updated, change.action, outcall_taxi=self.outcall_taxi(),
+                                               proof=self.outcall_proof())
 
     async def _target(self, cmd: bookings.OwnerCommand, reply_to: Optional[int]) -> Optional[dict[str, Any]]:
         if cmd.number is not None:
@@ -591,7 +592,8 @@ class BookingFlow:
             async with self.rt.ai_gate():
                 data = await ai_responder.read_owner_answer(
                     api_key=self.rt.deepseek_key, history=history, latest=text, tz_name=self.tz, now=now,
-                    state_note=bookings.owner_state_note(rows, outcall_taxi=self.outcall_taxi()),
+                    state_note=bookings.owner_state_note(rows, outcall_taxi=self.outcall_taxi(),
+                                                         proof=self.outcall_proof()),
                     replying_to=replied["number"] if replied else None, ai_config=self.rt.config["ai"],
                     client=self.rt.http_client, usage_sink=self.rt.usage_sink("owner_answer"),
                 )
@@ -684,7 +686,8 @@ class BookingFlow:
             raise ValueError(f"unknown booking action {action!r}")
         updated = await self.change(booking, change, actor=bs.ADMIN, via=VIA_PANEL)
         if self.settings.get("provider"):
-            await self.send_owner(bookings.format_acknowledgement(updated, change.action, outcall_taxi=self.outcall_taxi())
+            await self.send_owner(bookings.format_acknowledgement(updated, change.action, outcall_taxi=self.outcall_taxi(),
+                                                                  proof=self.outcall_proof())
                                   + " (from the panel)", reason="panel booking change passed on to the owner")
         return booking_store.public(updated)
 
@@ -767,7 +770,7 @@ class BookingFlow:
         lines: list[str] = []
         with_notice = await self.store.with_notice(chat_id)
         quiet = self.quiet()
-        taxi = self.outcall_taxi()
+        taxi, proof = self.outcall_taxi(), self.outcall_proof()
         taxi_news = (bs.NOTICE_CONFIRMED, bs.NOTICE_READY, bs.NOTICE_IN_TAXI)
         for booking in with_notice:
             notice = booking.get("customer_notice")
@@ -776,7 +779,7 @@ class BookingFlow:
             elif taxi and notice in taxi_news and bookings.is_outcall(booking) and booking["state"] == bs.CONFIRMED:
                 lines.append(bookings.outcall_notice_line(
                     booking, now=self.now(), ready_minutes=self.settings["outcall_ready_minutes"],
-                    has_address=bool(self.address())))
+                    has_address=bool(self.address()), proof=proof))
                 # Ready: the taxi picks her up at the address, so it goes
                 # again, word for word, even when he had it with the prices.
                 if notice == bs.NOTICE_READY and self.address():
@@ -799,7 +802,7 @@ class BookingFlow:
             if quiet and booking["state"] in (bs.REQUESTED, bs.PENDING) and booking.get("proposed_by") != bs.OWNER:
                 lines.append(bookings.quiet_request_line(booking))
             else:
-                lines.append(bookings.standing_line(booking, outcall_taxi=taxi))
+                lines.append(bookings.standing_line(booking, outcall_taxi=taxi, proof=proof))
         if self.her_name() and (with_notice or standing):
             lines.append(bookings.own_name_line(self.her_name()))
         if self.address():
@@ -1050,12 +1053,25 @@ class BookingFlow:
     # ready and sends READY n; he is asked to order a taxi to her address
     # and send its link, which goes on to her. She sends IN n once she is in
     # it (or he is told so outcall_in_taxi_minutes after the link came); he
-    # is then asked for the exact address, floor, way in and a photo of the
-    # place. Everything he sends from the confirmation until the outcall is
-    # over goes on to her, photos as photos.
+    # is then asked for whatever is still needed to find him. Everything he
+    # sends from the confirmation until the outcall is over goes on to her,
+    # photos as photos.
+    #
+    # booking.outcall_proof: instead of waiting for READY n, he is asked
+    # after the confirmation for a photo that shows he is at the place. His
+    # first photo goes on to her as the proof and he is asked at once to
+    # order the taxi; from there it goes on as above. READY n skips the photo.
 
     def outcall_taxi(self) -> bool:
         return self.enabled() and bool(self.settings.get("outcall_taxi"))
+
+    def outcall_proof(self) -> bool:
+        return self.outcall_taxi() and bool(self.settings.get("outcall_proof"))
+
+    def wants_proof(self, booking: dict[str, Any]) -> bool:
+        """His next photo is the proof: asked for, and no taxi step taken yet."""
+        return self.outcall_proof() and not any(
+            booking.get(step) for step in ("proof_at", "ready_at", "taxi_link_at", "in_taxi_at"))
 
     def _under_way(self, booking: dict[str, Any], now: datetime) -> bool:
         return (booking["state"] == bs.CONFIRMED and bookings.is_outcall(booking)
@@ -1150,6 +1166,20 @@ class BookingFlow:
         await self.nudge(updated["chat_id"])
         return updated
 
+    async def mark_proof(self, booking: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """His photo of the place reached her: he is asked to order the taxi
+        now (her address follows the reply), as after READY n. None when the
+        proof came already."""
+        now = self.now()
+        updated = await self.store.set_once(booking["id"], "proof_at", now, ready_at=booking.get("ready_at") or now,
+                                            customer_notice=bs.NOTICE_READY)
+        if updated is None:
+            return None
+        await self.announce(updated, f"📷 Booking #{updated['number']}: his photo of the place went to the owner — "
+                                     "asking him to order the taxi and send its link.")
+        await self.nudge(updated["chat_id"])
+        return updated
+
     async def pass_on(self, chat_id: int, text: str, photo: Any = None) -> Optional[str]:
         """A customer's message while their outcall is under way goes on to
         the owner: his taxi link with what to answer, a photo as the photo
@@ -1169,7 +1199,12 @@ class BookingFlow:
             if links:
                 booking = await self.taxi_link(booking, links[-1], text)
             if photo is not None:
-                await self.pass_on_photo(booking, photo, "" if links else text)
+                proof = self.wants_proof(booking)
+                went = await self.pass_on_photo(booking, photo, "" if links else text, proof=proof)
+                if proof and went:
+                    await self.mark_proof(booking)
+                elif proof:
+                    self.add_line(chat_id, bookings.PROOF_AGAIN_LINE)
                 return bookings.PHOTO_PASSED_ON
             if text and not links:
                 await self.tell_owner(booking, bookings.format_passed_on(booking, text))
@@ -1201,14 +1236,16 @@ class BookingFlow:
             booking = await self.mark_in_taxi(booking, by=bs.SYSTEM) or booking
         return booking
 
-    async def pass_on_photo(self, booking: dict[str, Any], photo: Any, caption: str) -> None:
-        """His photo (the entrance, the building) to the owner, as a photo."""
+    async def pass_on_photo(self, booking: dict[str, Any], photo: Any, caption: str, *, proof: bool = False) -> bool:
+        """His photo (the place, the entrance, the hotel card) to the owner,
+        as a photo. `proof`: it is his photo of the place, asked for before
+        the taxi. Whether the photo itself reached her."""
         rt, n = self.rt, booking["number"]
         provider = await self.provider_chat_id()
         if provider is None:
             await rt.push_error(booking["chat_id"], f"Booking #{n}: could not pass his photo on to the owner "
                                                     "(check booking.provider).")
-            return
+            return False
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "photo.jpg"
             try:
@@ -1217,14 +1254,16 @@ class BookingFlow:
                 log.warning("[%s] Could not download an outcall photo: %s", rt.session_id, type(exc).__name__)
             if not path.exists() or not path.stat().st_size:
                 # WhatsApp keeps view-once photos from linked devices.
+                again = "he is asked to send it again" if proof else "ask him to send it again"
                 await self.tell_owner(booking, bookings.format_passed_on(
                     booking, (caption + "\n" if caption else "") + "[a photo that could not be fetched — it may be "
-                    "view once; ask him to send it again]"))
-                return
-            if await self.send_owner(bookings.format_photo_header(booking, caption),
-                                     reason=f"booking #{n}: his photo, to the owner") is None:
+                    f"view once; {again}]"))
+                return False
+            header = (bookings.format_proof_header(booking, caption) if proof
+                      else bookings.format_photo_header(booking, caption))
+            if await self.send_owner(header, reason=f"booking #{n}: his photo, to the owner") is None:
                 await rt.push_error(booking["chat_id"], f"Booking #{n}: could not pass his photo on to the owner.")
-                return
+                return False
             try:
                 await rt.send_photo_as_me(provider, path, text=f"[photo from booking #{n}]",
                                           reason=f"booking #{n}: his photo, to the owner")
@@ -1232,8 +1271,9 @@ class BookingFlow:
                 if not await rt.handle_send_failure(provider, exc):
                     await rt.push_error(booking["chat_id"], f"Booking #{n}: could not pass his photo on to the "
                                                             f"owner: {type(exc).__name__}: {exc}")
-                return
+                return False
         await self.announce(booking, f"📷 Booking #{n}: his photo went on to the owner.")
+        return True
 
     def ready_due(self, booking: dict[str, Any]) -> datetime:
         """When she is reminded to send READY n: her getting-ready time after
@@ -1245,12 +1285,15 @@ class BookingFlow:
     async def outcall_clock(self, booking: dict[str, Any], now: datetime) -> None:
         """The timed taxi steps of one outcall (the scheduler's tick): he is
         told she is in the taxi when her IN n did not come in time; she is
-        reminded once to send READY n."""
+        reminded once to send READY n (not with the photo proof)."""
         if booking.get("in_taxi_at"):
             return
         if booking.get("taxi_link_at"):
             if now >= booking["taxi_link_at"] + timedelta(minutes=self.settings["outcall_in_taxi_minutes"]):
                 await self.mark_in_taxi(booking, by=bs.SYSTEM)
+            return
+        if self.outcall_proof():
+            # He sends the photo; she is not asked for READY n.
             return
         if booking.get("ready_at") or booking.get("ready_reminded_at") or now < self.ready_due(booking):
             return
