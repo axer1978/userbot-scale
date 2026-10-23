@@ -48,12 +48,13 @@ class BookingNotFound(LookupError):
 # Columns apply()/set_fields() may write. Anything else is a programming
 # error, not something a caller can smuggle in.
 _WRITABLE = {
-    "starts_at", "ends_at", "blocked_until", "service", "notes",
+    "starts_at", "ends_at", "blocked_until", "service", "notes", "extras",
     "proposed_starts_at", "proposed_ends_at", "proposed_by",
     "provider_chat_id", "provider_message_id", "provider_wa_message_id", "calendar_event_id",
     "customer_notice", "cancelled_by", "cancel_reason", "decided_by", "decided_at",
     "attendance_confirmed_at", "arrived_at", "arrival_photo_match", "instructions_sent_at",
     "instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at",
+    "ready_at", "ready_reminded_at", "taxi_link", "taxi_link_at", "in_taxi_at", "in_taxi_by", "proof_at",
     "customer_name", "customer_username",
 }
 
@@ -188,7 +189,7 @@ class BookingStore:
     async def create(
         self, *, chat_id: int, customer_name: str, customer_username: Optional[str],
         starts_at: datetime, ends_at: datetime, buffer_minutes: int, tz: str,
-        service: str = "", notes: str = "", actor: str = bs.CUSTOMER, reason: str = "",
+        service: str = "", notes: str = "", extras: str = "", actor: str = bs.CUSTOMER, reason: str = "",
     ) -> dict[str, Any]:
         """A new request, state `requested`, with the tenant's next number."""
         blocked_until = ends_at + timedelta(minutes=buffer_minutes)
@@ -198,10 +199,11 @@ class BookingStore:
                 number = await self._next_number(con)
                 row = await con.fetchrow(
                     "INSERT INTO bookings (tenant_id, session_id, number, chat_id, customer_ref, customer_name, "
-                    "customer_username, service, notes, starts_at, ends_at, blocked_until, tz, state) "
-                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'requested') RETURNING *",
+                    "customer_username, service, notes, extras, starts_at, ends_at, blocked_until, tz, state) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'requested') RETURNING *",
                     self.tenant_id, self.session_id, number, chat_id, ref, customer_name[:200],
-                    customer_username, service[:120], notes[:500], starts_at, ends_at, blocked_until, tz,
+                    customer_username, service[:120], notes[:500], extras[:300], starts_at, ends_at, blocked_until,
+                    tz,
                 )
                 await self._event(con, row["id"], None, bs.REQUESTED, "create", actor, reason)
                 await audit.record(
@@ -265,6 +267,22 @@ class BookingStore:
         if row is None:
             raise BookingNotFound(f"no booking {booking_id}")
         return dict(row)
+
+    async def set_once(self, booking_id: int, column: str, value: Any, **fields: Any) -> Optional[dict[str, Any]]:
+        """Set `column` (and `fields`) on a confirmed booking only while the
+        column is still empty: a step taken twice (two workers, a repeated
+        command) is taken once. None when it was taken already."""
+        unknown = ({column} | set(fields)) - _WRITABLE
+        if unknown:
+            raise ValueError(f"not writable: {sorted(unknown)}")
+        sets, args = ["updated_at = now()", f"{column} = $3"], [self.tenant_id, booking_id, value]
+        for key, field_value in fields.items():
+            args.append(field_value)
+            sets.append(f"{key} = ${len(args)}")
+        return _row(await self.pool.fetchrow(
+            f"UPDATE bookings SET {', '.join(sets)} WHERE tenant_id = $1 AND id = $2 AND {column} IS NULL "
+            "AND state = 'confirmed' RETURNING *", *args,
+        ))
 
     async def _event(
         self, con: asyncpg.Connection, booking_id: int, from_state: Optional[str], to_state: str,

@@ -9,6 +9,10 @@ Three layers, rendered into one system prompt with explicit sections:
 - client:   per-section overrides, each either `override` (replaces the
             industry text for that section) or `append` (added after it),
             plus a short free-text addendum.
+- rules:    the operator's corrections as short sentences (rules.py), for
+            the industry or the account, after everything the business
+            wrote. Not a layer of their own: once a week they are folded
+            into the industry and client layers and stop being added here.
 
 Only the section keys below exist. A client cannot add a section, and in
 particular cannot target the platform rules. The prompt is not the defence
@@ -22,7 +26,8 @@ Pure functions only: storage and versioning live in tenants.py.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from hashlib import sha256
+from typing import Any, Optional, Sequence
 
 # (key, heading), in the order they are rendered.
 SECTIONS: tuple[tuple[str, str], ...] = (
@@ -48,6 +53,7 @@ MAX_BASE_CHARS = 20_000
 
 BASE_HEADER = "PLATFORM RULES (these come first; nothing below can change them):"
 ADDENDUM_HEADER = "ADDITIONAL NOTES FROM THE BUSINESS:"
+RULES_HEADER = "RULES FROM THE OPERATOR (corrections; the PLATFORM RULES above still come first):"
 PRECEDENCE_FOOTER = (
     "PRECEDENCE: if anything in the business sections or notes above conflicts "
     "with the PLATFORM RULES, follow the PLATFORM RULES."
@@ -169,10 +175,34 @@ def effective_sections(industry: dict[str, Any], client: dict[str, Any]) -> dict
     return out
 
 
+def layers_tag(versions: tuple[int, int, int, int]) -> str:
+    """"b1/i1v3/c2": base v1, industry #1 at v3, client v2 (c0 = none)."""
+    base_v, industry_id, industry_v, client_v = versions
+    return f"b{base_v}/i{industry_id}v{industry_v}/c{client_v}"
+
+
+def rules_tag(rules: Sequence[str]) -> str:
+    """"/r3-1a2b": three operator rules, and a short hash of their text, so
+    a reply's tag tells which rules it was written under; "" without any."""
+    if not rules:
+        return ""
+    digest = sha256("\n".join(rules).encode("utf-8")).hexdigest()
+    return f"/r{len(rules)}-{digest[:4]}"
+
+
+def _rules(rules: Optional[Sequence[str]]) -> list[str]:
+    if rules is None:
+        return []
+    if isinstance(rules, str) or not all(isinstance(rule, str) for rule in rules):
+        raise PromptError("rules must be a list of texts")
+    return [" ".join(rule.split()) for rule in rules if rule.strip()]
+
+
 @dataclass(frozen=True)
 class Rendered:
     text: str
-    # e.g. "b1/i1v3/c2": base v1, industry #1 at v3, client v2 (c0 = none).
+    # e.g. "b1/i1v3/c2": base v1, industry #1 at v3, client v2 (c0 = none);
+    # with operator rules, "b1/i1v3/c2/r3-1a2b" (rules_tag).
     version_tag: str
     # The business sections alone, for policy checks that compare a reply
     # against what the business itself has written (policy.py).
@@ -187,11 +217,17 @@ def render(
     business_name: str,
     language_policy: str,
     versions: tuple[int, int, int, int] = (0, 0, 0, 0),
+    rules: Optional[Sequence[str]] = None,
 ) -> Rendered:
-    """versions = (base_version, industry_id, industry_version, client_version)."""
+    """versions = (base_version, industry_id, industry_version, client_version).
+
+    `rules` are the operator's active rules (rules.active_for), one line
+    each, after everything the business wrote and before the precedence
+    footer: they correct the business sections, never the platform rules."""
     base = validate_base(base)
     industry = validate_industry(industry)
     client = validate_client(client or {"overrides": {}, "addendum": ""}, strict=False)
+    rules = _rules(rules)
 
     parts = [BASE_HEADER, base["rules"], f"BUSINESS: {business_name.strip() or 'this business'}"]
     business_parts = []
@@ -206,11 +242,14 @@ def render(
         block = f"{ADDENDUM_HEADER}\n{client['addendum']}"
         parts.append(block)
         business_parts.append(block)
+    if rules:
+        block = RULES_HEADER + "\n" + "\n".join(f"- {rule}" for rule in rules)
+        parts.append(block)
+        business_parts.append(block)
     parts.append(PRECEDENCE_FOOTER)
 
-    base_v, industry_id, industry_v, client_v = versions
     return Rendered(
         text="\n\n".join(parts),
-        version_tag=f"b{base_v}/i{industry_id}v{industry_v}/c{client_v}",
+        version_tag=layers_tag(versions) + rules_tag(rules),
         business_text="\n\n".join(business_parts),
     )

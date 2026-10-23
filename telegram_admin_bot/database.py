@@ -590,6 +590,7 @@ class Database:
         llm_model: Optional[str] = None,
         prompt_version: Optional[str] = None,
         wa_message_id: Optional[str] = None,
+        sent_elsewhere: bool = False,
     ) -> Optional[dict[str, Any]]:
         """Insert a message and refresh the conversation's preview.
 
@@ -598,7 +599,8 @@ class Database:
         watch outgoing events, so the same message can arrive twice).
         `llm_model` / `prompt_version` are set on AI-written messages.
         A WhatsApp message carries its string id in `wa_message_id` instead,
-        deduplicated the same way.
+        deduplicated the same way. `sent_elsewhere` marks one written by
+        hand on the account's phone or another app: the send limits skip it.
         """
         text = _clean(text) or ""
         tid = await self.tenant_id()
@@ -612,8 +614,9 @@ class Database:
             row = await con.fetchrow(
                 f"""
                 INSERT INTO messages (session_id, tenant_id, chat_id, telegram_id, direction, status,
-                                      text, attachments, llm_model, prompt_version, wa_message_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                                      text, attachments, llm_model, prompt_version, wa_message_id,
+                                      sent_elsewhere)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 ON CONFLICT {conflict}
                 DO NOTHING
                 RETURNING id
@@ -629,6 +632,7 @@ class Database:
                 llm_model,
                 prompt_version,
                 wa_message_id,
+                bool(sent_elsewhere),
             )
             if row is None:
                 return None
@@ -707,18 +711,21 @@ class Database:
             )
         return [_message(r) for r in rows]
 
-    async def get_history_for_ai(self, chat_id: int, limit: int = 30) -> list[dict[str, str]]:
+    async def get_history_for_ai(self, chat_id: int, limit: int = 30, *,
+                                 with_times: bool = False) -> list[dict[str, Any]]:
         """Recent exchange as OpenAI-style role/content pairs.
 
         Drafts that were never approved, rejections and error rows are left
         out — only what actually crossed the wire is context for the model.
+        `with_times` adds "at", when the row was stored (the reply's clock,
+        ai_responder.Clock); the caller takes it out before the API sees it.
         """
         tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             rows = await con.fetch(
                 """
                 SELECT * FROM (
-                    SELECT direction, text, id FROM messages
+                    SELECT direction, text, id, created_at FROM messages
                      WHERE tenant_id = $1
                        AND chat_id = $2
                        AND status = ANY($3)
@@ -733,10 +740,14 @@ class Database:
                 [DIR_IN, DIR_OUT],
                 limit,
             )
-        return [
+        history: list[dict[str, Any]] = [
             {"role": "user" if r["direction"] == DIR_IN else "assistant", "content": r["text"]}
             for r in rows
         ]
+        if with_times:
+            for message, r in zip(history, rows):
+                message["at"] = r["created_at"]
+        return history
 
     async def update_message(
         self,
@@ -747,13 +758,19 @@ class Database:
         telegram_id: Optional[int] = None,
         attachments: Optional[list[int]] = None,
         wa_message_id: Optional[str] = None,
+        draft_text: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
+        """`draft_text`: the bot's own draft, kept when someone changed it
+        before approving it (migration 0016)."""
         tid = await self.tenant_id()
         sets: list[str] = []
         params: list[Any] = [tid, message_id]
         if text is not None:
             params.append(_clean(text))
             sets.append(f"text = ${len(params)}")
+        if draft_text is not None:
+            params.append(_clean(draft_text))
+            sets.append(f"draft_text = ${len(params)}")
         if attachments is not None:
             params.append(list(attachments))
             sets.append(f"attachments = ${len(params)}")
@@ -943,15 +960,16 @@ class Database:
         return n or 0
 
     async def sent_since(self, iso_timestamp: str) -> int:
-        """Every message this account has sent since a moment — replies
-        included. Telegram's spam heuristics count total outbound volume,
-        not just conversations we started, so the daily ceiling has to see
-        all of it."""
+        """Every message this platform has sent for the account since a
+        moment — replies and panel sends included, not just conversations we
+        started. Messages typed by hand on the phone or another app
+        (sent_elsewhere) are the owner's own and don't count."""
         tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             n = await con.fetchval(
                 "SELECT COUNT(*) FROM messages "
-                " WHERE tenant_id = $1 AND direction = $2 AND status = $3 AND created_at >= $4",
+                " WHERE tenant_id = $1 AND direction = $2 AND status = $3 AND created_at >= $4"
+                "   AND NOT sent_elsewhere",
                 tid,
                 DIR_OUT,
                 STATUS_SENT,
@@ -963,13 +981,15 @@ class Database:
         """How many different people we have written to since a moment.
 
         Messaging many *different* people is a far stronger spam signal
-        than sending many messages inside one ongoing conversation.
+        than sending many messages inside one ongoing conversation. Like
+        sent_since, messages typed by hand elsewhere don't count.
         """
         tid = await self.tenant_id()
         async with self._pool.acquire() as con:
             n = await con.fetchval(
                 "SELECT COUNT(DISTINCT chat_id) FROM messages "
-                " WHERE tenant_id = $1 AND direction = $2 AND status = $3 AND created_at >= $4",
+                " WHERE tenant_id = $1 AND direction = $2 AND status = $3 AND created_at >= $4"
+                "   AND NOT sent_elsewhere",
                 tid,
                 DIR_OUT,
                 STATUS_SENT,
@@ -1263,6 +1283,7 @@ def _message(row: asyncpg.Record) -> dict[str, Any]:
         "attachments": _attachments(row),
         "llm_model": row["llm_model"],
         "prompt_version": row["prompt_version"],
+        "sent_elsewhere": row["sent_elsewhere"],
     }
 
 

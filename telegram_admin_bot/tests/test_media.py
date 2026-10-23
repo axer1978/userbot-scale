@@ -392,6 +392,24 @@ def test_flags_are_kept_and_arrival_items_are_hidden_from_the_ai(tmp_path):
         again.set_flags(1, secret=True)
 
 
+def test_greeting_items_go_with_the_first_reply_and_stay_known_to_the_ai(tmp_path):
+    (tmp_path / "hi.mp4").write_bytes(b"mp4")
+    (tmp_path / "door.jpg").write_bytes(b"jpg")
+    lib = media.MediaLibrary(tmp_path)
+    ids = {item["file"]: item["id"] for item in lib.all()}
+    video, door = ids["hi.mp4"], ids["door.jpg"]
+    lib.set_flags(video, greeting=True)
+    # An arrival item is never a greeting: it holds the way in.
+    lib.set_flags(door, greeting=True, send_on_arrival=True)
+    again = media.MediaLibrary(tmp_path)
+    assert [i["id"] for i in again.greeting_items()] == [video]
+    assert [i["id"] for i in again.for_ai()] == [video]
+    line = media.greeting_line(again.greeting_items())
+    assert f"video #{video}" in line and "write no [send] tag" in line
+    again.set_flags(video, greeting=False)
+    assert again.greeting_items() == []
+
+
 @pytest.mark.asyncio
 async def test_a_view_once_item_is_sent_as_view_once(app, library, monkeypatch):
     seen = {}

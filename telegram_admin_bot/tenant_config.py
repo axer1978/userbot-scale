@@ -87,6 +87,71 @@ class Burst(_Strict):
         "them like any other reply."))
 
 
+DEFAULT_EMOJI_FAMILIES = [
+    "❤️ ♥️ 💕 💖 💗",
+    "😘 😚 😙 💋 🥰",
+    "😍 🥰 🤩",
+    "😊 🙂 ☺️ 😌",
+    "😉 😜 😏",
+    "😂 🤣 😆 😅",
+    "😔 😕 🥺",
+    "👍 👌",
+]
+
+
+class Variation(_Strict):
+    """Small differences between replies (variation.py), so people who ask
+    the same thing never get the same text: WhatsApp flags an account that
+    sends many people identical messages. The one-piece messages (the rates,
+    the extras, the address, anything between [block] markers) always go out
+    exactly as written."""
+    enabled: bool = Field(True, description=(
+        "Vary the bot's own lines a little in every reply (emoji, phrases, capitals, "
+        "punctuation, how many bubbles). Rates, extras, the address and other [block] "
+        "messages are never changed."))
+    emoji_drop: float = Field(0.25, ge=0, le=1, description=(
+        "Chance that a message goes out without its emoji."))
+    emoji_swap: float = Field(0.45, ge=0, le=1, description=(
+        "Chance that a message's emoji is swapped for another one of its family."))
+    emoji_families: list[str] = Field(default_factory=lambda: list(DEFAULT_EMOJI_FAMILIES), max_length=50,
+                                      description=(
+        "Emojis that may stand in for each other, one family per line "
+        "(❤️ ♥️ 💕). An emoji in no family is only ever kept or left out."))
+    phrases: list[str] = Field(default_factory=list, max_length=200, description=(
+        "Phrases that mean the same, one group per line, apart by | "
+        "(Hi my love | Hey my love | Hi love). Wherever the bot writes one, any of "
+        "its group may go out instead. Every phrase in a group must have the same "
+        "numbers."))
+    lowercase_start: float = Field(0.3, ge=0, le=1, description=(
+        "Chance that a message starts with a small letter (\"hi love\")."))
+    drop_end_punctuation: float = Field(0.3, ge=0, le=1, description=(
+        "Chance that the full stop, ! or ? at the end of a message is left out."))
+    merge_messages: float = Field(0.25, ge=0, le=1, description=(
+        "Chance that two short messages in a row go out as one."))
+
+    @field_validator("emoji_families", "phrases")
+    @classmethod
+    def _groups(cls, value: list[str], info: Any) -> list[str]:
+        # The same checks variation.py uses, so a saved line always works.
+        import variation
+        problem = variation.phrase_group_problem if info.field_name == "phrases" else variation.emoji_family_problem
+        out: list[str] = []
+        for line in value:
+            line = line.strip()
+            if not line:
+                continue
+            if why := problem(line):
+                raise ValueError(f"{line!r} {why}")
+            out.append(line)
+        return out
+
+    @model_validator(mode="after")
+    def _chances(self) -> "Variation":
+        if self.emoji_drop + self.emoji_swap > 1:
+            raise ValueError("variation.emoji_drop + emoji_swap must be at most 1")
+        return self
+
+
 class QuietHours(_Strict):
     """A window, in the tenant's timezone, when nothing is sent. Replies due
     inside it wait until it ends. The window may cross midnight."""
@@ -131,6 +196,9 @@ class AI(_Strict):
     max_tokens: int = Field(400, ge=1, le=8192)
     temperature: float = Field(1.0, ge=0.0, le=2.0)
     max_concurrent_requests: int = Field(4, ge=1, le=32)
+    history_messages: int = Field(60, ge=10, le=200, description=(
+        "How many of the chat's latest messages the model reads to write a reply (both sides). "
+        "Older ones are not seen at all."))
 
 
 class Safety(_Strict):
@@ -189,6 +257,15 @@ class Booking(_Strict):
     # The owner's Telegram (username, phone or id). Requests go there from
     # this account; the owner answers YES n, NO n or with a new time.
     provider: str = Field("", max_length=64)
+    name: str = Field("", max_length=64, description=(
+        "Her name: the 'Girl:' line of a booking request to the owner, and updates to the owner start with it "
+        "(empty: the account's name). The customer is told it when the booking is confirmed and when they "
+        "arrive (empty: no name)."))
+    # Read the owner's answers in her own words too ("I'm ready in 20
+    # minutes", "yes I confirm", "can he come at 15:30?"), against what the
+    # customer asked for: one small model call per message that is not a
+    # plain command, only while a booking is open. Off: commands only.
+    owner_free_text: bool = True
     # Where the e-mail record of each confirmation, change and cancellation
     # goes. Needs SMTP_* in .env; empty = no e-mail.
     owner_email: str = Field("", max_length=254)
@@ -207,14 +284,24 @@ class Booking(_Strict):
     # How long a freed slot is held for the first person on the waitlist
     # before it is offered to the next one.
     waitlist_offer_hours: int = Field(12, ge=1, le=168)
-    # Sent word for word where a reply writes [address] (with the prices in
-    # the first reply, or when they ask where), and after a confirmation if
-    # it is not in the chat yet. Keep door codes and the way in for
-    # arrival_instructions.
+    # Sent word for word where a reply writes [address] (with the prices,
+    # or when they ask where), and after a confirmation if it is not in the
+    # chat yet. Keep door codes and the way in for arrival_instructions.
     address: str = Field("", max_length=2000)
+    # When the reply may write [address] before a booking: with the prices
+    # and whenever they ask where (with_prices), or only when they ask where
+    # (when_asked; a tag in any other reply is dropped). After a
+    # confirmation the address follows either way.
+    address_timing: Literal["with_prices", "when_asked"] = "with_prices"
     # Sent word for word, once, when the customer has arrived. Media items
-    # marked "send on arrival" go out right after it.
+    # marked "send on arrival" go out right after it. Empty: she comes out
+    # to meet him.
     arrival_instructions: str = Field("", max_length=20_000)
+    # The owner hears when an incall customer says he has arrived, with his
+    # message ("he's here — go and meet him", or that the way in went), and
+    # what he sends after that (a photo of where he is) until half an hour
+    # after the end.
+    arrival_to_owner: bool = True
     # Write nothing to a customer while a time they asked for waits for the
     # owner: the owner's answer is the next message they get. Their first
     # message still gets the first reply.
@@ -231,6 +318,25 @@ class Booking(_Strict):
     # arrival instructions wait for a photo that matches.
     arrival_requires_photo: bool = False
     arrival_photo_min_confidence: float = Field(0.7, ge=0.0, le=1.0)
+    # Outcalls by taxi. After the owner confirms an outcall she gets ready
+    # and sends READY n: the customer is asked to order a taxi to `address`
+    # and send its link, which goes on to the owner. She sends IN n once in
+    # the taxi; he is then asked for the exact address, floor, way in and a
+    # photo of the place. Everything he sends after the confirmation goes on
+    # to the owner, photos too. Off: an outcall is only confirmed.
+    outcall_taxi: bool = True
+    # With the taxi steps: instead of waiting for her READY n, he is asked
+    # after the confirmation for a photo that shows he is at the place (the
+    # hotel key card, the building). His first photo goes on to her and is
+    # the proof: he is then asked at once to order her taxi. READY n still
+    # skips the photo. Off: READY n starts the taxi step, as before.
+    outcall_proof: bool = True
+    # How long she needs to get ready (he is told; she is reminded to send
+    # READY n when it has passed). Not used with outcall_proof.
+    outcall_ready_minutes: int = Field(20, ge=5, le=240)
+    # No IN n this long after his taxi link reached her: he is told she is
+    # in the taxi anyway. 0 = as soon as the link comes.
+    outcall_in_taxi_minutes: int = Field(5, ge=0, le=120)
 
     @field_validator("reminders")
     @classmethod
@@ -315,8 +421,10 @@ class Anomaly(_Strict):
     # Sent in the last hour at least this many times the account's own
     # average hour over the last volume_baseline_days days. 0 = off.
     volume_multiplier: float = Field(5.0, ge=0, le=100)
-    # ...and never below this many messages in the hour.
-    volume_min_messages: int = Field(30, ge=1, le=10_000)
+    # ...and never below this many messages in the hour. A new account has
+    # no average yet, so this alone decides; 150 (a whole day's send limit
+    # in one hour) lets a busy hour through and still catches a flood.
+    volume_min_messages: int = Field(150, ge=1, le=10_000)
     volume_baseline_days: int = Field(7, ge=1, le=60)
     # A reply the bot wrote links to a domain nobody allowed, or contains a
     # wallet address or an IBAN (policy.py). The reply is held either way.
@@ -366,6 +474,42 @@ class Unanswered(_Strict):
     fallback_phrases: list[str] = Field(default_factory=list, max_length=100)
 
 
+class StyleCard(_Strict):
+    """How the business types, measured from the replies a person typed by
+    hand (stylecard.py) and given to the model as a short note: lengths,
+    capitals, punctuation, emojis, and the openers used in several chats.
+    Numbers and habits, never a whole line to copy."""
+    enabled: bool = Field(False, description=(
+        "Add the measured way of typing to every reply's prompt."))
+    scope: Literal["industry", "account"] = Field("industry", description=(
+        "Measure it from every account in the industry (one shared voice) or from this account only."))
+    days: int = Field(90, ge=7, le=365, description=(
+        "Only replies typed in the last this many days."))
+    min_replies: int = Field(30, ge=5, le=5000, description=(
+        "With fewer replies typed by hand than this, no note."))
+
+
+class Retrieval(_Strict):
+    """Earlier chat moments like the one being answered (examples.py), found
+    with the embedder and shown to the model as examples of how the business
+    handles them. Off until there are enough replies typed by hand to learn
+    from (Finetune → Quality shows how many)."""
+    enabled: bool = Field(False, description=(
+        "Show the model a few earlier moments like this one, with the business's real replies."))
+    k: int = Field(3, ge=1, le=8, description=(
+        "At most this many examples per reply."))
+    min_similarity: float = Field(0.55, ge=0, le=1, description=(
+        "How alike an earlier client message must be (0 to 1) to be shown."))
+    share_in_industry: bool = Field(True, description=(
+        "Also use examples from other accounts in the industry: only ones without any numbers "
+        "(a price or a time belongs to its own account)."))
+    max_chars: int = Field(1200, ge=200, le=4000, description=(
+        "At most this many characters of examples per reply."))
+    copy_guard: bool = Field(True, description=(
+        "A reply that copies an example nearly word for word is written again without examples: "
+        "the same text to many people gets a number flagged."))
+
+
 class TenantConfig(_Strict):
     timezone: str = "Europe/Riga"
     # Off: every reply waits in the panel for approval. On: replies that pass
@@ -373,6 +517,7 @@ class TenantConfig(_Strict):
     auto_send: bool = False
     reply_delay: ReplyDelay = Field(default_factory=ReplyDelay)
     burst: Burst = Field(default_factory=Burst)
+    variation: Variation = Field(default_factory=Variation)
     quiet_hours: QuietHours = Field(default_factory=QuietHours)
     # A customer message containing one of these (a word or the start of
     # one, any case) pauses that chat and pings the owner (booking.provider).
@@ -390,9 +535,10 @@ class TenantConfig(_Strict):
     # Phone numbers / e-mail addresses the business allows the bot to share;
     # any other one in a reply holds it.
     shareable_contacts: list[str] = Field(default_factory=list, max_length=50)
-    # Every message the account sends per day, replies included.
+    # Every message this platform sends for the account per day: bot
+    # replies and panel sends. Ones typed on the phone don't count.
     daily_message_cap: int = Field(150, ge=1, le=5000)
-    # Every message the account sends per hour. 0 = no limit.
+    # The same, per hour. 0 = no limit.
     hourly_message_cap: int = Field(0, ge=0, le=1000)
     # AI spend per calendar month (tenant timezone), in EUR. 0 = no limit.
     # See also `limits`.
@@ -413,6 +559,8 @@ class TenantConfig(_Strict):
     staging: Staging = Field(default_factory=Staging)
     digest: Digest = Field(default_factory=Digest)
     unanswered: Unanswered = Field(default_factory=Unanswered)
+    style_card: StyleCard = Field(default_factory=StyleCard)
+    retrieval: Retrieval = Field(default_factory=Retrieval)
 
     @field_validator("timezone")
     @classmethod
@@ -450,13 +598,14 @@ class TenantConfig(_Strict):
 # keeps whatever its config says by then). WhatsApp bans numbers for volume
 # and breadth much sooner than Telegram limits them, and a linked device
 # that answers in seconds, around the clock, in long bursts, reads as a bot.
-# So: fewer messages per day and per hour, fewer distinct people per day,
-# slower replies with a human-shaped spread, shorter bursts with longer
-# gaps, a quiet night, replies held for approval and no outreach.
+# So: fewer distinct people per day, slower replies with a human-shaped
+# spread, shorter bursts with longer gaps, a quiet night, replies held for
+# approval and no outreach. Volume is one limit, 150 messages a day: a
+# working account needs about that many, and an hourly cap (it was 15)
+# held replies back in busy hours.
 WHATSAPP_CLIENT_DEFAULTS: dict[str, Any] = {
     "auto_send": False,
-    "daily_message_cap": 60,
-    "hourly_message_cap": 15,
+    "daily_message_cap": 150,
     "safety": {"daily_peer_cap": 15},
     "reply_delay": {"min_s": 45, "max_s": 180, "distribution": "lognormal"},
     "burst": {"max_messages": 3, "gap_ms": {"min": 1200, "max": 3500}},

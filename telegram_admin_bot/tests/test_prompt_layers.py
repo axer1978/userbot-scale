@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 import prompt_layers as pl
@@ -14,9 +16,9 @@ INDUSTRY = {"sections": {
 }}
 
 
-def render(client=None, policy="mirror", name="Salon Anna"):
+def render(client=None, policy="mirror", name="Salon Anna", rules=None):
     return pl.render(base=BASE, industry=INDUSTRY, client=client, business_name=name,
-                     language_policy=policy, versions=(3, 7, 2, 5))
+                     language_policy=policy, versions=(3, 7, 2, 5), rules=rules)
 
 
 def test_base_comes_first_verbatim_and_precedence_is_restated_last():
@@ -133,3 +135,42 @@ def test_a_stored_boundaries_override_renders_as_an_append():
     assert "Adults only.\nAnything goes." in text
     assert pl.effective_sections(industry, client)["boundaries"]["inherited"] == "Adults only."
     assert "Adults only." in pl.effective_sections(industry, client)["boundaries"]["text"]
+
+
+# ------------------------------------------------------------ operator rules
+
+RULES = ["When he asks for photos before naming a time, send them and ask what time he comes.",
+         "Never send the rates message twice in one chat."]
+
+
+def test_operator_rules_come_after_the_business_and_before_the_footer():
+    rendered = render({"overrides": {}, "addendum": "Parking in the yard."}, rules=RULES)
+    text = rendered.text
+    block = f"{pl.RULES_HEADER}\n- {RULES[0]}\n- {RULES[1]}"
+    assert block in text
+    assert (text.index(BASE["rules"]) < text.index("TONE AND STYLE:") < text.index(pl.ADDENDUM_HEADER)
+            < text.index(pl.RULES_HEADER) < text.index(pl.PRECEDENCE_FOOTER))
+    assert text.endswith(block + "\n\n" + pl.PRECEDENCE_FOOTER)
+    # Part of what the business side says (policy.py compares against it), not of the platform's.
+    assert rendered.business_text.endswith(block)
+    assert BASE["rules"] not in rendered.business_text
+
+
+def test_rules_mark_the_version_tag_and_without_them_nothing_changes():
+    plain, ruled = render(), render(rules=RULES)
+    assert plain.version_tag == "b3/i7v2/c5" and pl.RULES_HEADER not in plain.text
+    assert re.fullmatch(r"b3/i7v2/c5/r2-[0-9a-f]{4}", ruled.version_tag)
+    assert render(rules=list(RULES)).version_tag == ruled.version_tag  # the same rules, the same tag
+    assert render(rules=RULES[:1]).version_tag.startswith("b3/i7v2/c5/r1-")
+    assert render(rules=[RULES[0], RULES[1] + " Ever."]).version_tag != ruled.version_tag  # the text counts
+    assert render(rules=[]) == plain and render(rules=["  "]) == plain
+
+
+def test_rules_are_one_line_each_and_must_be_texts():
+    text = render(rules=["  Ask his time\n  first.  ", ""]).text
+    assert f"{pl.RULES_HEADER}\n- Ask his time first.\n\n" in text
+    for bad in ("one rule", [1], [None]):
+        with pytest.raises(pl.PromptError):
+            render(rules=bad)
+
+

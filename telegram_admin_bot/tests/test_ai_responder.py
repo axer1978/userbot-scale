@@ -204,3 +204,36 @@ def test_the_no_reply_marker_never_goes_out_as_text():
     assert ai_responder.is_no_reply(" [no_reply] ")
     assert ai_responder.without_no_reply("here love 😘|||[NO_REPLY]") == "here love 😘|||"
     assert ai_responder.split_burst(ai_responder.without_no_reply("here love 😘|||[NO_REPLY]"), 4) == ["here love 😘"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status, ok, why", [
+    (200, True, ""),
+    (401, False, "DeepSeek does not accept this key"),
+    (503, False, "DeepSeek answered HTTP 503 when it was checked"),
+])
+async def test_check_key_asks_the_model_list(status, ok, why):
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(status, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        assert await ai_responder.check_key("sk-test", client=client) == (ok, why)
+    assert str(seen[0].url) == ai_responder.MODELS_URL and seen[0].method == "GET"
+    assert seen[0].headers["Authorization"] == "Bearer sk-test"
+
+
+@pytest.mark.asyncio
+async def test_check_key_says_when_deepseek_cannot_be_reached():
+    import httpx
+
+    def handler(request):
+        raise httpx.ConnectError("refused")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ok, why = await ai_responder.check_key("sk-test", client=client)
+    assert not ok and why == "could not reach DeepSeek to check it (ConnectError)" and "sk-test" not in why

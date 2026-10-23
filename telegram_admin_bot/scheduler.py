@@ -38,9 +38,11 @@ import asyncpg
 import billing
 import commands
 import digest
+import examples
 import health
 import pg
 import review
+import rules
 
 log = logging.getLogger("scheduler")
 
@@ -147,7 +149,10 @@ async def platform_tick(pool: asyncpg.Pool, bus: commands.CommandBus) -> None:
     for name, step in (("heartbeat", heartbeat), ("health", lambda: health.check_all(pool)),
                        ("billing", lambda: billing.tick(pool, bus)), ("digest", lambda: digest.tick(pool, bus)),
                        # Verification holds and the retention of review files (review.py).
-                       ("review", lambda: review.tick(pool, bus, data_root))):
+                       ("review", lambda: review.tick(pool, bus, data_root)),
+                       # Operator rules folded into the prompt weekly (rules.py); reply
+                       # examples taken from the chats and worded (examples.py).
+                       ("rules", lambda: rules.tick(pool, bus)), ("examples", lambda: examples.tick(pool, bus))):
         try:
             await step()
         except Exception:

@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import logging
 import re
-from typing import Any, Awaitable, Callable, Optional
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any, Awaitable, Callable, Optional, Sequence
 
 import httpx
 
 log = logging.getLogger(__name__)
 
 API_URL = "https://api.deepseek.com/chat/completions"
+MODELS_URL = "https://api.deepseek.com/models"
 
 # Used before the persona has been filled in from the Settings tab, so the
 # app still produces something sane instead of erroring out.
@@ -74,6 +78,14 @@ _BLOCK = re.compile(r"\[\s*block\s*\](.*?)(?:\[\s*/\s*block\s*\]|$)", re.IGNOREC
 _STRAY_BLOCK_TAG = re.compile(r"\[\s*/?\s*block\s*\]", re.IGNORECASE)
 _SEPARATOR_LINE = re.compile(r"^[ \t]*\|{3,}[ \t]*(?:\n|$)", re.MULTILINE)
 _EXTRA_BLANK_LINES = re.compile(r"\n\s*\n(\s*\n)+")
+# A one-piece message the prompt spells out word for word: the markers on
+# lines of their own around it ("send the rates message exactly as written").
+# A marker named in a sentence ("with [block] on the line before it") is not one.
+_PROMPT_BLOCK = re.compile(
+    r"^[ \t]*\[\s*block\s*\][ \t]*\n(.*?)\n[ \t]*\[\s*/\s*block\s*\][ \t]*$",
+    re.IGNORECASE | re.DOTALL | re.MULTILINE,
+)
+_NOT_A_WORD = re.compile(r"[\W_]+")
 
 
 def burst_note(max_messages: int = MAX_BURST_MESSAGES, keep_together: bool = True) -> str:
@@ -146,7 +158,80 @@ def _block_text(text: str) -> str:
     return _EXTRA_BLANK_LINES.sub("\n\n", "\n".join(lines)).strip()
 
 
-def split_burst(text: str, max_messages: int = MAX_BURST_MESSAGES, keep_together: bool = True) -> list[str]:
+@functools.lru_cache(maxsize=64)
+def fixed_blocks(prompt_text: str, min_lines: int = 2) -> tuple[str, ...]:
+    """The one-piece messages a prompt gives word for word between [block]
+    and [/block] lines (a rates or an extras message), when longer than one
+    line: split_burst keeps these together even when a reply forgets the
+    markers. With `min_lines` 1 the one-line ones too, which variation.py
+    must leave as written."""
+    blocks = (_block_text(match.group(1)) for match in _PROMPT_BLOCK.finditer(prompt_text or ""))
+    return tuple(block for block in blocks if len(_block_keys(block)) >= max(1, min_lines))
+
+
+def _line_key(line: str) -> str:
+    """A line as compared with a fixed block: case, emojis, punctuation and
+    spacing left out."""
+    return _NOT_A_WORD.sub(" ", line.lower()).strip()
+
+
+def _block_keys(block: str) -> list[str]:
+    return [key for key in map(_line_key, block.splitlines()) if key]
+
+
+def _split_loose(text: str, fixed: tuple[str, ...]) -> list[tuple[str, bool]]:
+    """Text outside the markers, one part per line — except that the lines of
+    a fixed block, in its order, come back as that block (as the prompt
+    writes it), one part. Each part says whether it is a fixed block."""
+    lines = _split_lines(text)
+    if not fixed:
+        return [(line, False) for line in lines]
+    keys = [_line_key(line) for line in lines]
+    wanted = sorted(((_block_keys(block), block) for block in fixed), key=lambda kb: -len(kb[0]))
+    parts: list[tuple[str, bool]] = []
+    i = 0
+    while i < len(lines):
+        for block_keys, block in wanted:
+            if keys[i:i + len(block_keys)] == block_keys:
+                parts.append((block, True))
+                i += len(block_keys)
+                break
+        else:
+            parts.append((lines[i], False))
+            i += 1
+    return parts
+
+
+def reply_pieces(text: str, fixed: tuple[str, ...] = ()) -> list[tuple[str, bool]]:
+    """The reply's messages, before any cap, each with whether it is a
+    one-piece message: between [block] markers (the rates, the extras, the
+    address) or one of the prompt's `fixed` blocks written without them."""
+    text = text or ""
+    pieces: list[tuple[str, bool]] = []
+    last = 0
+    for match in _BLOCK.finditer(text):
+        pieces.extend(_split_loose(_STRAY_BLOCK_TAG.sub("", text[last:match.start()]), fixed))
+        block = _block_text(_STRAY_BLOCK_TAG.sub("", match.group(1)))
+        if block:
+            pieces.append((block, True))
+        last = match.end()
+    pieces.extend(_split_loose(_STRAY_BLOCK_TAG.sub("", text[last:]), fixed))
+    return pieces
+
+
+def join_pieces(pieces: list[tuple[str, bool]]) -> str:
+    """reply_pieces back into reply text: one line per message, a one-piece
+    message between its [block] markers. split_burst gives the same parts."""
+    return "\n".join(f"{BLOCK_OPEN}\n{text}\n{BLOCK_CLOSE}" if is_block else text
+                     for text, is_block in pieces)
+
+
+def split_burst(
+    text: str,
+    max_messages: int = MAX_BURST_MESSAGES,
+    keep_together: bool = True,
+    fixed: tuple[str, ...] = (),
+) -> list[str]:
     """The parts of a reply, in order: one per separator or line break, and
     one per [block]…[/block] when `keep_together` (burst.keep_together).
 
@@ -157,19 +242,16 @@ def split_burst(text: str, max_messages: int = MAX_BURST_MESSAGES, keep_together
     back empty — the caller reports that rather than sending a blank message.
     With `keep_together` off, a block is split like any other text; the
     markers are dropped either way.
+
+    `fixed` are the prompt's own blocks (fixed_blocks): the model now and
+    then writes the rates without the markers, and six bubbles of a price
+    list (the rest glued onto the last one by the cap) read as a bot. With
+    `keep_together`, their lines still go out as one message.
     """
     max_messages = max(1, int(max_messages))
     text = text or ""
-    parts: list[str] = []
     if keep_together:
-        last = 0
-        for match in _BLOCK.finditer(text):
-            parts.extend(_split_lines(_STRAY_BLOCK_TAG.sub("", text[last:match.start()])))
-            block = _block_text(_STRAY_BLOCK_TAG.sub("", match.group(1)))
-            if block:
-                parts.append(block)
-            last = match.end()
-        parts.extend(_split_lines(_STRAY_BLOCK_TAG.sub("", text[last:])))
+        parts = [part for part, _ in reply_pieces(text, fixed)]
     else:
         parts = _split_lines(_STRAY_BLOCK_TAG.sub("", text))
     if len(parts) > max_messages:
@@ -353,6 +435,98 @@ def _retry_after(response: httpx.Response, attempt: int) -> float:
     return BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
 
 
+# ------------------------------------------------------------------ clock
+# A chat reaches the model with no times in it: without these, "tonight"
+# written two days ago reads like tonight, a client back after a day reads
+# like the same minute, and "are you free now?" is answered by guessing
+# what day and hour it is.
+
+# A message this long after the one before it gets its time written in front.
+TIME_GAP = timedelta(hours=2)
+_TIME_MARK = re.compile(r"⟦[^⟧\n]{0,80}⟧[ \t]*")
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
+           "October", "November", "December")
+CLOCK_NOTE = (
+    "Times in ⟦ ⟧ in front of messages show when they were sent; the system adds them, never write them "
+    "yourself. Now, today, tonight and tomorrow in an earlier message meant the day it was written."
+)
+
+
+@dataclass(frozen=True)
+class Clock:
+    """When this reply is written, in the account's timezone (`zone` names
+    it), and when each message of the history was sent, one per message."""
+    now: datetime
+    sent_at: tuple[Optional[datetime], ...] = ()
+    zone: str = ""
+
+
+def _day(at: datetime) -> str:
+    return f"{_WEEKDAYS[at.weekday()]} {at.day} {_MONTHS[at.month - 1]}"
+
+
+def when(at: datetime, now: datetime) -> str:
+    """A message's time as the model reads it: "today 21:05", "yesterday
+    23:40" or "Wednesday 21 October, 22:10"."""
+    at = at.astimezone(now.tzinfo)
+    days = (now.date() - at.date()).days
+    if days == 0:
+        return f"today {at:%H:%M}"
+    if days == 1:
+        return f"yesterday {at:%H:%M}"
+    return f"{_day(at)}, {at:%H:%M}"
+
+
+def ago(delta: timedelta) -> str:
+    minutes = int(delta.total_seconds() // 60)
+    if minutes < 2:
+        return "just now"
+    if minutes < 60:
+        return f"{minutes} minutes ago"
+    hours = minutes // 60
+    if hours < 48:
+        return "1 hour ago" if hours == 1 else f"{hours} hours ago"
+    return f"{hours // 24} days ago"
+
+
+def with_times(history: Sequence[dict[str, str]], clock: Clock) -> list[dict[str, str]]:
+    """The history with ⟦its time⟧ in front of the first message and of
+    every message sent TIME_GAP or more after the one before it. A copy:
+    the caller's list stays as it is. Unmarked when the times do not line
+    up with the messages."""
+    if len(clock.sent_at) != len(history):
+        return [copy.copy(message) for message in history]
+    marked: list[dict[str, str]] = []
+    previous: Optional[datetime] = None
+    for message, at in zip(history, clock.sent_at):
+        message = copy.copy(message)
+        if at is not None:
+            if previous is None or at - previous >= TIME_GAP:
+                message["content"] = f"⟦{when(at, clock.now)}⟧ {message.get('content') or ''}"
+            previous = at
+        marked.append(message)
+    return marked
+
+
+def clock_note(history: Sequence[dict[str, str]], clock: Clock) -> str:
+    """What time it is now and how long ago they last wrote, for the end of
+    the conversation, where the model reads it last."""
+    zone = f" ({clock.zone})" if clock.zone else ""
+    lines = [f"Now it is {_day(clock.now)}, {clock.now:%H:%M}{zone}."]
+    if len(clock.sent_at) == len(history):
+        theirs = [at for message, at in zip(history, clock.sent_at) if message.get("role") == "user" and at]
+        if theirs:
+            lines.append(f"Their last message came {ago(clock.now - theirs[-1])}.")
+    lines.append(CLOCK_NOTE)
+    return " ".join(lines)
+
+
+def without_time_marks(text: str) -> str:
+    """The reply without a ⟦time⟧ the model copied from the history."""
+    return _TIME_MARK.sub("", text or "")
+
+
 async def generate_reply(
     *,
     api_key: str,
@@ -372,6 +546,9 @@ async def generate_reply(
     usage_sink: Optional[UsageSink] = None,
     no_reply_instruction: str = "",
     burst_keep_together: bool = True,
+    style_note: str = "",
+    examples_note: str = "",
+    clock: Optional[Clock] = None,
 ) -> str:
     """Return the draft reply text, or raise AIResponderError with a safe message.
 
@@ -389,6 +566,18 @@ async def generate_reply(
     `system_prompt`, when given, is a tenant's rendered prompt layers
     (prompt_layers.render) and replaces the persona-built one; then
     `language_locked` says whether its language policy is fixed.
+
+    `style_note` is how the business types, measured from its hand-typed
+    replies (stylecard.py); the same for every reply of the account, so it
+    goes right after the prompt, inside the part DeepSeek caches.
+    `examples_note` holds earlier moments like this one with the business's
+    real replies (examples.py): before the appointments, which stay the
+    freshest thing the model reads.
+
+    `clock`, when given, puts the times of the history in front of its
+    messages (with_times) and what time it is now after the conversation
+    (clock_note): last, so the cached prompt before it stays the same from
+    one minute to the next. A time the model copies is taken out again.
     """
     if not api_key:
         raise AIResponderError("DEEPSEEK_API_KEY is not set.")
@@ -399,6 +588,8 @@ async def generate_reply(
     else:
         sections = [build_system_prompt(persona)]
         locked = language_is_pinned(persona)
+    if (style_note or "").strip():
+        sections.append(style_note.strip())
     samples = _samples_section(general_samples)
     if samples:
         sections.append(samples)
@@ -410,6 +601,8 @@ async def generate_reply(
     brief = _background_section(background)
     if brief:
         sections.append(brief)
+    if (examples_note or "").strip():
+        sections.append(examples_note.strip())
     if (booking_note or "").strip():
         sections.append(booking_note.strip())
     if (media_note or "").strip():
@@ -419,23 +612,27 @@ async def generate_reply(
         sections.append(no_reply_section(no_reply_instruction))
 
     messages = [{"role": "system", "content": "\n\n".join(sections)}]
-    messages.extend(_merge_consecutive_turns(history))
+    messages.extend(_merge_consecutive_turns(with_times(history, clock) if clock is not None else history))
     if len(messages) == 1:
         raise AIResponderError("No conversation history to reply to.")
+    closing = [clock_note(history, clock)] if clock is not None else []
     if messages[-1].get("role") == "assistant":
         # Nothing new from them: a booking update, a reminder or a waitlist
         # offer starts this message. Ending on our own turn, the model tends
         # to repeat or continue it, or to answer with nothing usable.
-        messages.append({"role": "system", "content": own_initiative_note(booking_note)})
+        closing.append(own_initiative_note(booking_note))
     elif news := _news_lines(booking_note):
         # News for a reply to them (a confirmation after their time went
         # unanswered, a time that is taken) goes where the model reads last
         # too: far up in the system prompt it was answered as if absent.
-        messages.append({"role": "system", "content": NEWS_NOTE + "\n" + "\n".join(news)})
+        closing.append(NEWS_NOTE + "\n" + "\n".join(news))
+    if closing:
+        messages.append({"role": "system", "content": "\n\n".join(closing)})
 
-    return await _complete(
+    text = await _complete(
         api_key=api_key, messages=messages, ai_config=ai_config, client=client, **_sink(usage_sink)
     )
+    return without_time_marks(text) if clock is not None else text
 
 
 OWN_INITIATIVE_NOTE = (
@@ -636,7 +833,7 @@ async def extract_booking(
     latest = next((m.get("content") or "" for m in reversed(history) if m.get("role") == "user"), "")
     extract_config = {
         **ai_config,
-        "max_tokens": 200,
+        "max_tokens": 300,
         "temperature": 0.0,
     }
     text = await _complete(
@@ -651,6 +848,39 @@ async def extract_booking(
         **_sink(usage_sink),
     )
     return bookings.parse_extraction(text)
+
+
+async def read_owner_answer(
+    *,
+    api_key: str,
+    history: list[dict[str, str]],
+    latest: str,
+    tz_name: str,
+    now: datetime,
+    state_note: str,
+    ai_config: dict[str, Any],
+    replying_to: Optional[int] = None,
+    client: Optional[httpx.AsyncClient] = None,
+    usage_sink: Optional[UsageSink] = None,
+) -> Optional[dict[str, Any]]:
+    """What the owner's answer in her own words means for the bookings in
+    `state_note` ("ready in 20 minutes", "yes I confirm"), as
+    bookings.parse_owner_answer returns it. None when it is not about them."""
+    import bookings
+
+    text = await _complete(
+        api_key=api_key,
+        messages=[
+            {"role": "system", "content": bookings.OWNER_ANSWER_SYSTEM_PROMPT},
+            {"role": "user", "content": bookings.owner_answer_prompt(
+                render_transcript(history), tz_name, now=now, state_note=state_note, latest=latest,
+                replying_to=replying_to)},
+        ],
+        ai_config={**ai_config, "max_tokens": 80, "temperature": 0.0},
+        client=client,
+        **_sink(usage_sink),
+    )
+    return bookings.parse_owner_answer(text)
 
 
 async def extract_arrival(
@@ -797,6 +1027,26 @@ async def _complete(
     finally:
         if owns_client:
             await http.aclose()
+
+
+async def check_key(
+    api_key: str, *, client: Optional[httpx.AsyncClient] = None, timeout: float = 10.0
+) -> tuple[bool, str]:
+    """Whether DeepSeek accepts the key, asked with the model list (costs no
+    tokens). (False, why) when it is refused or DeepSeek cannot be asked."""
+    http = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        response = await http.get(MODELS_URL, headers={"Authorization": f"Bearer {api_key}"})
+    except httpx.HTTPError as exc:
+        return False, f"could not reach DeepSeek to check it ({type(exc).__name__})"
+    finally:
+        if client is None:
+            await http.aclose()
+    if response.status_code == 200:
+        return True, ""
+    if response.status_code in (401, 403):
+        return False, "DeepSeek does not accept this key"
+    return False, f"DeepSeek answered HTTP {response.status_code} when it was checked"
 
 
 async def _report_usage(usage_sink: UsageSink, model: str, response: httpx.Response) -> None:

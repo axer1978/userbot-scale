@@ -51,6 +51,17 @@ def test_an_industry_with_its_own_default_gets_it():
     assert "GREEN bubbles = the business" in escort and "BLUE bubbles = the business" in escort
 
 
+def test_the_escort_business_layer_holds_only_services_and_costs():
+    # Every escort business shares the voice and pipeline (the standard); the
+    # business layer the template asks for is services, hours_location and
+    # appended boundaries only, with no addendum.
+    lines = finetune.default_template("Escort").splitlines()
+    example = json.loads(lines[lines.index("=== BUSINESS LAYER ===") + 1])
+    layer = finetune.check_business_layer(example)
+    assert set(layer["overrides"]) == {"services", "hours_location", "boundaries"}
+    assert layer["overrides"]["boundaries"]["mode"] == "append" and layer["addendum"] == ""
+
+
 def test_any_other_industry_gets_the_generic_default_with_its_name():
     hair = finetune.default_template("Hair salons")
     assert "Hair salons industry" in hair and "=== INDUSTRY STANDARD (Hair salons) ===" in hair
@@ -331,3 +342,371 @@ async def test_a_run_from_typed_chats(panel_client, tenant, monkeypatch):
     assert run["source"] == "text" and run["files"] == ["01", "02-bad"]
     assert run["status"] == "done" and run["result"]["errors"] == []
     assert "discount" not in json.dumps(run)  # the chats themselves are not stored
+
+
+# ----------------------------------------------------------- flagged chats
+
+
+def msg(id, direction, status, text, at="2026-10-12T19:40:00+00:00", attachments=()):
+    return {"id": id, "direction": direction, "status": status, "text": text, "created_at": at,
+            "attachments": list(attachments)}
+
+
+def test_a_flagged_chat_is_read_as_what_crossed_the_wire():
+    lines = finetune.chat_lines([
+        msg(1, "in", "received", "Hi, can I come over?"),
+        msg(2, "out", "sent", "Hi my love ❤️ around what hour you come? 😘"),
+        msg(3, "out", "rejected", "a draft the admin threw away"),
+        msg(4, "out", "pending_approval", "a draft still waiting"),
+        msg(5, "system", "note", "No reply: bare ok."),
+        msg(6, "system", "note", "📅 Booking #3 requested for today 23:00, waiting for the owner."),
+        msg(7, "out", "sent", "", attachments=[3]),
+        msg(8, "out", "error", "FloodWait"),
+        msg(9, "in", "received", "  "),
+    ])
+    assert [(line["id"], line["who"]) for line in lines] == [(1, "client"), (2, "business"), (6, "event"),
+                                                               (7, "business")]
+    assert lines[3]["text"] == "[sent a file]"
+
+
+def test_personal_data_and_the_way_in_are_masked():
+    masks = finetune.masks_for(display_name="Toms Berzins", username="toms_lv", address="ganu street 4",
+                               way_in="door code 1234\nfloor 4 apart 42")
+    text = finetune.mask(
+        "Hi Toms! I'm at Ganu Street 4, door code 1234, call +371 2694 2162 or 26942162, toms@mail.lv, @toms_lv "
+        "@someone_else", masks)
+    assert text == ("Hi [client]! I'm at [address], [way in], call [number] or [number], [email], [username] "
+                    "[username]")
+    # Prices, times and dates are not phone numbers.
+    assert finetune.mask("30 min 100, 1h 150 200 300, at 23:00 on 12.10.2026, +50 extra", masks) == \
+        "30 min 100, 1h 150 200 300, at 23:00 on 12.10.2026, +50 extra"
+    # A contact called "Love" does not eat "my love".
+    assert finetune.mask("Hi my love, Love", finetune.masks_for(display_name="Love")) == "Hi my love, [client]"
+
+
+def test_a_flagged_chat_carries_the_operators_judgement_and_corrections():
+    from zoneinfo import ZoneInfo
+
+    example = {"verdict": "bad", "client_kind": "time_waster", "outcome": "never_booked",
+               "note": "Toms asked for photos 3 times, never named a time.\nShould have asked for his time.",
+               "corrections": {"2": "should have been: send me a voice message love and tell me your time 😘"}}
+    lines = finetune.chat_lines([
+        msg(1, "in", "received", "I want to see your energy first", at="2026-10-12T20:59:00+00:00"),
+        msg(2, "out", "sent", "okay love", at="2026-10-12T21:01:00+00:00"),
+        msg(3, "system", "note", "📅 Booking #3 declined.", at="2026-10-12T21:30:00+00:00"),
+    ])
+    text = finetune.render_example(example, lines, masks=finetune.masks_for(display_name="Toms"),
+                                   tz=ZoneInfo("Europe/Riga"))
+    assert text == (
+        "OPERATOR'S JUDGEMENT (not part of the chat):\n"
+        f"- Handled: {finetune.VERDICTS['bad']}\n"
+        "- Client: TIME-WASTER\n"
+        "- Ended: he never booked\n"
+        "- Why: [client] asked for photos 3 times, never named a time.\n  Should have asked for his time.\n\n"
+        "— Mon 12.10.2026 —\n"
+        "[23:59] Client: I want to see your energy first\n"
+        "— Tue 13.10.2026 —\n"
+        "[00:01] Business: okay love\n"
+        "ANNOTATION FOR MODEL: should have been: send me a voice message love and tell me your time 😘\n"
+        "— booking: 📅 Booking #3 declined. —"
+    )
+
+
+def test_a_flag_is_checked():
+    ok = finetune.check_example(verdict="good", client_kind="", outcome="came", note=" fine ",
+                                corrections={"5": " x ", "6": "  "}, message_ids={5, 6})
+    assert ok == {"verdict": "good", "client_kind": "", "outcome": "came", "note": "fine", "corrections": {"5": "x"}}
+    base = {"verdict": "good", "client_kind": "", "outcome": "", "note": "", "corrections": {}, "message_ids": {5}}
+    for bad in ({"verdict": "great"}, {"client_kind": "rich"}, {"outcome": "married"},
+                {"corrections": {"9": "not in this chat"}}, {"corrections": {"x": "not a message"}},
+                {"note": "n" * (finetune.MAX_NOTE_CHARS + 1)}):
+        with pytest.raises(finetune.ExampleError):
+            finetune.check_example(**{**base, **bad})
+    assert [finetune.example_name(7, v) for v in ("good", "bad", "plain")] == ["07-good", "07-bad", "07"]
+
+
+def test_flagged_chats_come_with_a_note_on_the_judgement():
+    [message] = finetune.build_example_messages("TEMPLATE", [("07-good", "OPERATOR'S JUDGEMENT ...")])
+    assert message["content"].startswith(f"TEMPLATE\n\n{finetune.TRANSCRIPT_NOTE}\n\n{finetune.EXAMPLES_NOTE}\n\n")
+    assert message["content"].endswith("### 07-good\nOPERATOR'S JUDGEMENT ...")
+    assert "ANNOTATION FOR MODEL" in finetune.EXAMPLES_NOTE
+
+
+async def seed_chat(pool, tenant, session_id="acct", chat_id=501, name="Toms", messages=()):
+    async with pool.acquire() as con:
+        await con.execute("INSERT INTO conversations (session_id, tenant_id, chat_id, display_name, username) "
+                          "VALUES ($1, $2, $3, $4, 'toms_lv')", session_id, tenant, chat_id, name)
+        return [await con.fetchval("INSERT INTO messages (session_id, tenant_id, chat_id, direction, status, text) "
+                                   "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+                                   session_id, tenant, chat_id, direction, status, text)
+                for direction, status, text in messages]
+
+
+CHAT = (("in", "received", "Hi, Toms here, free tonight? +37126942162"),
+        ("out", "sent", "Hi my love ❤️ around what hour you come? 😘"),
+        ("in", "received", "send more photos"),
+        ("out", "sent", "okay love"))
+
+
+@pytest.mark.requires_pg
+@pytest.mark.asyncio
+async def test_flag_a_chat_and_run_from_it(panel_client, pg_pool, tenant, monkeypatch):
+    ids = await seed_chat(pg_pool, tenant, messages=CHAT)
+    path = "/api/finetune/sessions/acct/chats/501/example"
+    empty = (await panel_client.get(path)).json()
+    assert empty["example"] is None and [line["id"] for line in empty["lines"]] == ids
+
+    bad = await panel_client.put(path, json={"verdict": "bad", "corrections": {"999": "x"}})
+    assert bad.status_code == 400
+    saved = await panel_client.put(path, json={
+        "verdict": "bad", "client_kind": "time_waster", "outcome": "never_booked",
+        "note": "Toms only collects photos.", "corrections": {str(ids[3]): "ask for his time instead"}})
+    assert saved.status_code == 200, saved.text
+    flagged = saved.json()
+    example = flagged["example"]
+    assert example["upto_message_id"] == ids[3] and example["name"] == f"{example['id']:02d}-bad"
+    assert (await panel_client.get("/api/finetune/sessions/acct/flags")).json() == {"501": "bad"}
+    preview = flagged["preview"]
+    assert "Client: Hi, [client] here, free tonight? [number]" in preview
+    assert "- Why: [client] only collects photos." in preview
+    assert "Business: okay love\nANNOTATION FOR MODEL: ask for his time instead" in preview
+
+    # Messages after the flag are not part of it until it is saved again.
+    await seed_chat_message(pg_pool, tenant, "in", "received", "ok bye")
+    again = (await panel_client.get(path)).json()
+    assert again["newer"] == 1 and "ok bye" not in again["preview"]
+
+    # Another client's account does not see it.
+    other = await seed_session(pg_pool, "other", name="Ann")
+    await seed_chat(pg_pool, other, session_id="other", chat_id=501, messages=CHAT[:1])
+    assert (await panel_client.get("/api/finetune/sessions/other/chats/501/example")).json()["example"] is None
+
+    seen = {}
+
+    async def fake_complete_text(prompt, chats, **kwargs):
+        seen.update(chats=list(chats), flagged=kwargs.get("flagged"))
+        return answer()
+
+    monkeypatch.setattr(finetune, "complete_text", fake_complete_text)
+    monkeypatch.setenv("DEEPSEEK_PLATFORM_KEY", "pk")
+    await write_template(panel_client)
+    refused = await panel_client.post("/api/finetune/example-runs", json={"tenant_id": other,
+                                                                          "example_ids": [example["id"]]})
+    assert refused.status_code == 400
+    started = await panel_client.post("/api/finetune/example-runs", json={"tenant_id": tenant,
+                                                                          "example_ids": [example["id"]]})
+    await asyncio.gather(*finetune_api._tasks)
+    assert started.status_code == 200, started.text
+    assert seen["flagged"] is True and [n for n, _ in seen["chats"]] == [example["name"]]
+    assert "TIME-WASTER" in seen["chats"][0][1] and "ok bye" not in seen["chats"][0][1]
+    run = (await panel_client.get(f"/api/finetune/runs/{started.json()['id']}")).json()
+    assert run["source"] == "examples" and run["files"] == [example["name"]] and run["status"] == "done"
+    assert "okay love" not in json.dumps(run)  # the chats are not copied into the run
+
+    listed = (await panel_client.get(f"/api/finetune/examples?tenant_id={tenant}")).json()
+    assert [(e["id"], e["display_name"], e["last_run_id"]) for e in listed] == [(example["id"], "Toms", run["id"])]
+    # Judged again: news for the next run, and it now covers the newer message.
+    resaved = (await panel_client.put(path, json={"verdict": "good", "client_kind": "serious"})).json()
+    assert resaved["example"]["last_run_id"] is None and resaved["newer"] == 0 and "ok bye" in resaved["preview"]
+    assert (await panel_client.get(f"/api/finetune/examples/{example['id']}")).json()["name"].endswith("-good")
+    removed = await panel_client.delete(f"/api/finetune/examples/{example['id']}")
+    assert removed.status_code == 200
+    assert (await panel_client.get(path)).json()["example"] is None
+    events = [e["event"] for e in await audit.list_events(pg_pool)]
+    assert finetune_api.FINETUNE_EXAMPLE_SAVED in events and finetune_api.FINETUNE_EXAMPLE_REMOVED in events
+
+
+async def seed_chat_message(pool, tenant, direction, status, text, session_id="acct", chat_id=501):
+    return await pool.fetchval("INSERT INTO messages (session_id, tenant_id, chat_id, direction, status, text) "
+                               "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+                               session_id, tenant, chat_id, direction, status, text)
+
+
+# ---------------------------------------------------------- hand-typed chats
+
+
+def test_the_escort_template_learns_from_typed_replies_and_keeps_the_fixed_rules():
+    escort = finetune.default_template("Escort")
+    # The flow is learned; safety and the system's details are not.
+    assert "THE FIXED RULES" in escort and "HOW SHE WORKS" in escort
+    assert "the typed way wins" in escort and "The fixed rules and the boundaries never change." in escort
+    for fixed in ("[address] alone on a line", "PHOTOS ONLY WHEN HE ASKS", "APPOINTMENTS notes",
+                  "never as an agency", "not answered at all", "Adults only.",
+                  # The booking flow of 2026-10-23.
+                  "PRICES ONLY WHEN HE ASKS", "THE EXTRAS MESSAGE IS NEVER SENT", "a photo that shows he is at the place"):
+        assert fixed in escort
+    # Sounding like a person, and what the operator asked to see.
+    assert "Never two clients the same text." in escort
+    for note in ("THE USUAL QUESTIONS", "WHAT GETS THE BOOKING", "CHANGED:", "PHRASE GROUPS"):
+        assert note in escort
+    # The template sets no reply language: the platform does.
+    assert "his language" not in escort
+
+
+def test_a_typed_reply_keeps_its_mark_and_others_get_none():
+    lines = finetune.chat_lines([
+        {**msg(1, "in", "received", "hi"), "typed": False},
+        {**msg(2, "out", "sent", "hey love"), "typed": True},
+        {**msg(3, "out", "sent", "Hi my love ❤️"), "typed": False},
+    ])
+    assert [line.get("typed") for line in lines] == [None, True, False]
+    # A flagged chat's lines carry no mark at all.
+    assert "typed" not in finetune.chat_lines([msg(2, "out", "sent", "hey love")])[0]
+
+
+def test_a_hand_typed_chat_marks_who_wrote_each_reply():
+    from zoneinfo import ZoneInfo
+
+    lines = finetune.chat_lines([
+        {**msg(1, "in", "received", "Hi, Toms here, free now? +37126942162", at="2026-10-19T20:59:00+00:00"),
+         "typed": False},
+        {**msg(2, "out", "sent", "Hi my love ❤️ around what hour you come? 😘", at="2026-10-19T21:00:00+00:00"),
+         "typed": False},
+        {**msg(3, "out", "sent", "hey Toms 😘 yes free, 30 min 100", at="2026-10-19T21:01:00+00:00"),
+         "typed": True},
+        {**msg(4, "system", "note", "📅 Booking #3 requested.", at="2026-10-19T21:02:00+00:00"), "typed": False},
+    ])
+    text = finetune.render_hand_chat(lines, origin=finetune.hand_origin("pam", own=True),
+                                     masks=finetune.masks_for(display_name="Toms"), tz=ZoneInfo("Europe/Riga"))
+    assert text == (
+        "FROM: pam (THIS business: its prices, services, hours and area count)\n\n"
+        "— Mon 19.10.2026 —\n"
+        "[23:59] Client: Hi, [client] here, free now? [number]\n"
+        "— Tue 20.10.2026 —\n"
+        "[00:00] Assistant: Hi my love ❤️ around what hour you come? 😘\n"
+        f"[00:01] {finetune.TYPED}: hey [client] 😘 yes free, 30 min 100\n"
+        "— booking: 📅 Booking #3 requested. —"
+    )
+    assert "never its prices" in finetune.hand_origin("leaui", own=False)
+
+
+def test_a_long_hand_typed_chat_keeps_its_start():
+    lines = finetune.chat_lines([{**msg(i, "in", "received", f"message {i} " + "x" * 50), "typed": False}
+                                 for i in range(1, 200)])
+    text = finetune.render_hand_chat(lines, origin="pam", max_chars=1_000)
+    assert len(text) <= 1_000 and text.endswith(finetune.CUT)
+    assert "message 1 " in text and "message 199" not in text
+    assert not finetune.render_hand_chat(lines[:2], origin="pam").endswith(finetune.CUT)
+
+
+def test_hand_typed_chats_are_ranked_named_and_picked_in_turns():
+    def chat(tenant, typed, last, chars=100):
+        return {"tenant_id": tenant, "typed": typed, "last_at": last, "chars": chars, "key": f"{tenant}:{typed}{last}"}
+
+    chats = [chat(6, 2, "2026-10-19"), chat(6, 9, "2026-10-18"), chat(6, 2, "2026-10-20"), chat(6, 1, "2026-10-20"),
+             chat(5, 4, "2026-10-19"), chat(8, 1, "2026-10-19")]
+    planned = finetune.plan_hand_run(chats, [(6, "Pam"), (5, "leaui"), (8, "Pam")], max_chats=4)
+    # Most typed replies first, then the newest; turns between accounts, the run's own first.
+    assert [(c["name"], c["typed"], c["last_at"]) for c in planned] == [
+        ("pam-01", 9, "2026-10-18"), ("leaui-01", 4, "2026-10-19"), ("pam8-01", 1, "2026-10-19"),
+        ("pam-02", 2, "2026-10-20"), ("pam-03", 2, "2026-10-19"), ("pam-04", 1, "2026-10-20"),
+    ]
+    assert [c["picked"] for c in planned] == [True, True, True, True, False, False]
+    # The character budget counts too: a chat that does not fit is skipped, a smaller one after it can be.
+    sized = [chat(6, 3, "a", chars=60), chat(6, 2, "b", chars=50), chat(6, 1, "c", chars=30)]
+    assert [c["picked"] for c in finetune.plan_hand_run(sized, [(6, "pam")], max_chars=100)] == [True, False, True]
+    assert all("name" not in c for c in sized)  # the input is not changed
+
+
+def test_hand_typed_chats_come_with_their_note():
+    [message] = finetune.build_hand_messages("TEMPLATE", [("pam-01", "FROM: pam ...")])
+    assert message["content"].startswith(f"TEMPLATE\n\n{finetune.TRANSCRIPT_NOTE}\n\n{finetune.HAND_NOTE}\n\n")
+    assert message["content"].endswith("### pam-01\nFROM: pam ...")
+    for rule in (finetune.TYPED, finetune.ASSISTANT, "the typed way wins", "PHRASE GROUPS", "is a mistake, not a pattern"):
+        assert rule in finetune.HAND_NOTE
+
+
+@pytest.mark.asyncio
+async def test_hand_typed_chats_go_to_deepseek_with_their_note(monkeypatch):
+    seen = {}
+
+    async def fake_complete(**kwargs):
+        seen.update(kwargs)
+        return answer()
+
+    monkeypatch.setattr(finetune.vision, "_complete", fake_complete)
+    await finetune.complete_text("T", [("pam-01", "FROM: pam")], api_key="pk", model="deepseek-chat", hand=True)
+    assert finetune.HAND_NOTE in seen["payload"]["messages"][0]["content"]
+    assert finetune.EXAMPLES_NOTE not in seen["payload"]["messages"][0]["content"]
+
+
+async def seed_sent(pool, tenant, session_id, chat_id, text, *, model=None, actor=None):
+    """An outgoing message as the runtime stores it: AI-written ones carry
+    the model; sends through the runtime leave an audit row naming who
+    caused them; a reply typed on the phone leaves none."""
+    async with pool.acquire() as con:
+        message_id = await con.fetchval(
+            "INSERT INTO messages (session_id, tenant_id, chat_id, direction, status, text, llm_model) "
+            "VALUES ($1, $2, $3, 'out', 'sent', $4, $5) RETURNING id", session_id, tenant, chat_id, text, model)
+        if actor:
+            await audit.record(con, tenant_id=tenant, actor=actor, event=audit.MESSAGE_SENT,
+                               payload={"message_id": message_id, "kind": "text"})
+    return message_id
+
+
+@pytest.mark.requires_pg
+@pytest.mark.asyncio
+async def test_a_run_from_hand_typed_chats(panel_client, pg_pool, tenant, monkeypatch):
+    await seed_chat(pg_pool, tenant, messages=(("in", "received", "Hi, Toms here, free now? +37126942162"),))
+    await seed_sent(pg_pool, tenant, "acct", 501, "Hi my love ❤️ around what hour you come? 😘",
+                    model="deepseek-chat", actor=audit.BOT)
+    await seed_sent(pg_pool, tenant, "acct", 501, "hey Toms 😘 yes free, 30 min 100")  # on the phone
+    await seed_sent(pg_pool, tenant, "acct", 501, "yes love, it's booked for 23:00", actor=audit.BOT)  # booking news
+    await seed_sent(pg_pool, tenant, "acct", 501, "see you soon", actor=audit.ADMIN)  # by hand from the panel
+    # A chat the bot answered alone is not a hand-typed chat.
+    await seed_chat(pg_pool, tenant, chat_id=502, name="Bot only", messages=(("in", "received", "price?"),))
+    await seed_sent(pg_pool, tenant, "acct", 502, "1h 200", model="deepseek-chat", actor=audit.BOT)
+    other = await seed_session(pg_pool, "other", name="leaui")
+    await seed_chat(pg_pool, other, session_id="other", chat_id=601, name="Ann",
+                    messages=(("in", "received", "hello"),))
+    await seed_sent(pg_pool, other, "other", 601, "hii babe")
+
+    listed = (await panel_client.get(f"/api/finetune/hand-chats?tenant_id={tenant}")).json()
+    [chat] = listed["chats"]
+    assert (chat["key"], chat["name"], chat["picked"]) == (f"{tenant}:501", "mia-01", True)
+    assert (chat["typed"], chat["assistant"], chat["client"]) == (2, 2, 1)
+    assert chat["text"].splitlines()[0] == "FROM: " + finetune.hand_origin("Mia", own=True)
+    assert f"{finetune.TYPED}: hey [client] 😘 yes free, 30 min 100" in chat["text"]
+    assert f"{finetune.TYPED}: see you soon" in chat["text"]
+    assert f"{finetune.ASSISTANT}: yes love, it's booked for 23:00" in chat["text"]
+    assert "[number]" in chat["text"] and "Toms" not in chat["text"]
+    assert listed["accounts"] == [{"tenant_id": tenant, "name": "Mia", "chats": 1, "typed": 2, "picked": 1}]
+
+    both = (await panel_client.get(f"/api/finetune/hand-chats?tenant_id={tenant}&also={other}")).json()
+    assert [(c["name"], c["account"]) for c in both["chats"]] == [("mia-01", "Mia"), ("leaui-01", "leaui")]
+    assert "never its prices" in both["chats"][1]["text"].splitlines()[0]
+
+    seen = {}
+
+    async def fake_complete_text(prompt, chats, **kwargs):
+        seen.update(chats=list(chats), hand=kwargs.get("hand"))
+        return answer()
+
+    monkeypatch.setattr(finetune, "complete_text", fake_complete_text)
+    monkeypatch.delenv("DEEPSEEK_PLATFORM_KEY", raising=False)
+    body = {"tenant_id": tenant, "also_tenant_ids": [other]}
+    assert (await panel_client.post("/api/finetune/hand-runs", json=body)).status_code == 400  # no template
+    await write_template(panel_client)
+    refused = await panel_client.post("/api/finetune/hand-runs", json=body)
+    assert refused.status_code == 400 and "DEEPSEEK_PLATFORM_KEY" in refused.json()["detail"]
+    monkeypatch.setenv("DEEPSEEK_PLATFORM_KEY", "pk")
+    unknown = await panel_client.post("/api/finetune/hand-runs", json={**body, "chats": [f"{tenant}:502"]})
+    assert unknown.status_code == 400 and "Reload the page" in unknown.json()["detail"]
+
+    started = await panel_client.post("/api/finetune/hand-runs", json=body)
+    await asyncio.gather(*finetune_api._tasks)
+    assert started.status_code == 200, started.text
+    assert seen["hand"] is True and [n for n, _ in seen["chats"]] == ["leaui-01", "mia-01"]
+    run = (await panel_client.get(f"/api/finetune/runs/{started.json()['id']}")).json()
+    assert run["source"] == "hand" and run["files"] == ["leaui-01", "mia-01"] and run["status"] == "done"
+    assert "hii babe" not in json.dumps(run)  # the chats are not copied into the run
+
+    # Only the chats the admin kept.
+    only = await panel_client.post("/api/finetune/hand-runs", json={**body, "chats": [f"{other}:601"]})
+    await asyncio.gather(*finetune_api._tasks)
+    assert only.status_code == 200 and [n for n, _ in seen["chats"]] == ["leaui-01"]
+
+    # An account with no hand-typed chats has nothing to run on.
+    empty = await seed_session(pg_pool, "empty", name="Eva")
+    nothing = await panel_client.post("/api/finetune/hand-runs", json={"tenant_id": empty})
+    assert nothing.status_code == 400 and "typed by hand" in nothing.json()["detail"]

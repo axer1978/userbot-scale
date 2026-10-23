@@ -2,8 +2,9 @@
 
 // The media library: files the assistant may send, each with the short
 // description it picks them by, the entrance photo for arrival checks, and
-// two switches: view once, and send on arrival (with the arrival
-// instructions, never by the AI).
+// three switches: view once, send on arrival (with the arrival
+// instructions, never by the AI), and greeting (with the first reply in
+// every new chat).
 
 import { useEffect, useState } from "react";
 import { useDialogs, useToast } from "@/components/feedback";
@@ -23,7 +24,7 @@ export function MediaPreview({ item, sessionId, small }: { item: MediaItem; sess
   return <img src={src} alt={item.description || item.file} loading="lazy" className={small ? "preview" : undefined} />;
 }
 
-type Flag = "view_once" | "send_on_arrival";
+type Flag = "view_once" | "send_on_arrival" | "greeting";
 
 /** A tick box for one of the item's switches, shown ticked at once and set
  * back if the panel refuses. */
@@ -85,6 +86,9 @@ function MediaCard({ item }: { item: MediaItem }) {
       <FlagBox item={item} flag="send_on_arrival"
                title="Sent right after the arrival instructions and deleted with them. The AI never sends it.">
         Send on arrival (with the instructions; deleted with them)</FlagBox>
+      <FlagBox item={item} flag="greeting"
+               title="Sent right after the first reply in every new chat (e.g. a short video saying hi). Never held for approval.">
+        Greeting (with the first reply in every new chat)</FlagBox>
       <div className="actions">
         <button type="button" className="btn small primary" disabled={busy === "save"} onClick={async () => {
           setBusy("save");

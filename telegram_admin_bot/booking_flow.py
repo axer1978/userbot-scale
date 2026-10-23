@@ -24,8 +24,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 import ai_responder
@@ -54,6 +56,15 @@ VIA_SYSTEM = "system"
 
 # A live booking starting within this long of now already answers "now?".
 ASAP_WINDOW = timedelta(minutes=60)
+# An outcall is under way (his messages go on to the owner) until this long
+# after its end.
+OUTCALL_AFTER_END = timedelta(minutes=30)
+# Reading the owner's own words: the confirmed bookings she may still talk
+# about (cancel one coming up, mark one that just ended), and how much of
+# her chat the model sees.
+OWNER_LOOKBACK = timedelta(hours=12)
+OWNER_LOOKAHEAD = timedelta(days=7)
+OWNER_HISTORY = 10
 
 
 @dataclass
@@ -111,6 +122,15 @@ class BookingFlow:
 
     def enabled(self) -> bool:
         return bool(self.settings.get("enabled"))
+
+    def her_name(self) -> str:
+        """booking.name, the name the customer is told. Empty: none."""
+        return str(self.settings.get("name") or "").strip()
+
+    def owner_name(self) -> str:
+        """Whose booking a message to the owner is about: booking.name, else
+        the account's name."""
+        return self.her_name() or (self.rt.bundle.tenant["name"] if self.rt.bundle is not None else "")
 
     @property
     def tz(self) -> str:
@@ -222,7 +242,8 @@ class BookingFlow:
                         client=self.rt.http_client, usage_sink=self.rt.usage_sink("arrival_check"),
                     )
                 if arrived:
-                    await self.on_arrival(arriving, via="text")
+                    said = "\n".join(media.latest_from_them(history)).strip()
+                    await self.on_arrival(arriving, via="text", said=said)
                     return
             entry = await self.store.waitlist_for_chat(chat_id)
             note = bookings.state_note(live)
@@ -293,6 +314,7 @@ class BookingFlow:
             if outcall and "outcall" not in notes.lower():
                 notes = ("Outcall. " + notes).strip()
             await self.request_time(chat_id, start, end, service=str(data.get("service") or ""), notes=notes,
+                                    extras=" ".join(str(data.get("extras") or "").split())[:300],
                                     request=request, confirmed=confirmed)
         elif intent == "cancel":
             target = request or confirmed
@@ -317,7 +339,7 @@ class BookingFlow:
 
     async def request_time(
         self, chat_id: int, start: datetime, end: datetime, *, service: str, notes: str,
-        request: Optional[dict[str, Any]], confirmed: Optional[dict[str, Any]],
+        request: Optional[dict[str, Any]], confirmed: Optional[dict[str, Any]], extras: str = "",
     ) -> None:
         """The customer asked for a concrete time: a new request, a changed
         request, or a move of their confirmed booking."""
@@ -331,7 +353,7 @@ class BookingFlow:
         try:
             if request is not None:
                 change = bs.change_request(request, starts_at=start, ends_at=end, blocked_until=blocked, now=now,
-                                           service=service or None)
+                                           service=service or None, extras=extras or None)
                 booking = await self.store.apply(request, change, actor=bs.CUSTOMER)
                 await self.announce(booking, f"📅 Booking #{booking['number']}: the customer changed the time to "
                                              f"{bookings.describe_when(booking)}.")
@@ -341,13 +363,14 @@ class BookingFlow:
                 booking = await self.store.apply(confirmed, change, actor=bs.CUSTOMER)
                 await self.announce(booking, f"🔁 Booking #{booking['number']}: the customer asks to move it to "
                                              f"{bookings.describe_proposal(booking)}; asking the owner.")
-                await self.tell_owner(booking, bookings.format_move_request(booking), remember=True)
+                await self.tell_owner(booking, bookings.format_move_request(booking, name=self.owner_name()),
+                                      remember=True)
             else:
                 conversation = await self.rt.db.get_conversation(chat_id) or {}
                 booking = await self.store.create(
                     chat_id=chat_id, customer_name=conversation.get("display_name") or "",
                     customer_username=conversation.get("username"), starts_at=start, ends_at=end,
-                    buffer_minutes=result.buffer_minutes, tz=self.tz, service=service, notes=notes,
+                    buffer_minutes=result.buffer_minutes, tz=self.tz, service=service, notes=notes, extras=extras,
                 )
                 log.info("[%s] Booking #%s requested for %s.", self.rt.session_id, booking["number"],
                          bookings.describe_when(booking))
@@ -441,8 +464,8 @@ class BookingFlow:
             await self.broadcast(booking)
             return False
         try:
-            row = await self.rt.send_as_me(provider, bookings.format_request(booking, changed=changed),
-                                           reason="booking request to the owner")
+            request = bookings.format_request(booking, changed=changed, name=self.owner_name())
+            row = await self.rt.send_as_me(provider, request, reason="booking request to the owner")
         except Exception as exc:
             if not await self.rt.handle_send_failure(provider, exc):
                 await self.rt.push_error(booking["chat_id"], f"Could not send booking #{booking['number']} to the "
@@ -466,6 +489,13 @@ class BookingFlow:
         """True when the owner's message was a booking command (then it gets
         no ordinary reply)."""
         cmd = bookings.parse_owner_reply(text, today=self.local_today())
+        if cmd is not None and cmd.kind in ("ready", "in_taxi") and not self.outcall_taxi():
+            cmd = None
+        if cmd is None or cmd.loose:
+            # Her own words ("I'm ready in 20 minutes", "yes I confirm"),
+            # read against what each customer asked for. A strict command
+            # never costs a model call.
+            cmd = await self.read_owner_answer(chat_id, text, reply_to) or cmd
         if cmd is None:
             return False
         reply = await self.owner_command(cmd, reply_to)
@@ -478,10 +508,17 @@ class BookingFlow:
 
     async def owner_command(self, cmd: bookings.OwnerCommand, reply_to: Optional[int]) -> str:
         if cmd.kind == "list":
-            return bookings.format_list(await self.store.awaiting_owner())
+            outcalls = await self.outcalls_under_way() if self.outcall_taxi() else []
+            return bookings.format_list(await self.store.awaiting_owner(), outcalls, proof=self.outcall_proof())
+        if cmd.kind in ("ready", "in_taxi"):
+            return await self.outcall_command(cmd)
         booking = await self._target(cmd, reply_to)
         if booking is None:
-            return bookings.format_which(cmd.kind if cmd.kind != "propose" else "yes")
+            return bookings.format_which(cmd.kind if cmd.kind not in ("propose", "unclear", "stays") else "yes")
+        if cmd.kind == "unclear":
+            return f"#{booking['number']}: I did not get that. " + bookings.ANSWER_HELP.format(n=booking["number"])
+        if cmd.kind == "stays":
+            return f"#{booking['number']} stays as it is: {bookings.describe_when(booking)}."
         if cmd.error:
             return f"#{booking['number']}: {cmd.error}. " + bookings.ANSWER_HELP.format(n=booking["number"])
         now = self.now()
@@ -517,7 +554,8 @@ class BookingFlow:
             return f"#{booking['number']}: that time now overlaps another booking."
         except booking_store.StaleBooking:
             return f"#{booking['number']} changed meanwhile; send LIST to see where things stand."
-        return bookings.format_acknowledgement(updated, change.action)
+        return bookings.format_acknowledgement(updated, change.action, outcall_taxi=self.outcall_taxi(),
+                                               proof=self.outcall_proof())
 
     async def _target(self, cmd: bookings.OwnerCommand, reply_to: Optional[int]) -> Optional[dict[str, Any]]:
         if cmd.number is not None:
@@ -527,9 +565,49 @@ class BookingFlow:
             for booking in awaiting:
                 if reply_to in (booking.get("provider_message_id"), booking.get("provider_wa_message_id")):
                     return booking
-        if cmd.kind in ("yes", "no") and len(awaiting) == 1:
+        if cmd.kind in ("yes", "no", "unclear") and len(awaiting) == 1:
             return awaiting[0]
         return None
+
+    async def read_owner_answer(self, chat_id: int, text: str,
+                                reply_to: Optional[int]) -> Optional[bookings.OwnerCommand]:
+        """Her answer in her own words as a command, read by the model
+        against the bookings she may mean. None when it is not about them,
+        nothing is open, or the model can't be asked (then the strict
+        commands are all there is)."""
+        if not self.settings.get("owner_free_text", True) or not text.strip():
+            return None
+        now = self.now()
+        open_ = {b["id"]: b for b in await self.store.awaiting_owner()}
+        if self.outcall_taxi():
+            open_.update((b["id"], b) for b in await self.outcalls_under_way())
+        open_.update((b["id"], b) for b in await self.store.between(
+            now - OWNER_LOOKBACK, now + OWNER_LOOKAHEAD, (bs.CONFIRMED,)))
+        if not open_ or await self.rt.ai_limit_reason():
+            return None
+        rows = sorted(open_.values(), key=lambda b: b["number"])
+        replied = next((b for b in rows if reply_to is not None and reply_to in (
+            b.get("provider_message_id"), b.get("provider_wa_message_id"))), None)
+        history = await self.rt.db.get_history_for_ai(chat_id, limit=OWNER_HISTORY)
+        try:
+            async with self.rt.ai_gate():
+                data = await ai_responder.read_owner_answer(
+                    api_key=self.rt.deepseek_key, history=history, latest=text, tz_name=self.tz, now=now,
+                    state_note=bookings.owner_state_note(rows, outcall_taxi=self.outcall_taxi(),
+                                                         proof=self.outcall_proof()),
+                    replying_to=replied["number"] if replied else None, ai_config=self.rt.config["ai"],
+                    client=self.rt.http_client, usage_sink=self.rt.usage_sink("owner_answer"),
+                )
+        except ai_responder.AIResponderError as exc:
+            log.warning("[%s] Could not read the owner's answer: %s", self.rt.session_id, exc)
+            return None
+        if data is None:
+            return None
+        cmd = bookings.owner_command_from(data, rows, now=now, tz_name=self.tz, replied=replied,
+                                          outcall_taxi=self.outcall_taxi())
+        log.info("[%s]   owner's answer read as %s → %s #%s", self.rt.session_id, data["action"],
+                 cmd.kind if cmd else "nothing", cmd.number if cmd else "-")
+        return cmd
 
     async def _accept(self, booking: dict[str, Any], actor: str) -> bs.Change:
         start, end = booking["proposed_starts_at"], booking["proposed_ends_at"]
@@ -571,6 +649,8 @@ class BookingFlow:
         for the panel to show."""
         booking = await self.store.get(booking_id)
         now = self.now()
+        if action in ("ready", "in_taxi"):
+            return await self.admin_outcall_step(booking, action)
         if action == "resend":
             if booking["state"] != bs.REQUESTED:
                 raise bs.IllegalTransition(f"booking #{booking['number']} is {booking['state']}, not waiting to be sent")
@@ -607,8 +687,9 @@ class BookingFlow:
             raise ValueError(f"unknown booking action {action!r}")
         updated = await self.change(booking, change, actor=bs.ADMIN, via=VIA_PANEL)
         if self.settings.get("provider"):
-            await self.send_owner(bookings.format_acknowledgement(updated, change.action) + " (from the panel)",
-                                  reason="panel booking change passed on to the owner")
+            await self.send_owner(bookings.format_acknowledgement(updated, change.action, outcall_taxi=self.outcall_taxi(),
+                                                                  proof=self.outcall_proof())
+                                  + " (from the panel)", reason="panel booking change passed on to the owner")
         return booking_store.public(updated)
 
     # ------------------------------------------------ after every change
@@ -649,9 +730,10 @@ class BookingFlow:
                     " The booking is cancelled." if after["state"] == bs.CANCELLED else " It stays as it was."),
             }.get(change.action)
             if owner_news:
-                await self.tell_owner(after, bookings.format_owner_update(after, owner_news))
+                await self.tell_owner(after, bookings.format_owner_update(after, owner_news, name=self.owner_name()))
         elif change.action == "expire":
-            await self.tell_owner(after, bookings.format_owner_update(after, "lapsed — it was not answered in time."))
+            await self.tell_owner(after, bookings.format_owner_update(
+                after, "lapsed — it was not answered in time.", name=self.owner_name()))
 
         await self.sync_calendar(before, after)
         await self.email_record(before, after, change)
@@ -689,24 +771,44 @@ class BookingFlow:
         lines: list[str] = []
         with_notice = await self.store.with_notice(chat_id)
         quiet = self.quiet()
+        taxi, proof = self.outcall_taxi(), self.outcall_proof()
+        taxi_news = (bs.NOTICE_CONFIRMED, bs.NOTICE_READY, bs.NOTICE_IN_TAXI)
         for booking in with_notice:
-            if quiet and booking.get("customer_notice") == bs.NOTICE_REQUESTED:
+            notice = booking.get("customer_notice")
+            if quiet and notice == bs.NOTICE_REQUESTED:
                 lines.append(bookings.quiet_request_line(booking))
+            elif taxi and notice in taxi_news and bookings.is_outcall(booking) and booking["state"] == bs.CONFIRMED:
+                lines.append(bookings.outcall_notice_line(
+                    booking, now=self.now(), ready_minutes=self.settings["outcall_ready_minutes"],
+                    has_address=bool(self.address()), proof=proof))
+                # Ready: the taxi picks her up at the address, so it goes
+                # again, word for word, even when he had it with the prices.
+                if notice == bs.NOTICE_READY and self.address():
+                    self.address_due[chat_id] = booking["id"]
+                    lines.append(bookings.PICKUP_ADDRESS_LINE)
+            elif notice in (bs.NOTICE_READY, bs.NOTICE_IN_TAXI):
+                # Taxi steps of a booking that is no longer a confirmed
+                # outcall (cancelled meanwhile), or with the steps now off.
+                pass
             else:
                 lines.append(bookings.notice_line(booking))
             if self.address_follows(booking) and not await self.address_in_chat(chat_id):
                 self.address_due[chat_id] = booking["id"]
                 lines.append(bookings.ADDRESS_FOLLOWS_LINE)
         told = {b["id"] for b in with_notice}
-        for booking in await self.store.for_chat(chat_id):
+        standing = await self.store.for_chat(chat_id)
+        for booking in standing:
             if booking["id"] in told:
                 continue
             if quiet and booking["state"] in (bs.REQUESTED, bs.PENDING) and booking.get("proposed_by") != bs.OWNER:
                 lines.append(bookings.quiet_request_line(booking))
             else:
-                lines.append(bookings.standing_line(booking))
+                lines.append(bookings.standing_line(booking, outcall_taxi=taxi, proof=proof,
+                                                    meets_outside=not self.way_in()))
+        if self.her_name() and (with_notice or standing):
+            lines.append(bookings.own_name_line(self.her_name()))
         if self.address():
-            lines.append(bookings.ADDRESS_TAG_LINE)
+            lines.append(bookings.address_tag_line(self.settings.get("address_timing", "with_prices")))
         transient = list(self.pending_lines.get(chat_id, []))
         lines.extend(transient)
         return ReplyNote(
@@ -762,8 +864,16 @@ class BookingFlow:
         """booking.address, or "" when bookings are off or none is set."""
         return (self.settings.get("address") or "").strip() if self.enabled() else ""
 
-    def fill_address(self, text: str) -> str:
-        """A reply's [address] tag as the address itself, a message of its own."""
+    def fill_address(self, text: str, *, follows: bool = False, latest: str = "") -> str:
+        """A reply's [address] tag as the address itself, a message of its
+        own. `follows`: the address is sent right after this reply anyway
+        (a confirmation, her taxi), so the tag is only dropped. With
+        booking.address_timing "when_asked" the tag only counts when their
+        `latest` messages ask where she is."""
+        if follows:
+            return bookings.take_address_tag(text)[0]
+        if self.settings.get("address_timing") == "when_asked" and not bookings.asks_where(latest):
+            return bookings.take_address_tag(text)[0]
         return bookings.fill_address(text, self.address())
 
     async def address_in_chat(self, chat_id: int) -> bool:
@@ -805,9 +915,16 @@ class BookingFlow:
         now = self.now()
         for booking in live:
             if (booking["state"] == bs.CONFIRMED and not booking.get("instructions_sent_at")
-                    and not bookings.is_outcall(booking) and bookings.arrival_window(booking, now)):
+                    and not bookings.is_outcall(booking) and bookings.arrival_window(booking, now)
+                    # She meets him outside: once he has arrived there is
+                    # nothing more to send.
+                    and not (booking.get("arrived_at") and not self.way_in())):
                 return booking
         return None
+
+    def way_in(self) -> str:
+        """booking.arrival_instructions; "" when she comes out to meet him."""
+        return (self.settings.get("arrival_instructions") or "").strip()
 
     def answered_by_way_in(self, chat_id: int) -> bool:
         """Their latest message was answered by the arrival instructions:
@@ -819,7 +936,7 @@ class BookingFlow:
         return bool(self.settings["arrival_photo_check"] and self.rt.config["vision"]["enabled"]
                     and self.rt.config["vision"]["model"] and url and key)
 
-    async def on_arrival(self, booking: dict[str, Any], *, via: str) -> None:
+    async def on_arrival(self, booking: dict[str, Any], *, via: str, said: str = "") -> None:
         if via == "text" and self.settings["arrival_requires_photo"] and self.photo_check_ready() \
                 and self.rt.media_library.references():
             await self.store.set_fields(booking["id"], arrived_at=self.now())
@@ -828,7 +945,11 @@ class BookingFlow:
             await self.announce(booking, f"🚪 Booking #{booking['number']}: the customer says they have arrived; "
                                          "waiting for their photo of the entrance.")
             return
-        await self.send_instructions(booking)
+        first = not booking.get("arrived_at")
+        sent = await self.send_instructions(booking)
+        if first and self.settings.get("arrival_to_owner", True) and self.settings.get("provider"):
+            await self.tell_owner(booking, bookings.format_arrived(booking, said, way_in_sent=sent,
+                                                                   name=self.owner_name()))
 
     async def arrival_photo(self, chat_id: int, image: bytes) -> Optional[str]:
         """A photo from a customer who may be arriving. Returns the text to
@@ -861,7 +982,8 @@ class BookingFlow:
         if ok:
             await self.send_instructions(booking)
             await self.tell_owner(booking, bookings.format_owner_update(
-                booking, "has arrived (their photo matches the entrance); the way in was sent."))
+                booking, "has arrived (their photo matches the entrance); the way in was sent.",
+                name=self.owner_name()))
             return "[photo: arrival photo, matches the entrance]"
         self.add_line(chat_id, "NEWS TO PASS ON IN THIS REPLY: the photo they sent does not look like the "
                       "entrance. Ask them politely to check they are at the right door and to send another photo. "
@@ -869,18 +991,21 @@ class BookingFlow:
         await self.announce(booking, f"🚪 Booking #{booking['number']}: the arrival photo does not look like the "
                                      "entrance; the way in was not sent.")
         await self.tell_owner(booking, bookings.format_owner_update(
-            booking, "sent an arrival photo that does not look like the entrance — check the chat."))
+            booking, "sent an arrival photo that does not look like the entrance — check the chat.",
+            name=self.owner_name()))
         return "[photo: arrival photo, does not look like the entrance]"
 
-    async def send_instructions(self, booking: dict[str, Any]) -> None:
-        text = (self.settings.get("arrival_instructions") or "").strip()
+    async def send_instructions(self, booking: dict[str, Any]) -> bool:
+        """The way in (booking.arrival_instructions), once he has arrived.
+        Whether it went out: none set means she comes out to meet him."""
+        text = self.way_in()
         rt, chat_id = self.rt, booking["chat_id"]
         if not booking.get("arrived_at"):
             booking = await self.store.set_fields(booking["id"], arrived_at=self.now())
         if not text:
-            await self.announce(booking, f"🚪 Booking #{booking['number']}: the customer has arrived, but no "
-                                         "arrival instructions are set (booking.arrival_instructions).")
-            return
+            await self.announce(booking, f"🚪 Booking #{booking['number']}: the customer has arrived; no way in is "
+                                         "set (booking.arrival_instructions), so she comes out to meet him.")
+            return False
         rt.cancel_draft(chat_id)
         rt.sending_chats.add(chat_id)
         sent: list[int] = []
@@ -903,7 +1028,7 @@ class BookingFlow:
         except Exception as exc:
             if not await rt.handle_send_failure(chat_id, exc):
                 await rt.push_error(chat_id, f"Could not send the arrival instructions: {type(exc).__name__}: {exc}")
-            return
+            return False
         finally:
             rt.sending_chats.discard(chat_id)
         self.let_in.add(chat_id)
@@ -915,6 +1040,7 @@ class BookingFlow:
         later = f" They are deleted from the chat in {minutes} min." if minutes and sent else ""
         await self.announce(booking, f"🚪 Booking #{booking['number']}: the customer has arrived — entry "
                                      f"instructions sent.{later}")
+        return True
 
     # How long a failed cleanup is retried before the owner is told to
     # delete the messages by hand.
@@ -940,6 +1066,274 @@ class BookingFlow:
             return
         await self.store.set_fields(booking["id"], instructions_cleaned_at=self.now())
         await self.rt.post_note(chat_id, f"🧹 Booking #{number}: the arrival instructions were deleted from the chat.")
+
+    # ----------------------------------------------------------- outcalls
+    #
+    # booking.outcall_taxi: once the owner confirms an outcall, she gets
+    # ready and sends READY n; he is asked to order a taxi to her address
+    # and send its link, which goes on to her. She sends IN n once she is in
+    # it (or he is told so outcall_in_taxi_minutes after the link came); he
+    # is then asked for whatever is still needed to find him. Everything he
+    # sends from the confirmation until the outcall is over goes on to her,
+    # photos as photos.
+    #
+    # booking.outcall_proof: instead of waiting for READY n, he is asked
+    # after the confirmation for a photo that shows he is at the place. His
+    # first photo goes on to her as the proof and he is asked at once to
+    # order the taxi; from there it goes on as above. READY n skips the photo.
+
+    def outcall_taxi(self) -> bool:
+        return self.enabled() and bool(self.settings.get("outcall_taxi"))
+
+    def outcall_proof(self) -> bool:
+        return self.outcall_taxi() and bool(self.settings.get("outcall_proof"))
+
+    def wants_proof(self, booking: dict[str, Any]) -> bool:
+        """His next photo is the proof: asked for, and no taxi step taken yet."""
+        return self.outcall_proof() and bookings.is_outcall(booking) and not any(
+            booking.get(step) for step in ("proof_at", "ready_at", "taxi_link_at", "in_taxi_at"))
+
+    def _under_way(self, booking: dict[str, Any], now: datetime) -> bool:
+        return (booking["state"] == bs.CONFIRMED and bookings.is_outcall(booking)
+                and booking["ends_at"] + OUTCALL_AFTER_END > now)
+
+    def _passing_on(self, booking: dict[str, Any], now: datetime) -> bool:
+        """What he sends goes on to the owner: an outcall under way (taxi
+        steps on), or an incall he has arrived for (booking.arrival_to_owner),
+        until half an hour after the end."""
+        if bookings.is_outcall(booking):
+            return self.outcall_taxi() and self._under_way(booking, now)
+        # Arrived for good: the way in went out, or there is none and she
+        # comes out to meet him (not while the entrance photo is awaited).
+        arrived = booking.get("instructions_sent_at") or (booking.get("arrived_at") and not self.way_in())
+        return (bool(self.settings.get("arrival_to_owner", True)) and booking["state"] == bs.CONFIRMED
+                and bool(arrived) and booking["ends_at"] + OUTCALL_AFTER_END > now)
+
+    async def outcalls_under_way(self) -> list[dict[str, Any]]:
+        """Confirmed outcalls that are not over yet, soonest first."""
+        now = self.now()
+        rows = await self.store.between(now - OUTCALL_AFTER_END, now + timedelta(days=self.settings["max_days_ahead"]),
+                                        states=[bs.CONFIRMED])
+        return [b for b in rows if self._under_way(b, now)]
+
+    async def outcall_command(self, cmd: bookings.OwnerCommand) -> str:
+        """READY n / IN n from the owner."""
+        word = "READY" if cmd.kind == "ready" else "IN"
+        if cmd.number is not None:
+            booking = await self.store.by_number(cmd.number)
+            if booking is None:
+                return f"There is no booking #{cmd.number}."
+            if not self._under_way(booking, self.now()):
+                return f"#{cmd.number} is not a confirmed outcall that is still to come."
+        else:
+            step = "ready_at" if cmd.kind == "ready" else "in_taxi_at"
+            open_ = [b for b in await self.outcalls_under_way() if not b.get(step)]
+            if cmd.kind == "in_taxi":
+                # The one she is ready for (or whose taxi is coming), over
+                # one later today or tomorrow.
+                started = [b for b in open_ if b.get("ready_at") or b.get("taxi_link_at")]
+                open_ = started if len(started) == 1 else open_
+            if len(open_) != 1:
+                return bookings.format_which(word)
+            booking = open_[0]
+        if cmd.kind == "ready":
+            updated = await self.mark_ready(booking)
+            if updated is None:
+                return f"#{booking['number']}: already marked ready."
+            return bookings.format_acknowledgement(updated, "ready")
+        updated = await self.mark_in_taxi(booking, by=bs.OWNER)
+        if updated is None:
+            return f"#{booking['number']}: he already knows you're in the taxi."
+        return bookings.format_acknowledgement(updated, "in_taxi")
+
+    async def admin_outcall_step(self, booking: dict[str, Any], action: str) -> dict[str, Any]:
+        """She is ready / in the taxi, said in the panel for her (she told
+        the operator another way). The owner hears it too."""
+        n = booking["number"]
+        if not self.outcall_taxi():
+            raise bs.IllegalTransition("the outcall taxi steps are off (booking.outcall_taxi)")
+        if not self._under_way(booking, self.now()):
+            raise bs.IllegalTransition(f"booking #{n} is not a confirmed outcall that is still to come")
+        if action == "ready":
+            updated = await self.mark_ready(booking)
+            if updated is None:
+                raise bs.IllegalTransition(f"booking #{n} is marked ready already")
+        else:
+            updated = await self.mark_in_taxi(booking, by=bs.ADMIN)
+            if updated is None:
+                raise bs.IllegalTransition(f"the customer of #{n} already knows she is in the taxi")
+        if self.settings.get("provider"):
+            await self.send_owner(bookings.format_acknowledgement(updated, action) + " (from the panel)",
+                                  reason="panel booking change passed on to the owner")
+        return booking_store.public(updated)
+
+    async def mark_ready(self, booking: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """She is ready: he is asked to order the taxi (the address follows
+        the reply). None when she was marked ready already."""
+        updated = await self.store.set_once(booking["id"], "ready_at", self.now(), customer_notice=bs.NOTICE_READY)
+        if updated is None:
+            return None
+        await self.announce(updated, f"🚕 Booking #{updated['number']}: she is ready — asking him to order the taxi "
+                                     "and send its link.")
+        await self.nudge(updated["chat_id"])
+        return updated
+
+    async def mark_in_taxi(self, booking: dict[str, Any], *, by: str) -> Optional[dict[str, Any]]:
+        """She is in the taxi (her IN n, or the system when it did not come
+        in time): he is asked for the way to him. None when he was told
+        already."""
+        updated = await self.store.set_once(booking["id"], "in_taxi_at", self.now(), in_taxi_by=by,
+                                            customer_notice=bs.NOTICE_IN_TAXI)
+        if updated is None:
+            return None
+        n = updated["number"]
+        if by == bs.SYSTEM:
+            minutes = self.settings["outcall_in_taxi_minutes"]
+            late = f" (no IN {n} within {minutes} min of the taxi link)" if minutes else ""
+            await self.tell_owner(updated, bookings.format_owner_update(
+                updated, f"he was told you're in the taxi{late}. His address, floor and photos will come here.",
+                name=self.owner_name()))
+        await self.announce(updated, f"🚕 Booking #{n}: she is in the taxi — asking him for the address, floor, "
+                                     "way in and a photo of the place.")
+        await self.nudge(updated["chat_id"])
+        return updated
+
+    async def mark_proof(self, booking: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """His photo of the place reached her: he is asked to order the taxi
+        now (her address follows the reply), as after READY n. None when the
+        proof came already."""
+        now = self.now()
+        updated = await self.store.set_once(booking["id"], "proof_at", now, ready_at=booking.get("ready_at") or now,
+                                            customer_notice=bs.NOTICE_READY)
+        if updated is None:
+            return None
+        await self.announce(updated, f"📷 Booking #{updated['number']}: his photo of the place went to the owner — "
+                                     "asking him to order the taxi and send its link.")
+        await self.nudge(updated["chat_id"])
+        return updated
+
+    async def pass_on(self, chat_id: int, text: str, photo: Any = None) -> Optional[str]:
+        """A customer's message while their outcall is under way, or after he
+        has arrived for an incall, goes on to the owner: his taxi link with
+        what to answer, a photo as the photo itself, anything else word for
+        word. Returns what to store for a
+        photo that went on, else None. Never raises: the reply goes on
+        whatever happens here."""
+        if not self.enabled():
+            return None
+        try:
+            booking = next((b for b in await self.store.for_chat(chat_id, (bs.CONFIRMED,))
+                            if self._passing_on(b, self.now())), None)
+            if booking is None:
+                return None
+            text = (text or "").strip()
+            ready = bool(booking.get("ready_at"))
+            links = ([link for link in bookings.find_links(text) if bookings.is_taxi_link(link, ready=ready)]
+                     if bookings.is_outcall(booking) else [])
+            if links:
+                booking = await self.taxi_link(booking, links[-1], text)
+            if photo is not None:
+                proof = self.wants_proof(booking)
+                went = await self.pass_on_photo(booking, photo, "" if links else text, proof=proof)
+                if proof and went:
+                    await self.mark_proof(booking)
+                elif proof:
+                    self.add_line(chat_id, bookings.PROOF_AGAIN_LINE)
+                return bookings.PHOTO_PASSED_ON
+            if text and not links:
+                await self.tell_owner(booking, bookings.format_passed_on(booking, text))
+            return None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.exception("[%s] Passing an outcall message on to the owner failed (chat %s)", self.rt.session_id,
+                          chat_id)
+            await self.rt.push_error(chat_id, f"Could not pass this message on to the owner: "
+                                              f"{type(exc).__name__}: {exc}")
+            return None
+
+    async def taxi_link(self, booking: dict[str, Any], link: str, text: str) -> dict[str, Any]:
+        """His taxi link goes on to her. The first one starts the clock for
+        telling him she is in the taxi."""
+        first = booking.get("taxi_link_at") is None
+        fields: dict[str, Any] = {"taxi_link": link}
+        if first:
+            fields["taxi_link_at"] = self.now()
+        booking = await self.store.set_fields(booking["id"], **fields)
+        minutes = self.settings["outcall_in_taxi_minutes"]
+        # No wait set: he is told she is in the taxi at once, so no IN n.
+        await self.tell_owner(booking, bookings.format_taxi_link(
+            booking, text, None if booking.get("in_taxi_at") or not minutes else minutes))
+        self.add_line(booking["chat_id"], bookings.TAXI_LINK_LINE)
+        await self.announce(booking, f"🚕 Booking #{booking['number']}: his taxi link went on to the owner.")
+        if first and not minutes:
+            booking = await self.mark_in_taxi(booking, by=bs.SYSTEM) or booking
+        return booking
+
+    async def pass_on_photo(self, booking: dict[str, Any], photo: Any, caption: str, *, proof: bool = False) -> bool:
+        """His photo (the place, the entrance, the hotel card) to the owner,
+        as a photo. `proof`: it is his photo of the place, asked for before
+        the taxi. Whether the photo itself reached her."""
+        rt, n = self.rt, booking["number"]
+        provider = await self.provider_chat_id()
+        if provider is None:
+            await rt.push_error(booking["chat_id"], f"Booking #{n}: could not pass his photo on to the owner "
+                                                    "(check booking.provider).")
+            return False
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "photo.jpg"
+            try:
+                await rt.transport.download_photo(photo, path)
+            except Exception as exc:
+                log.warning("[%s] Could not download an outcall photo: %s", rt.session_id, type(exc).__name__)
+            if not path.exists() or not path.stat().st_size:
+                # WhatsApp keeps view-once photos from linked devices.
+                again = "he is asked to send it again" if proof else "ask him to send it again"
+                await self.tell_owner(booking, bookings.format_passed_on(
+                    booking, (caption + "\n" if caption else "") + "[a photo that could not be fetched — it may be "
+                    f"view once; {again}]"))
+                return False
+            header = (bookings.format_proof_header(booking, caption) if proof
+                      else bookings.format_photo_header(booking, caption))
+            if await self.send_owner(header, reason=f"booking #{n}: his photo, to the owner") is None:
+                await rt.push_error(booking["chat_id"], f"Booking #{n}: could not pass his photo on to the owner.")
+                return False
+            try:
+                await rt.send_photo_as_me(provider, path, text=f"[photo from booking #{n}]",
+                                          reason=f"booking #{n}: his photo, to the owner")
+            except Exception as exc:
+                if not await rt.handle_send_failure(provider, exc):
+                    await rt.push_error(booking["chat_id"], f"Booking #{n}: could not pass his photo on to the "
+                                                            f"owner: {type(exc).__name__}: {exc}")
+                return False
+        await self.announce(booking, f"📷 Booking #{n}: his photo went on to the owner.")
+        return True
+
+    def ready_due(self, booking: dict[str, Any]) -> datetime:
+        """When she is reminded to send READY n: her getting-ready time after
+        the confirmation, and not before that long ahead of the start."""
+        minutes = timedelta(minutes=self.settings["outcall_ready_minutes"])
+        decided = booking.get("decided_at") or booking["created_at"]
+        return max(decided + minutes, booking["starts_at"] - minutes)
+
+    async def outcall_clock(self, booking: dict[str, Any], now: datetime) -> None:
+        """The timed taxi steps of one outcall (the scheduler's tick): he is
+        told she is in the taxi when her IN n did not come in time; she is
+        reminded once to send READY n (not with the photo proof)."""
+        if booking.get("in_taxi_at"):
+            return
+        if booking.get("taxi_link_at"):
+            if now >= booking["taxi_link_at"] + timedelta(minutes=self.settings["outcall_in_taxi_minutes"]):
+                await self.mark_in_taxi(booking, by=bs.SYSTEM)
+            return
+        if self.outcall_proof():
+            # He sends the photo; she is not asked for READY n.
+            return
+        if booking.get("ready_at") or booking.get("ready_reminded_at") or now < self.ready_due(booking):
+            return
+        updated = await self.store.set_once(booking["id"], "ready_reminded_at", now)
+        if updated is not None:
+            await self.tell_owner(updated, bookings.format_ready_reminder(updated))
 
     # ----------------------------------------------------------- waitlist
 
@@ -1063,6 +1457,12 @@ class BookingFlow:
         for booking in await self.store.due_cleanups(now):
             await guarded(f"deleting the arrival messages of #{booking['number']}",
                           lambda b=booking: self.clean_up_arrival(b))
+
+        # While sending is off nothing is claimed: the steps wait for it.
+        if self.outcall_taxi() and not self.rt.paused():
+            for booking in await self.outcalls_under_way():
+                await guarded(f"the taxi steps of #{booking['number']}",
+                              lambda b=booking: self.outcall_clock(b, now))
 
         unsent = [] if self.rt.paused() else await self.store.unsent()
         for booking in unsent:

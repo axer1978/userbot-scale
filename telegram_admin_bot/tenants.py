@@ -97,7 +97,9 @@ class Bundle:
     resolved: tenant_config.Resolved
     inherited: dict[str, Any]          # config without the client layer
     prompt: prompt_layers.Rendered
-    layers: dict[str, Any]             # the raw base/industry/client content used
+    # The raw base/industry/client content used, and the operator rules
+    # ("rules": their texts, as rendered).
+    layers: dict[str, Any]
 
     @property
     def config(self) -> dict[str, Any]:
@@ -185,6 +187,11 @@ class TenantStore:
         client_content = {"overrides": {}, "addendum": ""}
         if tenant["prompt_version"]:
             client_content = (await self.version(CLIENT, tenant_id, tenant["prompt_version"]))["content"]
+        # The operator's active rules, the industry's and this account's
+        # (rules.py). Imported here: rules.py builds on this module.
+        import rules
+
+        active_rules = await rules.active_for(self._pool, tenant_id, industry["id"])
         prompt = prompt_layers.render(
             base=base["content"],
             industry=industry_content,
@@ -192,6 +199,7 @@ class TenantStore:
             business_name=tenant["name"],
             language_policy=resolved.config.language_policy,
             versions=(base["version"], industry["id"], industry_version, tenant["prompt_version"]),
+            rules=active_rules,
         )
         return Bundle(
             tenant=tenant,
@@ -200,7 +208,7 @@ class TenantStore:
             inherited=inherited.as_dict(),
             prompt=prompt,
             layers={"base": base["content"], "industry": industry_content, "client": client_content,
-                    "industry_version": industry_version},
+                    "industry_version": industry_version, "rules": active_rules},
         )
 
     async def bundle_for_session(self, session_id: str) -> Bundle:

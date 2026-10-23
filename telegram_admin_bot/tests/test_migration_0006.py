@@ -13,7 +13,7 @@ import pytest
 import audit
 import controls
 import pg as pg_module
-from conftest import seed_session
+from conftest import migration_versions, seed_session
 from database import SessionRegistry
 
 pytestmark = [pytest.mark.requires_pg, pytest.mark.asyncio]
@@ -132,15 +132,18 @@ async def test_upgrading_a_database_with_telegram_data_keeps_it_all(pg_pool, tmp
             for t in ("conversations", "messages", "bookings", "tenant_holds")
         }
 
-    assert await pg_module.apply_migrations(pg_pool) == list(range(6, pg_module.latest_version() + 1))
+    assert await pg_module.apply_migrations(pg_pool) == migration_versions(6)
 
     assert await channels(pg_pool, "tg1") == ("telegram", "telegram")
     async with pg_pool.acquire() as con:
         for table, rows in before.items():
             after = [dict(r) for r in await con.fetch(f"SELECT * FROM {table} ORDER BY 1, 2")]
             new_cols = {"wa_message_id", "provider_wa_message_id"}
-            # Added by later migrations (0011), with their own defaults.
-            later = {"instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at"}
+            # Added by later migrations (0011, 0013, 0014, 0016, 0019, 0020), with their own defaults.
+            later = {"instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at",
+                     "sent_elsewhere", "draft_text",
+                     "ready_at", "ready_reminded_at", "taxi_link", "taxi_link_at", "in_taxi_at", "in_taxi_by",
+                     "extras", "proof_at"}
             assert [{k: v for k, v in r.items() if k not in new_cols | later} for r in after] == rows, table
             assert all(r.get(c) is None for r in after for c in new_cols)
         # The account still runs as it did.

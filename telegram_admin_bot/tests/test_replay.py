@@ -3,11 +3,15 @@ fail what they should and nothing else. The model itself is not called."""
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import pytest
 
+import ai_responder
+import prompt_layers
 import replay
+import tenant_config
 
 
 @pytest.fixture(scope="module")
@@ -80,6 +84,56 @@ def test_the_address_tag_is_offered_and_the_address_follows_only_a_confirmation(
     assert "already sent the entry instructions" in replay.booking_note("way_in_sent", now, "Europe/Riga")
 
 
+def test_her_name_is_told_with_a_booking_as_in_the_runtime():
+    now = datetime(2026, 10, 5, 19, 20, tzinfo=timezone.utc)
+    assert "Your name is Lola" in replay.booking_note("confirmed_news", now, "Europe/Riga", name="Lola")
+    assert "Your name is" not in replay.booking_note(None, now, "Europe/Riga", name="Lola")
+    assert "Your name is" not in replay.booking_note("confirmed_news", now, "Europe/Riga")
+
+
+def test_the_outcall_taxi_chats_load_with_the_others():
+    data = replay.load_all(["maria", "outcall-taxi"])
+    taxi = [s for s in data["scenarios"] if s.get("outcall")]
+    assert len(taxi) >= 10
+    # They start mid-flow: no fixed messages or first-reply address are due.
+    assert {s["category"] for s in taxi} <= set(data["except_categories"])
+    assert {"outcall_ready_news", "outcall_link", "outcall_in_taxi_news", "outcall_in_taxi"} <= {
+        step.get("booking") for s in taxi for step in s["steps"]}
+
+
+def test_the_taxi_steps_are_told_to_the_reply_as_in_the_runtime():
+    now = datetime(2026, 10, 5, 19, 20, tzinfo=timezone.utc)
+
+    def note(state, **kw):
+        return replay.booking_note(state, now, "Europe/Riga", address_set=True, **kw)
+
+    confirmed = note("confirmed_news", outcall=True)
+    assert "outcall" in confirmed and "CONFIRMED" in confirmed and "Do not ask them to order" in confirmed
+    # Without the outcall (or with the taxi steps off) it is the plain confirmation.
+    assert "outcall" not in note("confirmed_news")
+    assert "Do not ask them to order" not in note("confirmed_news", outcall=True, outcall_taxi=False)
+    assert "only then do they order the taxi" in note("confirmed", outcall=True)
+
+    ready = note("outcall_ready_news")
+    assert "order a taxi for you now" in ready and "Your address, for the taxi, is sent" in ready
+    assert "send you its link" in note("outcall_ready")
+    link = note("outcall_link")
+    assert "taxi link they sent has reached you" in link and "about to get in" in link
+    assert "you are in the taxi now" in note("outcall_in_taxi_news")
+    assert "still need something to find them" in note("outcall_in_taxi")
+
+    # With the proof: a photo of the place first, then the taxi.
+    assert "hotel room key card" in note("confirmed_news", outcall=True, proof=True)
+    assert "No taxi until it comes" in note("outcall_proof_wait", proof=True)
+    came = note("outcall_proof_news", proof=True)
+    assert "their photo of the place reached you" in came and "Your address, for the taxi, is sent" in came
+    assert "Their photo of the place came" in note("outcall_ready", proof=True)
+    # The proof needs the taxi steps.
+    assert "hotel room key card" not in note("confirmed_news", outcall=True, proof=True, outcall_taxi=False)
+    # Confirmed: agreeing words are fine from here on.
+    assert replay.check_reply("see you soon love", {"customer": "ok"}, "outcall_in_taxi") == []
+
+
 def test_what_she_never_says_fails_every_reply():
     never = ("let me check", "agency")
     assert replay.check_reply("Let me check love, one sec", {"customer": "22:00?"}, "requested", never) == [
@@ -123,3 +177,87 @@ def test_now_must_be_read_as_a_time_ahead():
     assert replay.check_intent("asap", {"intent": "book", "start": "2026-10-06T01:00"}, "Europe/Riga", now)
     assert replay.check_intent("cancel", {"intent": "book", "start": "x"}, "Europe/Riga", now)
     assert replay.check_intent("none", None, "Europe/Riga", now) is None
+
+
+# ------------------------------------------------- the flow of 2026-10-23
+
+RATES = "1 hour 200\n30 min 150\noutcall 250 + taxi"
+EXTRAS = "domination +50\nstrapon +50\ncum on face +50"
+PROMPT = f"SERVICES AND PRICES\n[block]\n{RATES}\n[/block]\n[block]\n{EXTRAS}\n[/block]\n"
+ADDRESS = "Brivibas iela 1, Riga"
+
+
+def test_the_new_flow_chats_load_with_their_own_flow():
+    data = replay.load_all(["maria", "outcall-taxi", "new-flow"])
+    new = [s for s in data["scenarios"] if s["id"].startswith("nf-")]
+    old = [s for s in data["scenarios"] if not s["id"].startswith("nf-")]
+    assert len(new) >= 15
+    assert all(s["greeting_video"] and not s["first_reply_address"] and s["outcall_proof"] for s in new)
+    assert all(s["first_reply_address"] and not s["greeting_video"] for s in old)
+    # The READY-first chats keep the READY flow.
+    assert all(s["outcall_proof"] is False for s in old if s.get("outcall"))
+
+
+def test_the_fixed_messages_a_reply_sent_are_found_whole_or_nearly():
+    [rates] = replay.details_sent(["hey love", RATES], PROMPT)
+    assert "1 hour 200" in rates
+    # Two thirds of the lines are enough; one line he asked for is not.
+    assert len(replay.details_sent(["domination +50\nstrapon +50"], PROMPT)) == 1
+    assert replay.details_sent(["yes love I can, domination +50 so 1 hour is 250"], PROMPT) == []
+
+
+async def _replay(monkeypatch, tmp_path, steps, replies, **file_flow):
+
+    config = tenant_config.resolve().config.model_dump(mode="json")
+    config["booking"]["address"] = ADDRESS
+    script, seen = iter(replies), []
+
+    async def fake_reply(**kw):
+        seen.append(kw)
+        return next(script)
+
+    async def nothing(**kw):
+        return None
+
+    monkeypatch.setattr(ai_responder, "generate_reply", fake_reply)
+    monkeypatch.setattr(ai_responder, "extract_booking", nothing)
+    data = {"scenarios": [{"id": "x", "category": "c", "steps": steps}], **file_flow}
+    path = tmp_path / "flow.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    [scenario] = replay.load(path)["scenarios"]
+    ctx = replay.Context("k", config, prompt_layers.Rendered(PROMPT, "t", PROMPT), "Europe/Riga", None)
+    return await replay.run_scenario(ctx, scenario), seen
+
+
+@pytest.mark.asyncio
+async def test_the_new_first_reply_has_no_prices_and_the_greeting_video(monkeypatch, tmp_path):
+    result, seen = await _replay(monkeypatch, tmp_path, [
+        {"customer": "hi", "details": False, "address": False},
+        {"customer": "how much?", "details": True, "address": True},
+    ], ["hi love 😘 what time do you want to come?", f"[block]\n{RATES}\n[/block]\n[address]"],
+        first_reply_address=False, greeting_video=True)
+    assert result.ok, result.turns
+    first, second = result.turns
+    assert first["media"] == ["video #9: short video of me saying hi"] and first["auto"] == []
+    assert "the system sends video #9" in seen[0]["media_note"]
+    assert "the system sends" not in seen[1]["media_note"] and "media" not in second
+    assert second["auto"] == [ADDRESS]
+
+
+@pytest.mark.asyncio
+async def test_prices_without_the_address_and_an_unasked_extras_list_fail(monkeypatch, tmp_path):
+    result, _ = await _replay(monkeypatch, tmp_path, [
+        {"customer": "hi", "details": False},
+        {"customer": "domination?", "details": False},
+    ], [f"hi love\n[block]\n{RATES}\n[/block]", f"yes love\n[block]\n{EXTRAS}\n[/block]"],
+        first_reply_address=False)
+    first, second = (t["failed"] for t in result.turns)
+    assert "sent the prices without the address" in first
+    assert any(f.startswith("sent the fixed message starting '1 hour 200") for f in first)
+    assert any(f.startswith("sent the fixed message starting 'domination +50") for f in second)
+
+
+@pytest.mark.asyncio
+async def test_the_old_flow_still_wants_the_address_in_the_first_reply(monkeypatch, tmp_path):
+    result, _ = await _replay(monkeypatch, tmp_path, [{"customer": "hi"}], ["hi love 😘 what time?"])
+    assert "the address was not sent with the prices in the first reply" in result.turns[0]["failed"]

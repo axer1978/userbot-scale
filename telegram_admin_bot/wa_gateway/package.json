@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "postinstall": "node scripts/patch-baileys.mjs",
     "test": "node --test \"test/**/*.test.ts\"",
     "start": "node dist/main.js"
   },

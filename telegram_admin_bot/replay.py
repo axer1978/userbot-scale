@@ -18,16 +18,42 @@ and per step, optionally:
 
     "booking":    the chat's booking state for that reply: requested,
                   requested_now, pending, confirmed_news, declined_news,
-                  cancelled_news, confirmed, arrived, way_in_sent
+                  cancelled_news, confirmed, arrived, way_in_sent; and the
+                  taxi steps of an outcall (booking.outcall_taxi):
+                  outcall_ready_news (she sent READY: he orders the taxi,
+                  her address follows the reply), outcall_ready (waiting for
+                  his link), outcall_link (his message with the taxi link),
+                  outcall_in_taxi_news (she is in the taxi: he is asked for
+                  the way to him), outcall_in_taxi (he sends it); with
+                  booking.outcall_proof also outcall_proof_wait (confirmed,
+                  his photo of the place not here yet) and outcall_proof_news
+                  (his photo came: he orders the taxi, her address follows)
     "state_note": the booking the extractor is told about (confirmed)
     "intent":     what the booking extractor must read: none, book, asap, cancel
     "expect":     {"has_all": [...], "has_any": [...], "lacks": [...]}, any case
     "photos":     true: the reply must send photos; false: it must not
+    "details":    true: the reply must send one of the prompt's fixed
+                  [block] messages (the rates); false: none of them (no
+                  rates, no whole extras list). In a file with
+                  "first_reply_address": false the address must go with
+                  the first fixed message sent.
+    "address":    true: the address goes out after this reply ([address],
+                  or after a confirmation / for her taxi); false: it does not
+
+A scenario with "outcall": true is an outcall from the start (else it
+becomes one when the extractor reads the request as one, or at a taxi step).
+In outcall_link and the in-taxi steps a reply that writes [address] fails:
+she is on her way to him.
 
 What the system sends by itself is replayed too, as in the runtime: the
 address (booking.address) where a reply wrote [address] (every chat must have
-it with the prices in the first reply, except in "except_categories"), or
-after a confirmation if it is not in the chat yet (not for an outcall); and
+it with the prices in the first reply, except in "except_categories" and in
+a file with "first_reply_address": false), or after a confirmation if it is
+not in the chat yet (not for an outcall), or for her taxi on
+outcall_ready_news / outcall_proof_news; a file with "greeting_video": true
+has a video marked greeting in the library, sent with the first reply; a
+file with "outcall_proof": true / false runs its outcalls with / without the
+photo of the place (else as booking.outcall_proof says); and
 on "arrived" the way in
 (booking.arrival_instructions) is the whole answer: the arrival check must
 read the message as arrival, and no reply is written. Later steps are
@@ -48,7 +74,8 @@ message, exactly once — except in "except_categories" — and "never_says" lis
 phrases no reply may contain (any case). --candidate takes {"client": {...},
 "industry_boundaries": "...", "config": {...}} to try a prompt (and client
 config) before saving it; "industry": {section: text} tries a whole industry
-template.
+template; "rules": [...] tries other operator rules than the active ones
+(rules.py), [] none.
 """
 
 from __future__ import annotations
@@ -102,7 +129,15 @@ AT_THE_DOOR_LACKS = ("one sec, coming", "i'm coming down", "im coming down", "i'
                      "nāku lejā", "atvēršu durvis")
 # The door code, until the system has sent the way in.
 DOOR_CODE = "1234"
-CONFIRMED_STATES = {"confirmed_news", "confirmed", "arrived", "way_in_sent"}
+# The taxi steps of an outcall, after the owner confirmed it. A chat with
+# one of them (or "outcall": true at the top) is an outcall.
+OUTCALL_STATES = {"outcall_proof_wait", "outcall_proof_news", "outcall_ready_news", "outcall_ready", "outcall_link",
+                  "outcall_in_taxi_news", "outcall_in_taxi"}
+# Her taxi picks her up at her address: it follows these replies.
+PICKUP_STATES = {"outcall_ready_news", "outcall_proof_news"}
+# She is on her way to him: her address never goes out.
+NO_ADDRESS_STATES = {"outcall_link", "outcall_in_taxi_news", "outcall_in_taxi"}
+CONFIRMED_STATES = {"confirmed_news", "confirmed", "arrived", "way_in_sent", *OUTCALL_STATES}
 # A time they asked for is with the owner.
 WAITING_STATES = {"requested", "requested_now", "pending"}
 STATES = {"requested", "requested_now", "pending", *CONFIRMED_STATES, "declined_news", "cancelled_news"}
@@ -113,12 +148,21 @@ TEST_PHOTOS = [
     {"id": 2, "kind": media.PHOTO, "file": "mirror.jpg", "description": "mirror selfie"},
     {"id": 3, "kind": media.PHOTO, "file": "sofa.jpg", "description": "me on the sofa, smiling"},
 ]
+# Marked "greeting": goes out with the first reply (files with "greeting_video": true).
+TEST_GREETING = {"id": 9, "kind": media.VIDEO, "file": "hi.mp4", "description": "short video of me saying hi",
+                 "greeting": True}
 
 
 # ------------------------------------------------------------- scenarios
 
 def load(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
+    # The file's own flow, kept on each chat when files are merged.
+    for scenario in data.get("scenarios", []):
+        scenario.setdefault("first_reply_address", data.get("first_reply_address", True))
+        scenario.setdefault("greeting_video", data.get("greeting_video", False))
+        if "outcall_proof" in data:
+            scenario.setdefault("outcall_proof", data["outcall_proof"])
     problems = validate(data)
     if problems:
         raise ValueError(f"{path}: " + "; ".join(problems))
@@ -162,6 +206,10 @@ def validate(data: dict[str, Any]) -> list[str]:
                 problems.append(f"{sid}: an intent check needs a customer message")
             if "photos" in step and not isinstance(step["photos"], bool):
                 problems.append(f"{sid}: photos is true or false")
+            if "details" in step and not isinstance(step["details"], bool):
+                problems.append(f"{sid}: details is true or false")
+            if "address" in step and not isinstance(step["address"], bool):
+                problems.append(f"{sid}: address is true or false")
             if step.get("booking") == "arrived" and ("customer" not in step or step.get("expect")
                                                       or step.get("intent")):
                 problems.append(f"{sid}: an arrived step is a customer message with no expect or intent "
@@ -180,32 +228,57 @@ def booking_start(state: str, now: datetime) -> datetime:
     return later + timedelta(minutes=-later.minute % 5)
 
 
-def fake_booking(state: str, now: datetime, tz: str, start: Optional[datetime] = None) -> dict[str, Any]:
+def fake_booking(state: str, now: datetime, tz: str, start: Optional[datetime] = None,
+                 outcall: bool = False, proof: bool = False) -> dict[str, Any]:
     start = start or booking_start(state, now)
     status = {"confirmed_news": bs.CONFIRMED, "confirmed": bs.CONFIRMED, "arrived": bs.CONFIRMED,
               "declined_news": bs.CANCELLED, "cancelled_news": bs.CANCELLED}.get(state, bs.PENDING)
     notice = {"confirmed_news": bs.NOTICE_CONFIRMED, "declined_news": bs.NOTICE_DECLINED,
-              "cancelled_news": bs.NOTICE_CANCELLED}.get(state)
-    status = bs.CONFIRMED if state == "way_in_sent" else status
+              "cancelled_news": bs.NOTICE_CANCELLED, "outcall_ready_news": bs.NOTICE_READY,
+              "outcall_proof_news": bs.NOTICE_READY, "outcall_in_taxi_news": bs.NOTICE_IN_TAXI}.get(state)
+    status = bs.CONFIRMED if state == "way_in_sent" or state in OUTCALL_STATES else status
+    # How far the taxi steps have come: each state is past the ones before.
+    # With the proof, his photo came at the step where she would be ready.
+    steps = ["outcall_ready_news", "outcall_ready", "outcall_link", "outcall_in_taxi_news", "outcall_in_taxi"]
+    at = 0 if state == "outcall_proof_news" else steps.index(state) if state in steps else -1
+    proof_at = now if state == "outcall_proof_news" or (proof and at >= 0) else None
     return {"number": 7, "state": status, "starts_at": start, "ends_at": start + timedelta(hours=1), "tz": tz,
             "proposed_by": None, "customer_notice": notice,
-            "instructions_sent_at": now if state in ("arrived", "way_in_sent") else None}
+            "notes": "Outcall." if outcall or state in OUTCALL_STATES else "",
+            "instructions_sent_at": now if state in ("arrived", "way_in_sent") else None,
+            "ready_at": now if at >= 0 else None, "taxi_link_at": now if at >= 2 else None,
+            "in_taxi_at": now if at >= 3 else None, "proof_at": proof_at}
 
 
 def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[datetime] = None,
-                 address_follows: bool = False, address_set: bool = False, quiet: bool = False) -> str:
+                 address_follows: bool = False, address_set: bool = False, quiet: bool = False,
+                 outcall: bool = False, outcall_taxi: bool = True, ready_minutes: int = 20,
+                 name: str = "", proof: bool = False, address_timing: str = "with_prices") -> str:
+    """The booking part of the reply prompt, as BookingFlow.reply_note
+    writes it for a chat in this state."""
     lines = []
     if state:
-        booking = fake_booking(state, now, tz, start)
+        proof = proof and outcall_taxi
+        booking = fake_booking(state, now, tz, start, outcall, proof)
+        taxi = outcall_taxi and bookings.is_outcall(booking) and booking["state"] == bs.CONFIRMED
         if quiet and state in WAITING_STATES:
             lines.append(bookings.quiet_request_line(booking))
+        elif taxi and booking["customer_notice"]:
+            lines.append(bookings.outcall_notice_line(booking, now=now, ready_minutes=ready_minutes,
+                                                      has_address=address_set, proof=proof))
+            if state in PICKUP_STATES and address_set:
+                lines.append(bookings.PICKUP_ADDRESS_LINE)
         else:
             lines.append(bookings.notice_line(booking) if booking["customer_notice"]
-                         else bookings.standing_line(booking))
+                         else bookings.standing_line(booking, outcall_taxi=outcall_taxi, proof=proof))
+        if state == "outcall_link":
+            lines.append(bookings.TAXI_LINK_LINE)
         if state == "confirmed_news" and address_follows:
             lines.append(bookings.ADDRESS_FOLLOWS_LINE)
+        if name:
+            lines.append(bookings.own_name_line(name))
     if address_set:
-        lines.append(bookings.ADDRESS_TAG_LINE)
+        lines.append(bookings.address_tag_line(address_timing))
     return bookings.context_for_reply(lines)
 
 
@@ -251,6 +324,18 @@ def check_reply(text: str, step: dict[str, Any], state: Optional[str],
     if step.get("photos") is False and files:
         failed.append(f"sent {files} photos")
     return failed
+
+
+def details_sent(parts: list[str], prompt_text: str) -> list[str]:
+    """The prompt's fixed [block] messages (rates, extras) a reply sent,
+    whole or nearly (two thirds of the lines, at least two)."""
+    sent = {ai_responder._line_key(line) for part in parts for line in part.splitlines()}
+    found = []
+    for block in ai_responder.fixed_blocks(prompt_text):
+        keys = ai_responder._block_keys(block)
+        if keys and sum(key in sent for key in keys) >= max(2, len(keys) * 2 // 3):
+            found.append(block)
+    return found
 
 
 def _norm(text: str) -> str:
@@ -318,9 +403,12 @@ class Context:
 
     @property
     def media_note(self) -> str:
+        return self.library_note(self.photos)
+
+    def library_note(self, items: list[dict[str, Any]]) -> str:
         if not self.config["media"].get("enabled", True):
             return ""
-        return media.prompt_section(self.photos, ask_before_video=self.config["media"].get("ask_before_video", True))
+        return media.prompt_section(items, ask_before_video=self.config["media"].get("ask_before_video", True))
 
 
 async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
@@ -331,8 +419,9 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
     # The chat's live booking before this message, which the extractor is
     # told about as in the runtime: a request waiting, or a confirmed one.
     live: Optional[str] = None
-    # The request was for an outcall (as the extractor read it): no address.
-    outcall = False
+    # The request was for an outcall (as the extractor read it, or the
+    # scenario says so): no address, and the taxi steps.
+    outcall = bool(scenario.get("outcall"))
     # The address is in the chat (normally from the first reply's [address]).
     address_sent = False
     first_reply = True
@@ -341,6 +430,14 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
     address = (ctx.config["booking"].get("address") or "").strip()
     quiet = bool(ctx.config["booking"].get("quiet_until_answered"))
     way_in = (ctx.config["booking"].get("arrival_instructions") or "").strip()
+    taxi = bool(ctx.config["booking"].get("outcall_taxi", True))
+    proof = taxi and bool(scenario.get("outcall_proof", ctx.config["booking"].get("outcall_proof", True)))
+    timing = ctx.config["booking"].get("address_timing", "with_prices")
+    # The library of this chat: the test photos, and the greeting video.
+    library = [*ctx.photos, *([TEST_GREETING] if scenario.get("greeting_video") else [])]
+    library_note = ctx.library_note(library)
+    ready_minutes = int(ctx.config["booking"].get("outcall_ready_minutes", 20))
+    name = (ctx.config["booking"].get("name") or "").strip()
     for step in scenario["steps"]:
         if "bot" in step:
             history.append({"role": "assistant", "content": step["bot"]})
@@ -350,6 +447,7 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
         now = datetime.now(timezone.utc)
         state = step.get("booking")
         failed: list[str] = []
+        outcall = outcall or state in OUTCALL_STATES
         if state in ("confirmed", "arrived") and not outcall:
             # The runtime's arrival check reads every message near the time
             # (never for an outcall: there is no way in to send).
@@ -389,8 +487,8 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
                 and any(m["role"] == "assistant" for m in history)):
             # As in the runtime: nothing is written until the owner answers;
             # photos they ask to see (and have not had) go out on their own.
-            unsent = (media.unsent([p for p in ctx.photos if p["kind"] == media.PHOTO], history)
-                      if ctx.media_note and media.they_ask_for_photos(history) else [])
+            unsent = (media.unsent([p for p in library if p["kind"] == media.PHOTO], history)
+                      if library_note and media.they_ask_for_photos(history) else [])
             asked = bool(unsent) and await ai_responder.extract_photo_request(
                 api_key=ctx.key, history=[dict(m) for m in history], ai_config=ctx.config["ai"], client=ctx.http)
             files = unsent[:media.MAX_ATTACHMENTS_PER_REPLY] if asked else []
@@ -413,38 +511,67 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
             result.turns.append({"said": step.get("customer", ""), "reply": [], "auto": [], "failed": failed,
                                  "skipped": "bot question"})
             continue
+        # As in the runtime: the greeting files go with the first reply.
+        greeting = ([item for item in library if item.get("greeting")]
+                    if library_note and not any(m["role"] == "assistant" for m in history) else [])
+        media_note = "\n".join(filter(None, [library_note, library_note and media.sent_line(library, history),
+                                             greeting and media.greeting_line(greeting)]))
         text = await ai_responder.generate_reply(
             api_key=ctx.key, history=[dict(m) for m in history], persona={}, ai_config=ctx.config["ai"],
             client=ctx.http, adaptive_style=ctx.config["human"]["adaptive_style"],
             booking_note=booking_note(state, now, ctx.tz, start,
                                       address_follows=bool(address) and not outcall and not address_sent,
-                                      address_set=bool(address), quiet=quiet),
+                                      address_set=bool(address), quiet=quiet, outcall=outcall,
+                                      outcall_taxi=taxi, ready_minutes=ready_minutes, name=name, proof=proof,
+                                      address_timing=timing),
             system_prompt=ctx.prompt.text,
-            media_note="\n".join(filter(None, [ctx.media_note, ctx.media_note and media.sent_line(ctx.photos, history)])),
+            media_note=media_note,
             language_locked=ctx.config["language_policy"] != "mirror", burst_max=burst["max_messages"],
             burst_keep_together=burst.get("keep_together", True))
-        known = {item["id"]: item for item in ctx.photos}
+        known = {item["id"]: item for item in library}
         text, ids = media.split_attachments(ai_responder.without_no_reply(text))
-        files = [known[i] for i in ids if i in known]
+        files = [*greeting, *(known[i] for i in ids if i in known and known[i] not in greeting)]
         # The address the reply asked for goes in as a message of its own
         # (shown as sent by the system); the reply is checked without it.
         text, tagged = bookings.take_address_tag(text)
-        parts = ai_responder.split_burst(text, burst["max_messages"], burst.get("keep_together", True))
+        # As in the runtime: "when_asked" drops a tag he did not ask for.
+        if tagged and timing == "when_asked" and not bookings.asks_where("\n".join(media.latest_from_them(history))):
+            tagged = False
+        parts = ai_responder.split_burst(text, burst["max_messages"], burst.get("keep_together", True),
+                                         ai_responder.fixed_blocks(ctx.prompt.text))
         sent = "\n".join(parts)
-        if (first_reply and address and not tagged and scenario["category"] not in ctx.except_categories):
+        if (first_reply and address and not tagged and scenario.get("first_reply_address", True)
+                and scenario["category"] not in ctx.except_categories):
             failed.append("the address was not sent with the prices in the first reply")
+        details = details_sent(parts, ctx.prompt.text)
+        if step.get("details") is True and not details:
+            failed.append("sent no rates message")
+        if step.get("details") is False and details:
+            failed += [f"sent the fixed message starting {d.splitlines()[0][:40]!r}" for d in details]
+        if (details and address and not tagged and not address_sent and timing == "with_prices"
+                and not scenario.get("first_reply_address", True)):
+            failed.append("sent the prices without the address")
+        if tagged and state in NO_ADDRESS_STATES:
+            failed.append("wrote [address] while she is on her way to him: her address would be sent")
+        # Her taxi picks her up there: the address follows the ready news
+        # (and a tag in that reply is dropped, as in the runtime).
+        pickup = taxi and state in PICKUP_STATES
         first_reply = False
         # A step's expectations are about what was said around the fixed
         # messages (rates, extras), whose words would match anything.
         fixed = {_norm(t) for t in ctx.must_send.values()}
         failed += check_reply("\n".join(p for p in parts if _norm(p) not in fixed), step, state, ctx.never_says,
-                              files=len(files))
+                              files=len(files) - len(greeting))
         verdict = policy.check_outbound(sent, ctx.config, ctx.prompt.business_text)
         suspends = ctx.config["anomaly"]["tripwire_suspend"]
         failed += [("policy would hold it AND SWITCH THE ACCOUNT OFF (trip-wire): " if r in verdict.tripwire and suspends
                     else "policy would hold it: ") + r for r in verdict.reasons]
-        auto = [address] if address and (tagged or (state == "confirmed_news" and not outcall
-                                                    and not address_sent)) else []
+        auto = [address] if address and (tagged or pickup or (state == "confirmed_news" and not outcall
+                                                              and not address_sent)) else []
+        if address and step.get("address") is True and not auto:
+            failed.append("the address did not go out")
+        if address and step.get("address") is False and auto:
+            failed.append("the address went out")
         address_sent = address_sent or bool(auto)
         turn = {"said": step.get("customer") or f"[{step['event']}]", "reply": parts, "auto": auto,
                 "failed": failed}
@@ -456,7 +583,8 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
         history.extend({"role": "assistant", "content": p}
                        for p in [*parts, *auto, *(media.sent_placeholder(item) for item in files)])
         live = {"requested": "pending", "requested_now": "pending", "pending": "pending", "confirmed_news": "confirmed",
-                "confirmed": "confirmed", "way_in_sent": "confirmed"}.get(state or "")
+                "confirmed": "confirmed", "way_in_sent": "confirmed",
+                **{s: "confirmed" for s in OUTCALL_STATES}}.get(state or "")
     if ctx.must_send and scenario["category"] not in ctx.except_categories:
         replies = [p for t in result.turns for p in t["reply"]]
         if failed := check_chat(replies, ctx.must_send):
@@ -488,9 +616,12 @@ async def render(pool, tenant_id: int, candidate: Optional[Path]) -> tuple[tenan
         # over what the client has, validated like a save.
         bundle.resolved = tenant_config.resolve(bundle.industry["default_config"],
                                                 _deep_merge(bundle.tenant.get("config_json") or {}, cand["config"]))
+    # The operator's rules as live (rules.py), or the ones to try: [] tries
+    # a folded prompt without them.
+    rules = cand["rules"] if "rules" in cand else bundle.layers["rules"]
     return bundle, prompt_layers.render(base=bundle.layers["base"], industry=industry, client=client,
                                         business_name=bundle.tenant["name"],
-                                        language_policy=bundle.config["language_policy"])
+                                        language_policy=bundle.config["language_policy"], rules=rules)
 
 
 def report(results: list[Result], verbose: bool) -> str:

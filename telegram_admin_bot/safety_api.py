@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+import ai_responder
 import alerts
 import audit
 import billing
@@ -192,7 +193,17 @@ async def api_controls(tenant_id: int) -> dict[str, Any]:
         # Host, port and user only: the password never leaves the server.
         "proxy": proxies.describe(await SessionRegistry(pool).load_proxy(tenant["session_id"]))
         if tenant["session_id"] else None,
+        "deepseek_key": _describe_key(await SessionRegistry(pool).load_deepseek_key(tenant["session_id"]))
+        if tenant["session_id"] else None,
     }
+
+
+def _describe_key(key: Optional[str]) -> Optional[dict[str, str]]:
+    """Enough to tell which key is in: its last four characters, and those
+    only when the key is long enough that they give nothing away."""
+    if not key:
+        return None
+    return {"ends": key[-4:] if len(key) >= 16 else ""}
 
 
 class ProxyBody(BaseModel):
@@ -236,6 +247,43 @@ async def api_set_proxy(tenant_id: int, body: ProxyBody) -> dict[str, Any]:
         except commands.CommandError as exc:
             log.warning("[%s] Reconnect after a proxy change failed: %s", tenant["session_id"], exc)
     return {"proxy": described, "reconnected": reconnected}
+
+
+class DeepSeekKeyBody(BaseModel):
+    deepseek_api_key: str = Field(max_length=200)
+
+
+@router.put("/api/tenants/{tenant_id}/deepseek-key")
+async def api_set_deepseek_key(tenant_id: int, body: DeepSeekKeyBody) -> dict[str, Any]:
+    """Replace the DeepSeek key the account writes its replies with. DeepSeek
+    is asked first whether it accepts the key; then the running account
+    switches to it without reconnecting. There is no clearing it: without a
+    key the account cannot run."""
+    tenant = await _tenant(tenant_id)
+    if not tenant["session_id"]:
+        raise HTTPException(status_code=400, detail="This client has no account.")
+    key = body.deepseek_api_key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="Paste the new key (from platform.deepseek.com).")
+    ok, why = await ai_responder.check_key(key)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"Not saved: {why}.")
+    pool = _get_pool()
+    await SessionRegistry(pool).set_deepseek_key(tenant["session_id"], key)
+    described = _describe_key(key)
+    await audit.record(pool, tenant_id=tenant_id, actor=ACTOR, event=audit.DEEPSEEK_KEY_CHANGED,
+                       reason="DeepSeek key replaced", payload=described)
+    applied = False
+    bus = _get_bus()
+    if bus is not None:
+        try:
+            await bus.dispatch(tenant["session_id"], "reload_deepseek_key", {}, timeout=10.0)
+            applied = True
+        except commands.CommandTimeout:
+            pass  # not running: it reads the key when it next starts
+        except commands.CommandError as exc:
+            log.warning("[%s] Switching to the new DeepSeek key failed: %s", tenant["session_id"], exc)
+    return {"deepseek_key": described, "applied": applied}
 
 
 class ReasonBody(BaseModel):

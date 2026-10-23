@@ -62,6 +62,16 @@ def crypto_key(monkeypatch):
     crypto.reset_cache()
 
 
+@pytest.fixture(autouse=True)
+def replies_as_written(request, monkeypatch):
+    """The runtime varies every AI reply at random (variation.py, on by
+    default). A test that checks the words a reply went out with gets them
+    as the model wrote them; tests about the variation itself are marked
+    `variation` and see it."""
+    if request.node.get_closest_marker("variation") is None:
+        monkeypatch.setattr(SessionRuntime, "vary", lambda self, text: text)
+
+
 @pytest_asyncio.fixture
 async def pg_pool():
     """A pool bound to a throwaway schema, migrated to the latest version,
@@ -93,6 +103,14 @@ async def pg_pool():
             await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
         finally:
             await admin.close()
+
+
+def migration_versions(since: int = 1) -> list[int]:
+    """Every migration version on disk from `since` on, in order: what a
+    database at `since - 1` applies. Not range(since, latest + 1): two
+    branches each adding a migration (0017, 0018) may land in either
+    order, and until both have, the numbers have a gap."""
+    return [version for version, _, _ in pg_module._discover(pg_module.MIGRATIONS_DIR) if version >= since]
 
 
 async def seed_session(pool, session_id: str, *, active: bool = True, name: str = "", industry_id: int = 1) -> int:

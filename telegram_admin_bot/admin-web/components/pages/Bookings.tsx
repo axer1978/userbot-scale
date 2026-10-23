@@ -92,6 +92,24 @@ function BookingRow({ b, tz, open, onToggle, onChanged }: {
   const arrived = b.arrived_at ? when(b.arrived_at, tz, { hour: "2-digit", minute: "2-digit" }) +
     (b.arrival_photo_match === true ? " (photo matches the entrance)"
       : b.arrival_photo_match === false ? " (photo did not match)" : "") : "";
+  // An outcall by taxi (booking_flow.py): until half an hour after its end,
+  // she can be marked ready / in the taxi here when she says so another way.
+  // With booking.outcall_proof his photo of the place comes first; "She is
+  // ready" skips it.
+  const hhmm = (iso: string) => when(iso, tz, { hour: "2-digit", minute: "2-digit" });
+  const outcall = b.state === "confirmed" && (b.notes || "").toLowerCase().includes("outcall");
+  const underWay = outcall && new Date(new Date(b.ends_at).getTime() + 30 * 60_000) > new Date();
+  const taxiStep = !outcall ? ""
+    : b.in_taxi_at ? `in the taxi since ${hhmm(b.in_taxi_at)}` +
+        (b.in_taxi_by === "system" ? " (no IN came; the customer was told anyway)" : "")
+    : b.taxi_link_at ? `taxi link came at ${hhmm(b.taxi_link_at)}; waiting for her IN ${b.number}`
+    : b.proof_at ? `his photo of the place came at ${hhmm(b.proof_at)}; waiting for his taxi link`
+    : b.ready_at ? `ready since ${hhmm(b.ready_at)}; waiting for his taxi link`
+    : `waiting for his photo of the place, or her READY ${b.number}`;
+  const taxiLink = b.taxi_link
+    ? <a href={/^https?:\/\//i.test(b.taxi_link) ? b.taxi_link : `https://${b.taxi_link}`}
+         target="_blank" rel="noopener noreferrer">{b.taxi_link}</a>
+    : null;
 
   return (
     <div className={cx("bk-row", `st-${b.state}`, open && "open")}>
@@ -113,11 +131,19 @@ function BookingRow({ b, tz, open, onToggle, onChanged }: {
         <div className="bk-detail">
           <Fact label="When" value={when(b.starts_at, tz, SHORT) + "–" + when(b.ends_at, tz, { hour: "2-digit", minute: "2-digit" })} />
           <Fact label="Customer" value={(b.customer_name || "") + (b.customer_username ? ` (@${b.customer_username})` : "")} />
+          <Fact label="Extras" value={b.extras} />
           <Fact label="Notes" value={b.notes} />
           <Fact label="Cancelled" value={b.cancel_reason} />
           <Fact label="Coming" value={b.attendance_confirmed_at ? "confirmed by the customer" : ""} />
           <Fact label="Arrived" value={arrived} />
+          <Fact label="Outcall" value={taxiStep} />
+          <Fact label="Taxi link" value={taxiLink} />
           <div className="bk-actions">
+            {underWay && !b.ready_at && !b.in_taxi_at &&
+              <button type="button" className="btn small" onClick={() => act("ready")}
+                      title="He is asked to order the taxi now (without his photo of the place)">She is ready</button>}
+            {underWay && !b.in_taxi_at &&
+              <button type="button" className="btn small" onClick={() => act("in_taxi")}>She is in the taxi</button>}
             {b.state === "requested" && <button type="button" className="btn small" onClick={() => act("resend")}>Send to the owner again</button>}
             {(b.state === "requested" || b.state === "pending") && <>
               <button type="button" className="btn small primary" onClick={() => act("confirm")}>Confirm</button>

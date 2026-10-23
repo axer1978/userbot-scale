@@ -3,6 +3,8 @@ FROM node:24-slim AS build
 WORKDIR /app
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false NPM_CONFIG_FUND=false
 COPY package.json package-lock.json ./
+# npm runs scripts/patch-baileys.mjs after installing (the view-once fix).
+COPY scripts ./scripts
 RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
@@ -16,6 +18,7 @@ FROM node:24-slim
 WORKDIR /app
 ENV NODE_ENV=production NPM_CONFIG_UPDATE_NOTIFIER=false NPM_CONFIG_FUND=false
 COPY package.json package-lock.json ./
+COPY scripts ./scripts
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 USER node

@@ -22,7 +22,7 @@ import pytest
 import pytest_asyncio
 
 import pg as pg_module
-from conftest import PG_TEST_DSN, TEST_MASTER_KEY
+from conftest import PG_TEST_DSN, TEST_MASTER_KEY, migration_versions
 
 pytestmark = [pytest.mark.requires_pg, pytest.mark.asyncio]
 
@@ -89,16 +89,26 @@ async def table_rows(pool, tables) -> dict[str, list[dict]]:
 async def test_migrations_on_an_empty_database_then_again_change_nothing(empty_pool):
     latest = pg_module.latest_version()
     assert await pg_module.current_version(empty_pool) == 0
-    assert await pg_module.apply_migrations(empty_pool) == list(range(1, latest + 1))
+    assert await pg_module.apply_migrations(empty_pool) == migration_versions()
     first = await catalog(empty_pool)
-    assert [v for v, _ in first["migrations"]] == list(range(1, latest + 1))
-    assert len({n for _, n in first["migrations"]}) == latest  # every version recorded with its file name
+    assert [v for v, _ in first["migrations"]] == migration_versions() and migration_versions()[-1] == latest
+    # every version recorded with its file name
+    assert len({n for _, n in first["migrations"]}) == len(migration_versions())
 
     # Second run: nothing to apply, nothing re-applied, the catalog untouched.
     assert await pg_module.apply_migrations(empty_pool) == []
     assert await pg_module.current_version(empty_pool) == latest
     assert await catalog(empty_pool) == first
     await pg_module.assert_version(empty_pool, latest)  # what panel/manager check at boot
+
+
+async def test_pgvector_is_switched_on_wherever_the_server_has_it(empty_pool):
+    await pg_module.apply_migrations(empty_pool)
+    async with empty_pool.acquire() as con:
+        available = await con.fetchval("SELECT count(*) FROM pg_available_extensions WHERE name = 'vector'")
+        installed = await con.fetchval("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+    # Without pgvector (a plain postgres:16) the migration is skipped, never failed.
+    assert bool(installed) == bool(available)
 
 
 def _run_entrypoint(dsn: str) -> subprocess.CompletedProcess:
@@ -126,7 +136,7 @@ async def test_migrate_entrypoint_runs_twice_on_the_same_database(empty_pool):
     try:
         first = _run_entrypoint(dsn)
         assert first.returncode == 0, first.stdout + first.stderr
-        assert f"applied migrations {list(range(1, pg_module.latest_version() + 1))}" in first.stdout
+        assert f"applied migrations {migration_versions()}" in first.stdout
 
         second = _run_entrypoint(dsn)
         assert second.returncode == 0, second.stdout + second.stderr
@@ -218,19 +228,27 @@ async def test_upgrading_a_populated_0005_database_keeps_the_data_and_adds_the_r
         before = await table_rows(pool, tables)
         assert before["tenant_holds"] and before["sessions_health"] and before["alerts"]
 
-    assert await pg_module.apply_migrations(pool) == list(range(6, pg_module.latest_version() + 1))
+    assert await pg_module.apply_migrations(pool) == migration_versions(6)
     assert await pg_module.apply_migrations(pool) == []
 
     after = await table_rows(pool, tables)
     # tenants.channel has been there since 0002; 0006 only has to leave it alone.
-    new_cols = {"telegram_sessions": {"channel"}, "messages": {"wa_message_id"},
+    new_cols = {"telegram_sessions": {"channel"}, "messages": {"wa_message_id", "sent_elsewhere", "draft_text"},  # 0013, 0016
                 "bookings": {"provider_wa_message_id",
                              # 0011: arrival cleanup
-                             "instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at"}}
+                             "instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at",
+                             # 0014: outcall taxi steps
+                             "ready_at", "ready_reminded_at", "taxi_link", "taxi_link_at", "in_taxi_at",
+                             "in_taxi_by",
+                             # 0019: the extras he asked for
+                             "extras",
+                             # 0020: his photo of the place (outcall proof)
+                             "proof_at"}}
     for table, rows in before.items():
         added = new_cols.get(table, set())
         assert [{k: v for k, v in r.items() if k not in added} for r in after[table]] == rows, table
     assert all(r["wa_message_id"] is None for r in after["messages"])
+    assert not any(r["sent_elsewhere"] for r in after["messages"])  # old rows count as before
     assert all(r["provider_wa_message_id"] is None for r in after["bookings"])
     assert {r["session_id"]: r["channel"] for r in after["telegram_sessions"]} == {"tg1": "telegram", "tg2": "telegram"}
     assert {r["name"]: r["channel"] for r in after["tenants"]} == {"Salon": "telegram", "Garage": "telegram", "Closed": "telegram"}

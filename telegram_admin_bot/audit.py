@@ -27,6 +27,12 @@ MIGRATION = "migration"
 # Events
 MESSAGE_SENT = "message_sent"
 MESSAGES_DELETED = "messages_deleted"
+# A draft approved in the panel. payload: chat_id, message_id (the draft),
+# edited (whether its text was changed first; the bot's own text is then
+# kept in messages.draft_text).
+DRAFT_APPROVED = "draft_approved"
+# payload: chat_id, message_id.
+DRAFT_REJECTED = "draft_rejected"
 POLICY_HOLD = "policy_hold"
 TENANT_CREATED = "tenant_created"
 TENANT_UPDATED = "tenant_updated"
@@ -68,6 +74,8 @@ HUMAN_TAKEOVER = "human_takeover"
 TAKEOVER_ENDED = "takeover_ended"
 # payload.proxy: type, host, port, user; never the password.
 PROXY_CHANGED = "proxy_changed"
+# payload.ends: the key's last four characters; never the key.
+DEEPSEEK_KEY_CHANGED = "deepseek_key_changed"
 
 Executor = Union[asyncpg.Pool, asyncpg.Connection]
 

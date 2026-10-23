@@ -35,6 +35,7 @@ account.
 | `wa-gateway` | The WhatsApp transport (`wa_gateway/`, Node + Baileys). Holds the WhatsApp sockets the way a worker holds Telethon clients, takes its orders from Python over Valkey and keeps the WhatsApp login state encrypted in Postgres. Transport only: it never decides to send anything. Exactly one runs (a Postgres lock); a second copy exits. See [WhatsApp accounts](#whatsapp-accounts) and `wa_gateway/README.md`. |
 | `caddy` | Optional. Serves the panel over public HTTPS. Off unless you enable it. See below. |
 | `booking-pages`, `caddy-booking` | Optional (`--profile booking-pages`). The public calendar feed per client and the read-only page per booking, on their own domain. See "Bookings". |
+| `embedder` | Optional (`--profile retrieval`). Turns short texts into vectors (`embedder/`, a small multilingual model on the CPU, files baked into the image), so the bot can find past chat moments like the one it is answering; `embeddings.py` is the client. No text leaves the server, nothing is published or stored, and it is capped at one CPU. Check it with `docker compose exec embedder python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/health').read())"`. |
 
 **Leasing** makes sure only one worker runs a given account at a time. A worker
 has to take a lease on the account's row in Postgres before it connects, and
@@ -630,11 +631,34 @@ the opening hours, the calendar link and AI usage.
   *Booking request #7 … Reply YES 7 or NO 7, or a new time like 7 15:30.*
   Numbers count per client from 1. **Nothing is confirmed until a person
   says yes**: the owner by text, or you in the panel.
+- The request lists who asks, her name (`Girl:`), the **extras** he asked
+  for in the chat (`Extras: domination +50, …`, read with the time; kept on
+  the booking and shown on the Bookings page), when, and notes.
+- `booking.name` (her name): the request's `Girl:` line, and updates to the
+  owner start with it (*Lola — #7 …*; empty: the account's name). The reply
+  writer tells the customer the name when the booking is confirmed and when
+  they arrive (empty: no name is told).
 - The owner can answer `YES 7`, `NO 7`, a new time (`7 15:30`,
-  `7 04.10 15:30`, `7 tomorrow 15:30`), `CANCEL 7`, `DONE 7`, `NOSHOW 7`, or
-  `LIST`. A bare `yes` works as a reply to the request message, or when only
+  `7 04.10 15:30`, `7 tomorrow 15:30`), `CANCEL 7`, `DONE 7`, `NOSHOW 7`,
+  `LIST`, and for an outcall `READY 7` / `IN 7` (below). A bare `yes` works as a reply to the request message, or when only
   one request is open. When the owner proposes a time, the customer is asked;
   if they take it, it is confirmed (the owner wrote that time).
+- **Her own words** (`booking.owner_free_text`, on): anything that is not a
+  plain command is read by the model against the open bookings and what each
+  customer asked for. *yes I confirm* = YES; *I'm ready in 20 minutes* /
+  *I can meet in 1 hour* = YES when that is by the time he asked (5 min
+  slack), otherwise that time (next 5-minute mark) is proposed to him;
+  *can he come at 15:30?* = a new time; *I'm ready* / *in the taxi* = the
+  outcall steps. Which booking: the request she replies to, the one she
+  names, or the only one waiting. Unclear → she is asked again with the
+  commands; not about a booking → ordinary reply. The answer always says what
+  was done (*#8 confirmed ✅ …*, *#8: … proposed to Khan*). A strict command
+  costs no model call; a *yes* with words after it (*ok in 20 min*) is read
+  by the model, and stays a yes when the model can't be asked. To see how
+  well the real model reads her: `docker compose exec manager python
+  owner_check.py --tenant <id>` (the answers in
+  `replay_scenarios/owner-answers.json`, English, Russian and Latvian; one
+  small model call each on the account's own key; nothing is sent).
 - The customer can change the time before the owner answers (same number),
   ask to move a confirmed booking (the owner answers `YES 7` / `NO 7`), or
   cancel. Every change is in the booking's history and the audit log.
@@ -657,6 +681,23 @@ the opening hours, the calendar link and AI usage.
   the media items marked *Entrance*; with `arrival_requires_photo` the
   instructions wait for a matching photo. The owner can send the entrance
   photo to this account captioned "door".
+- **Outcalls by taxi** (`outcall_taxi`, on by default): an outcall (the
+  customer wants the business to come to them) gets no address and no way
+  in. Once the owner confirms it, the customer hears it is booked and that
+  she needs `outcall_ready_minutes` (20) to get ready. The owner sends
+  `READY 7`: the customer is asked to order a taxi to her and send its link,
+  and `address` follows word for word, for the taxi. His taxi link goes on to
+  the owner; she sends `IN 7` once she is in the taxi (if she doesn't, he is
+  told she is in it `outcall_in_taxi_minutes` (5) after the link came). He is
+  then asked for the exact address, floor, way in and a photo of the place.
+  Everything he sends from the confirmation until the outcall is over goes
+  on to the owner, photos as photos. If `READY 7` has not come when her
+  getting-ready time has passed, she is reminded once. `LIST` shows the
+  outcalls under way. In the panel, **Bookings** shows where each outcall
+  stands and its taxi link, with *She is ready* / *She is in the taxi*
+  buttons for when she tells you another way. The replay chats for these
+  steps are `replay_scenarios/outcall-taxi.json`
+  (`python replay.py --tenant 1 --scenarios outcall-taxi`).
 - **E-mail record**: with `SMTP_*` in `.env` and `booking.owner_email` set,
   every confirmation, move and cancellation is e-mailed with an `.ics`
   attached.

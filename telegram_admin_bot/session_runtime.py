@@ -76,6 +76,7 @@ import commands
 import config_store
 import context_link
 import controls
+import examples
 import health
 import humanlike
 import leasing
@@ -84,9 +85,11 @@ import media
 import pg
 import policy
 import scheduler
+import stylecard
 import tenant_config
 import tenants
 import unanswered
+import variation
 import vision
 import wa_store
 from transport import (
@@ -149,6 +152,9 @@ STORE_RETRY_SECONDS = 2.0
 # again up to this many times, DRAFT_RETRY_SECONDS × the attempt later.
 DRAFT_DB_RETRIES = 3
 DRAFT_RETRY_SECONDS = 10.0
+# A reply is written from this many of the chat's latest messages when the
+# config has no ai.history_messages (tenant_config.AI has the same default).
+HISTORY_MESSAGES = 60
 
 
 class SendBlocked(Exception):
@@ -212,6 +218,11 @@ class SessionRuntime:
         self.tenants = tenants.TenantStore(pool)
         self.tenant_id: Optional[int] = None
         self.bundle: Optional[tenants.Bundle] = None
+        # How the business types (stylecard.py), for every reply; "" when off.
+        self.style_note = ""
+        # The reply examples' vectors this account compares a new message
+        # with (examples.py, config retrieval), loaded when first needed.
+        self.examples_cache = examples.Cache()
         # Two kinds of settings. `config` is the tenant's effective config
         # (tenant_config.py: platform <- industry <- client), everything
         # about how the bot behaves. `account` is this Telegram account's own
@@ -477,6 +488,13 @@ class SessionRuntime:
             # again with what is stored now.
             return await self.reconnect()
 
+        if action == "reload_deepseek_key":
+            # The key was replaced in the panel; the next reply uses it.
+            key = await self.registry.load_deepseek_key(self.session_id)
+            if key:
+                self.deepseek_key = key
+            return {"ok": bool(key)}
+
         if action == "hard_off":
             return await self.hard_off(str(args.get("reason") or ""))
 
@@ -513,17 +531,27 @@ class SessionRuntime:
                 raise ValueError(f"Draft is already {draft['status']}")
             text_override = args.get("text")
             text = (text_override if text_override is not None else draft["text"]).strip()
+            # Changed before approving (more than spacing): a correction to
+            # learn from, so what the bot wrote is kept beside it.
+            edited = text_override is not None and text.split() != (draft["text"] or "").split()
             attachments = [
                 i for i in (draft.get("attachments") or []) if self.media_library.get(i) is not None
             ]
-            parts = ai_responder.split_burst(
-                text, self.config["burst"]["max_messages"], self.config["burst"].get("keep_together", True))
+            parts = self.burst_parts(text)
             if not parts and not attachments:
                 raise ValueError("Message is empty")
             sent = await self.send_burst(
                 draft["chat_id"], parts, draft_id=draft_id, attachments=attachments,
                 actor=audit.ADMIN, reason="draft approved in the panel",
+                # Every message of the reply is the bot's, not only the first
+                # (the draft's row): unmarked, the rest counted as typed by hand.
+                llm_model=draft.get("llm_model"), prompt_version=draft.get("prompt_version"),
             )
+            # Once it went out: a send that is refused leaves the draft as it was.
+            if edited:
+                await self.db.update_message(draft_id, draft_text=draft["text"])
+            await self.write_audit(audit.DRAFT_APPROVED, actor=audit.ADMIN, reason="draft approved in the panel",
+                                   payload={"chat_id": draft["chat_id"], "message_id": draft_id, "edited": edited})
             await self.settle_outreach_draft(draft_id, OUT_SENT, text=text)
             return sent
 
@@ -636,6 +664,11 @@ class SessionRuntime:
                 log.info("[%s] Imported %s bookings from bookings.json.", self.session_id, imported)
             self.off_reason = await controls.off_reason(self.pool, self.tenant_id)
         self._bound_at = time.monotonic()
+        try:
+            self.style_note = await stylecard.note_for(self.pool, self.tenant_id, self.config)
+        except Exception as exc:  # a note is a nicety: never a reason not to run
+            log.warning("[%s] No style note: %s: %s", self.session_id, type(exc).__name__, exc)
+            self.style_note = ""
 
     def utcnow(self) -> datetime:
         """The clock everything booking- and schedule-related reads (tests
@@ -922,6 +955,25 @@ class SessionRuntime:
                 return phrase.strip()
         return ""
 
+    def fixed_blocks(self, min_lines: int = 2) -> tuple[str, ...]:
+        return ai_responder.fixed_blocks(self.bundle.prompt.text, min_lines) if self.bundle is not None else ()
+
+    def burst_parts(self, text: str) -> list[str]:
+        """The reply as the messages it goes out as (burst.*); the prompt's
+        fixed blocks (the rates) stay one message even without markers."""
+        burst = self.config["burst"]
+        return ai_responder.split_burst(text, burst["max_messages"], burst.get("keep_together", True),
+                                        self.fixed_blocks())
+
+    def vary(self, text: str) -> str:
+        """An AI reply with its own lines varied (variation.*), so two
+        clients never get the same words; the prompt's blocks, one-line ones
+        too, stay as written."""
+        settings = self.config.get("variation")
+        if not settings:
+            return text
+        return variation.vary_reply(text, settings, self.fixed_blocks(min_lines=1))
+
     def staging_on(self) -> bool:
         return bool(self.config["staging"]["enabled"])
 
@@ -1124,6 +1176,11 @@ class SessionRuntime:
         """Now, in the tenant's timezone."""
         return self.utcnow().astimezone(bookings.tzinfo_for(self.config["timezone"]))
 
+    def history_messages(self) -> int:
+        """How many of a chat's latest messages a reply is written from
+        (ai.history_messages; older configs have none)."""
+        return int((self.config.get("ai") or {}).get("history_messages") or HISTORY_MESSAGES)
+
     def quiet_seconds_left(self, at: Optional[datetime] = None) -> float:
         """How long until quiet hours end (0 outside them) at `at`, now by default."""
         return humanlike.seconds_until_quiet_ends(at or self.local_now(), self.config["quiet_hours"])
@@ -1162,6 +1219,13 @@ class SessionRuntime:
         return media.prompt_section(
             self.media_library.for_ai(), ask_before_video=self.config["media"].get("ask_before_video", True)
         )
+
+    def greeting_media(self, history: list[dict[str, Any]]) -> list[int]:
+        """The files marked "greeting" that go out with the first reply in a
+        chat; none once anything was said to them (by the bot or by hand)."""
+        if any(m.get("role") == "assistant" for m in history):
+            return []
+        return [item["id"] for item in self.media_library.greeting_items()][:media.MAX_ATTACHMENTS_PER_REPLY]
 
     async def photos_they_asked_for(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """The photos (no videos) to send because their messages since our
@@ -1407,6 +1471,9 @@ class SessionRuntime:
         self, chat_id: int, item_id: int, draft_id: Optional[int] = None, guard: bool = True,
         *, actor: str = audit.BOT, reason: str = "",
     ) -> dict[str, Any]:
+        # The panel edits the library (view once, removals) in another
+        # process: a file sent by hand must go out as it is set now.
+        self.media_library.refresh()
         item = self.media_library.get(item_id)
         path = self.media_library.path(item_id)
         if item is None or path is None:
@@ -1446,6 +1513,32 @@ class SessionRuntime:
         if row is not None:
             await self.push_message(row)
         log.info("[%s]   sent %s to chat %s.", self.session_id, media.label(item), chat_id)
+        return row or {}
+
+    async def send_photo_as_me(self, chat_id: int, path: Path, *, text: str, reason: str) -> dict[str, Any]:
+        """A photo that is not in the media library (a customer's, passed on
+        to the owner). `text` is what the thread shows for it."""
+        await self.ensure_may_send(audit.BOT)
+        await self.check_daily_quota()
+        peer = await self.resolve_peer(chat_id)
+        self.in_flight_media[chat_id] = self.in_flight_media.get(chat_id, 0) + 1
+        self.delivery_attempts += 1
+        try:
+            sent = await self.deliver_file(peer, chat_id, {"kind": media.PHOTO}, path)
+            ids = self.external_id(self.transport.message_id(sent))
+            row = await self.db.record_message(chat_id, DIR_OUT, STATUS_SENT, text, **ids)
+            if row is None:
+                row = await self.find_by_external_id(chat_id, ids)
+        finally:
+            left = self.in_flight_media.get(chat_id, 1) - 1
+            if left > 0:
+                self.in_flight_media[chat_id] = left
+            else:
+                self.in_flight_media.pop(chat_id, None)
+        await self.write_audit(audit.MESSAGE_SENT, actor=audit.BOT, reason=reason,
+                               payload={"message_id": (row or {}).get("id"), "kind": media.PHOTO})
+        if row is not None:
+            await self.push_message(row)
         return row or {}
 
     async def send_burst(
@@ -1570,10 +1663,13 @@ class SessionRuntime:
                 await self.staging_skip(chat_id, None)
                 return
 
-            history = await self.db.get_history_for_ai(chat_id, limit=30)
+            history = await self.db.get_history_for_ai(chat_id, limit=self.history_messages(), with_times=True)
             if not history:
                 log.info("[%s] No usable history for chat %s; skipping draft.", self.session_id, chat_id)
                 return
+            # When each message was sent, for the reply's clock; out of the
+            # rows, which go on to the checks below as they always did.
+            sent_at = tuple(message.pop("at", None) for message in history)
 
             # The booking check for this message decides what the reply
             # has to say (taken, confirmed, offered times).
@@ -1617,30 +1713,50 @@ class SessionRuntime:
             media_note = self.media_prompt()
             if media_note and (had := media.sent_line(self.media_library.for_ai(), history)):
                 media_note += "\n" + had
+            # The files marked "greeting" go with the first reply in a chat.
+            greeting = [] if photos_only or not media_note else self.greeting_media(history)
+            if greeting:
+                media_note += "\n" + media.greeting_line([self.media_library.get(i) for i in greeting])
             prompt = self.bundle.prompt if self.bundle is not None else None
+            # Earlier moments like this one, with the business's real replies
+            # (config retrieval): the note, and the replies in it for the
+            # copy guard below.
+            shown = examples.NOTHING if photos_only else await examples.note_for(self, chat_id, history)
 
             if photos_only:
                 text = "\n".join(f"[send {item['id']}]" for item in photos_only[:media.MAX_ATTACHMENTS_PER_REPLY])
             else:
+                reply_args = dict(
+                    api_key=self.deepseek_key,
+                    history=history,
+                    persona={},
+                    ai_config=self.config["ai"],
+                    client=self.http_client,
+                    adaptive_style=self.config["human"]["adaptive_style"],
+                    contact=overrides,
+                    background=background,
+                    booking_note=note.text,
+                    media_note=media_note,
+                    system_prompt=self.transport.adapt_prompt(prompt.text) if prompt else None,
+                    language_locked=self.config["language_policy"] != "mirror",
+                    burst_max=self.config["burst"]["max_messages"],
+                    burst_keep_together=self.config["burst"].get("keep_together", True),
+                    no_reply_instruction=no_reply,
+                    style_note=self.style_note,
+                    clock=ai_responder.Clock(now=self.local_now(), sent_at=sent_at, zone=self.config["timezone"]),
+                )
                 async with self.ai_gate():
                     text = await ai_responder.generate_reply(
-                        api_key=self.deepseek_key,
-                        history=history,
-                        persona={},
-                        ai_config=self.config["ai"],
-                        client=self.http_client,
-                        adaptive_style=self.config["human"]["adaptive_style"],
-                        contact=overrides,
-                        background=background,
-                        booking_note=note.text,
-                        media_note=media_note,
-                        system_prompt=self.transport.adapt_prompt(prompt.text) if prompt else None,
-                        language_locked=self.config["language_policy"] != "mirror",
-                        burst_max=self.config["burst"]["max_messages"],
-                        burst_keep_together=self.config["burst"].get("keep_together", True),
-                        usage_sink=self.usage_sink("reply"),
-                        no_reply_instruction=no_reply,
-                    )
+                        **reply_args, examples_note=shown.text, usage_sink=self.usage_sink("reply"))
+                    # The copy guard (retrieval.copy_guard): a reply that copies
+                    # an example nearly word for word is written once more
+                    # without the examples. The same text going to many
+                    # clients is what gets a number flagged.
+                    if self.config["retrieval"]["copy_guard"] and shown.copied_in(text):
+                        log.info("[%s]   the reply copied an example (%s); writing it again without them.",
+                                 self.session_id, ", ".join(f"#{i}" for i in shown.ids))
+                        text = await ai_responder.generate_reply(**reply_args,
+                                                                 usage_sink=self.usage_sink("reply_rewrite"))
 
             if no_reply and ai_responder.is_no_reply(text):
                 await self.skip_reply(chat_id, "the no-reply instruction applies to this message")
@@ -1648,14 +1764,24 @@ class SessionRuntime:
             text = ai_responder.without_no_reply(text)
 
             text, attachments = media.split_attachments(text)
-            text = self.flow.fill_address(text)
+            # When the address follows this reply anyway, a tag would send it twice.
+            text = self.flow.fill_address(text, follows=note.address_for is not None,
+                                          latest="\n".join(media.latest_from_them(history)))
+            # The fallback phrases are looked for in the model's own words: a
+            # varied reply may have lost the full stop or emoji they end in.
+            fallback = self.fallback_phrase(text)
+            # Before the policy check and the draft: what goes out (or waits
+            # for approval) is the varied text. The address is a block by now.
+            text = self.vary(text)
             # Only what the AI was offered: never an arrival item (the way in).
             attachments = [i for i in attachments
                            if (item := self.media_library.get(i)) is not None and not item.get("send_on_arrival")]
             if not media_note:
                 attachments = []
-            parts = ai_responder.split_burst(
-                text, self.config["burst"]["max_messages"], self.config["burst"].get("keep_together", True))
+            if greeting:
+                attachments = [*greeting, *(i for i in attachments if i not in greeting)]
+                attachments = attachments[:media.MAX_ATTACHMENTS_PER_REPLY]
+            parts = self.burst_parts(text)
             if not parts and not attachments:
                 raise ai_responder.AIResponderError("The reply came back empty.")
             if attachments:
@@ -1663,16 +1789,16 @@ class SessionRuntime:
                     media.label(self.media_library.get(i)) for i in attachments
                 ))
 
+            # The greeting video is the business's own choice, not the AI's.
             holds_video = any(
-                (self.media_library.get(i) or {}).get("kind") == media.VIDEO for i in attachments
+                (self.media_library.get(i) or {}).get("kind") == media.VIDEO for i in attachments if i not in greeting
             )
             hold = holds_video and self.config["media"]["videos_need_approval"]
             verdict = await self.check_policy(chat_id, text, prompt)
             model = self.config["ai"]["model"]
             version = prompt.version_tag if prompt else None
-            # Found before sending, queued after: the reply still goes out
-            # (or is drafted) as normal.
-            fallback = self.fallback_phrase(text)
+            # The fallback phrase was found before sending (above), queued
+            # after: the reply still goes out (or is drafted) as normal.
 
             if self.config["auto_send"] and self.transport.can_send and not hold and verdict.ok:
                 self.sending_chats.add(chat_id)
@@ -2152,7 +2278,20 @@ class SessionRuntime:
                 return
             log.info("[%s]   message from the booking owner; replying as usual.", self.session_id)
 
-        if has_photo and not is_provider and not self.paused() and not quiet and not staged:
+        # An outcall under way: what he sends goes on to the owner (his
+        # taxi link, the way to him, photos of the place), whatever happens
+        # to the reply. A repeat of a stored message (row None) went already.
+        passed = None
+        if self.flow.enabled() and not is_provider and not staged and row is not None:
+            passed = await self.flow.pass_on(chat_id, text, message if has_photo else None)
+        if passed is not None and row is not None:
+            label = f"{text}\n{passed}" if has_text else passed
+            updated = await self.db.update_message(row["id"], text=label)
+            if updated is not None:
+                await self.push_message(updated)
+            has_text = True
+            text = label
+        elif has_photo and not is_provider and not self.paused() and not quiet and not staged:
             seen = await self.read_photo(chat_id, message)
             if seen is not None and row is not None:
                 label = f"{text}\n{seen}" if has_text else seen
@@ -2221,6 +2360,7 @@ class SessionRuntime:
 
         row = await self._store_with_retry("storing a sent message", lambda: self.db.record_message(
             chat_id, DIR_OUT, STATUS_SENT, text or "[non-text message]", **self.external_id(message.external_id),
+            sent_elsewhere=True,
         ))
         if row is None:
             return  # already stored: one of this runtime's own sends

@@ -89,6 +89,11 @@ async def test_an_action_goes_to_the_running_account_and_its_errors_come_back(pa
         refused = await panel_client.post(f"/api/sessions/acc_a/bookings/{booking['id']}/action",
                                           json={"action": "complete"})
         assert refused.status_code == 409 and "cannot mark completed" in refused.json()["detail"]
+        # The taxi steps of an outcall, said for her in the panel.
+        for step in ("ready", "in_taxi"):
+            done = await panel_client.post(f"/api/sessions/acc_a/bookings/{booking['id']}/action",
+                                           json={"action": step})
+            assert done.status_code == 200 and calls[-1][1]["action"] == step
     finally:
         stop.set()
         await serving

@@ -67,8 +67,10 @@ def test_every_compose_variable_is_documented_in_env_example():
 @pytest.mark.parametrize(
     "profiles, expected, absent",
     [
-        (set(), {"postgres", "valkey", "migrate", "panel", "manager", "scheduler"}, {"caddy", "caddy-booking", "booking-pages"}),
-        ({"public"}, {"caddy", "panel"}, {"caddy-booking", "booking-pages"}),
+        (set(), {"postgres", "valkey", "migrate", "panel", "manager", "scheduler"},
+         {"caddy", "caddy-booking", "booking-pages", "embedder"}),
+        ({"public"}, {"caddy", "panel"}, {"caddy-booking", "booking-pages", "embedder"}),
+        ({"public", "retrieval"}, {"caddy", "embedder"}, {"caddy-booking", "booking-pages"}),
         ({"public", "booking-pages"}, {"caddy", "booking-pages"}, {"caddy-booking"}),
         ({"booking-only"}, {"caddy-booking", "booking-pages"}, {"caddy"}),
     ],
@@ -156,6 +158,36 @@ def test_wa_gateway_gets_only_the_variables_it_reads():
     gw = SERVICES["wa-gateway"]
     assert "env_file" not in gw
     assert set(gw["environment"]) == {"DATABASE_URL", "REDIS_URL", "USERBOT_MASTER_KEY", "WA_GATEWAY_LOG_LEVEL"}
+
+
+def test_embedder_is_optional_private_capped_and_offline():
+    """The embedder (embedder/) holds no secret and no data, publishes
+    nothing, can't take the bots' CPU, and never fetches a model at run time."""
+    import embeddings
+
+    svc = SERVICES["embedder"]
+    assert svc["profiles"] == ["retrieval"]
+    assert svc["build"] == "./embedder"
+    assert "ports" not in svc and "env_file" not in svc and "volumes" not in svc and "depends_on" not in svc
+    assert set(svc["environment"]) == {"EMBED_THREADS"}
+    assert 0 < float(svc["cpus"]) <= 1 and svc["mem_limit"]
+    assert "http://127.0.0.1:8000/health" in " ".join(svc["healthcheck"]["test"])
+    assert svc["healthcheck"]["start_period"]
+    app = (APP_DIR / "embedder" / "app.py").read_text(encoding="utf-8")
+    assert '@app.get("/health")' in app and '@app.post("/embed")' in app
+    # The app services find it by its compose name.
+    assert embeddings.DEFAULT_URL == "http://embedder:8000"
+
+    dockerfile = (APP_DIR / "embedder" / "Dockerfile").read_text(encoding="utf-8")
+    app_from = re.search(r"^FROM .+$", (APP_DIR / "Dockerfile").read_text(encoding="utf-8"), re.M).group(0)
+    assert re.search(r"^FROM .+$", dockerfile, re.M).group(0) == app_from  # same Python as the app
+    assert "pip install -r requirements.txt" in dockerfile
+    # Model files fetched at build time, by the user that serves them; then offline.
+    order = ["USER embedder", "RUN python app.py --download", "ENV HF_HUB_OFFLINE=1", "CMD ["]
+    assert [dockerfile.index(step) for step in order] == sorted(dockerfile.index(step) for step in order)
+    assert '"--port", "8000"' in dockerfile and "--no-access-log" in dockerfile
+    pins = (APP_DIR / "embedder" / "requirements.txt").read_text(encoding="utf-8")
+    assert re.search(r"^fastembed==\S+$", pins, re.M)
 
 
 def test_each_app_service_gets_what_it_reads_at_boot():
@@ -322,7 +354,8 @@ def test_wa_gateway_runs_unprivileged_and_keeps_nothing_on_disk():
             assert {n.strip() for n in imp.split(",")} <= {"readFileSync"}, path.name
     # The data of record stays on Postgres's named volume across down/up/rebuild.
     assert "pgdata:/var/lib/postgresql/data" in SERVICES["postgres"]["volumes"]
-    assert re.match(r"^postgres:16", SERVICES["postgres"]["image"])  # 17+ moves the data directory
+    # Postgres 16 (with pgvector): 17+ moves the data directory.
+    assert re.match(r"^pgvector/pgvector:[\d.]+-pg16-trixie$", SERVICES["postgres"]["image"])
 
 
 # --- Environment variables ---------------------------------------------------------
@@ -339,6 +372,7 @@ INTERNAL_ENV = {
     "PUBLIC_PORT": "booking-pages service, fixed in docker-compose.yml",
     "PUBLIC_HOST": "booking-pages service, derived from BOOKING_DOMAIN",
     "SESSION_ID": "handed to a worker by manager.py",
+    "EMBEDDER_URL": "the embedder service, http://embedder:8000 by default (embeddings.py)",
     "USERBOT_MASTER_KEY_FILE": "an orchestrator secret file; this compose file requires USERBOT_MASTER_KEY",
     "PG_TEST_DSN": "tests only",
     "NODE_BIN": "tests only",
@@ -445,6 +479,8 @@ def test_git_checks_the_linux_files_out_with_lf():
         "telegram_admin_bot/wa_gateway/.dockerignore", "telegram_admin_bot/wa_gateway/package.json",
         "telegram_admin_bot/wa_gateway/package-lock.json", "telegram_admin_bot/wa_gateway/tsconfig.json",
         "telegram_admin_bot/wa_gateway/src/main.ts",
+        "telegram_admin_bot/embedder/Dockerfile", "telegram_admin_bot/embedder/.dockerignore",
+        "telegram_admin_bot/embedder/app.py",
     ]
     attrs = run("check-attr", "eol", "--", *linux).stdout
     for rel in linux:
@@ -487,6 +523,9 @@ def test_dockerignore_keeps_the_code_and_drops_the_secrets():
         assert not _dockerignored(rel, patterns), f"{rel} would be left out of the image"
     for rel in (".env", ".env.bak", "data/x.session", "backups/userbot-1.tar.age", "deploy/age-recipient.txt"):
         assert _dockerignored(rel, patterns), f"{rel} would be copied into the image"
+    # The other images' sources stay in their own images.
+    for rel in ("wa_gateway/src/main.ts", "embedder/app.py"):
+        assert _dockerignored(rel, patterns), f"{rel} would be copied into the app image"
 
 
 def test_dockerfile_installs_requirements_and_binds_for_compose():

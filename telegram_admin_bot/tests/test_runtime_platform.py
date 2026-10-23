@@ -110,6 +110,43 @@ async def test_drafting_uses_the_tenant_prompt_and_burst_limit(app, db, pg_pool,
     assert draft["llm_model"] == "deepseek-chat"
 
 
+async def test_a_reply_knows_the_time_and_when_each_message_came(app, db, pg_pool, model, outbox, clock):
+    """Without a clock "tonight" from two days ago read like tonight: the
+    reply gets now in the account's timezone and the time of every message,
+    and the rows the checks read stay role/content only."""
+    await db.upsert_conversation(7, "Ann", None, False, 1)
+    await db.record_message(7, DIR_IN, STATUS_RECEIVED, "free tonight?", telegram_id=1)
+    await db.record_message(7, DIR_IN, STATUS_RECEIVED, "hey, and now?", telegram_id=2)
+    two_days_ago = clock["now"] - timedelta(days=2)
+    async with pg_pool.acquire() as con:
+        await con.execute("UPDATE messages SET created_at = $1 WHERE chat_id = 7 AND text = 'free tonight?'",
+                          two_days_ago)
+    model["reply"] = "yes love"
+
+    await app.draft_worker(7)
+
+    call = model["calls"][0]
+    assert all(set(m) == {"role", "content"} for m in call["history"])
+    stamp = call["clock"]
+    assert isinstance(stamp, ai_responder.Clock)
+    assert stamp.now == clock["now"] and stamp.zone == "Europe/Riga"
+    assert len(stamp.sent_at) == len(call["history"]) == 2
+    assert stamp.sent_at[0] == two_days_ago
+
+
+async def test_a_reply_reads_as_many_messages_as_the_config_says(app, db, model, outbox, clock):
+    await db.upsert_conversation(7, "Ann", None, False, 1)
+    for i in range(14):
+        await db.record_message(7, DIR_IN, STATUS_RECEIVED, f"question {i}?", telegram_id=i + 1)
+    app.config["ai"]["history_messages"] = 10
+    model["reply"] = "ok"
+
+    await app.draft_worker(7)
+
+    history = model["calls"][0]["history"]
+    assert [m["content"] for m in history] == [f"question {i}?" for i in range(4, 14)]
+
+
 async def test_an_auto_reply_is_sent_audited_and_metered(app, db, pg_pool, model, outbox, clock):
     app.config["auto_send"] = True
     await incoming(db)
@@ -154,6 +191,71 @@ async def test_approving_a_held_draft_is_audited_as_the_admin(app, db, pg_pool, 
 
     [sent] = await audit_events(pg_pool, audit.MESSAGE_SENT)
     assert (sent["actor"], sent["reason"]) == ("admin", "draft approved in the panel")
+    [approved] = await audit_events(pg_pool, audit.DRAFT_APPROVED)
+    assert approved["actor"] == "admin"
+    assert approved["payload"] == {"chat_id": 7, "message_id": draft["id"], "edited": False}
+
+
+async def _sent_rows(pool, tenant_id):
+    return await pool.fetch("SELECT id, text, draft_text, llm_model, prompt_version FROM messages "
+                            "WHERE tenant_id = $1 AND direction = 'out' AND status = 'sent' ORDER BY id", tenant_id)
+
+
+async def test_an_edited_draft_keeps_what_the_bot_wrote(app, db, pg_pool, model, outbox, clock):
+    """An edit is a correction to learn from: the bot's draft stays beside
+    what went out, and every message of the reply is still the bot's."""
+    await incoming(db)
+    model["reply"] = "Yes, tomorrow at 10\nSee you!"
+    await app.draft_worker(7)
+    [draft] = await db.pending_drafts(7)
+
+    await app.handle_command("approve_draft", {"draft_id": draft["id"], "text": "Yes, tomorrow at 11\nSee you!"})
+
+    assert outbox == ["Yes, tomorrow at 11", "See you!"]
+    first, second = await _sent_rows(pg_pool, app.tenant_id)
+    assert (first["id"], first["text"], first["draft_text"]) == (draft["id"], "Yes, tomorrow at 11",
+                                                                 "Yes, tomorrow at 10\nSee you!")
+    assert second["draft_text"] is None
+    # Both messages are the bot's reply; before, the second counted as typed by hand.
+    assert first["llm_model"] == second["llm_model"] == draft["llm_model"] is not None
+    assert first["prompt_version"] == second["prompt_version"] == draft["prompt_version"]
+    [approved] = await audit_events(pg_pool, audit.DRAFT_APPROVED)
+    assert approved["payload"] == {"chat_id": 7, "message_id": draft["id"], "edited": True}
+
+
+async def test_an_edited_draft_that_could_not_be_sent_is_not_counted(app, db, pg_pool, model, outbox, clock,
+                                                                      monkeypatch):
+    await incoming(db)
+    model["reply"] = "Yes, tomorrow at 10"
+    await app.draft_worker(7)
+    [draft] = await db.pending_drafts(7)
+
+    async def refused(peer, chat_id, text, typing):
+        raise ConnectionError("network down")
+
+    monkeypatch.setattr(app, "deliver", refused)
+    with pytest.raises(ConnectionError):
+        await app.handle_command("approve_draft", {"draft_id": draft["id"], "text": "Yes, tomorrow at 11"})
+
+    assert await pg_pool.fetchval("SELECT draft_text FROM messages WHERE id = $1", draft["id"]) is None
+    assert await audit_events(pg_pool, audit.DRAFT_APPROVED) == []
+
+
+async def test_a_draft_approved_unchanged_or_respaced_is_not_an_edit(app, db, pg_pool, model, outbox, clock):
+    await incoming(db)
+    model["reply"] = "Yes, tomorrow at 10\nSee you!"
+    await app.draft_worker(7)
+    [draft] = await db.pending_drafts(7)
+
+    # The panel sends the text back when its editor was opened, even unchanged.
+    await app.handle_command("approve_draft", {"draft_id": draft["id"], "text": "Yes,  tomorrow at 10 \nSee you! "})
+
+    assert outbox == ["Yes,  tomorrow at 10", "See you!"]
+    rows = await _sent_rows(pg_pool, app.tenant_id)
+    assert [r["draft_text"] for r in rows] == [None, None]
+    assert all(r["llm_model"] == draft["llm_model"] for r in rows)
+    [approved] = await audit_events(pg_pool, audit.DRAFT_APPROVED)
+    assert approved["payload"]["edited"] is False
 
 
 async def test_a_message_in_quiet_hours_is_answered_when_they_end(app, db, model, outbox, clock, pg_pool):

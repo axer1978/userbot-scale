@@ -24,9 +24,85 @@
 .ft-row-discarded { opacity: .6; }
 
 .ft-source { display: flex; gap: 18px; margin: 4px 0 12px; }
+.ft-accounts { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; margin: 4px 0 12px; }
 .ft-chat .title { margin-bottom: 8px; }
 .ft-chat .title select { margin-left: auto; }
 .ft-chat-name { width: 110px; }
 .ft-count { margin: 4px 0 0; }
 .ft-chat.mark-good { border-color: var(--ok); }
 .ft-chat.mark-bad { border-color: var(--danger); }
+
+/* Flag a chat for finetuning (components/FinetuneExampleDialog.tsx). */
+.ft-verdicts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+@media (max-width: 640px) { .ft-verdicts { grid-template-columns: 1fr; } }
+.ft-verdict { position: relative; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 10px; cursor: pointer; font-size: 13px; }
+.ft-verdict input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.ft-verdict:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ft-verdict.on.mark-good { border-color: var(--ok); background: rgba(46,160,67,.12); }
+.ft-verdict.on.mark-bad { border-color: var(--danger); background: rgba(242,86,90,.12); }
+.ft-verdict.on.mark-plain { border-color: var(--accent); background: rgba(76,141,255,.12); }
+.ft-lines { max-height: 340px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; padding: 2px 10px; }
+.ft-line { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.ft-line:last-child { border-bottom: none; }
+.ft-line.newer { background: rgba(76,141,255,.08); }
+.ft-line textarea { margin-top: 6px; }
+.ft-line-head { display: flex; gap: 8px; align-items: flex-start; }
+.ft-who { flex: 0 0 58px; color: var(--muted); font-size: 12px; }
+.ft-business .ft-who { color: var(--accent); }
+.ft-event { font-style: italic; opacity: .75; }
+.ft-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ft-time { flex: none; font-size: 12px; }
+.btn.small.ft-has { border-color: var(--danger); color: var(--danger); }
+.ft-flag .sheet-actions .grow { flex: 1; }
+.badge.ft-good { background: rgba(46,160,67,.25); }
+.badge.ft-bad { background: rgba(242,86,90,.3); }
+.badge.ft-plain { background: rgba(76,141,255,.25); }
+
+/* Flagged chats as a run's source (Finetune → New run). */
+.ft-example { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--border);
+  font-size: 13px; }
+.ft-example:last-child { border-bottom: none; }
+.ft-example input { width: auto; margin-top: 3px; }
+.ft-example .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ft-example-note { color: var(--muted); white-space: pre-wrap; margin-top: 2px; }
+.btn.small.ft-flagged { border-color: var(--ok); color: var(--ok); }
+
+/* The Quality tab: weeks side by side. */
+.ft-quality td.num { text-align: right; white-space: nowrap; }
+.ft-quality td:first-child { width: 40%; }
+
+/* A run that touches one part only (a fold): one column. */
+.ft-cols.one { grid-template-columns: 1fr; }
+
+/* Operator rules and the style card (Finetune → Rules). */
+.ft-rule { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: flex-start; padding: 8px 0;
+  border-bottom: 1px solid var(--border); font-size: 13px; }
+.ft-rule:last-child { border-bottom: none; }
+.ft-rule .grow { flex: 1 1 320px; min-width: 0; overflow-wrap: anywhere; }
+.ft-rule-text { white-space: pre-wrap; }
+.ft-rule-meta { margin-top: 3px; font-size: 12px; }
+.ft-rule-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ft-rule.editing { display: block; }
+.ft-rule.editing .pf-actions { margin-top: 8px; }
+.ft-rule-fields { display: flex; flex-direction: column; gap: 6px; }
+.pf-section .ft-rule-fields { margin-top: 8px; }
+.ft-rule-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ft-rule-row select { width: auto; max-width: 100%; }
+.ft-history > summary { cursor: pointer; }
+.ft-style { margin-bottom: 12px; }
+.ft-style td:first-child { width: 40%; }
+
+/* Reply examples (components/FinetuneReplyExamples.tsx, Finetune → Examples). */
+.ft-rules-of { padding-left: 18px; }
+.ft-rules-of li { margin-bottom: 2px; }
+.ft-moment { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.ft-example-badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ft-matched { margin-top: 4px; font-size: 12px; overflow-wrap: anywhere; }
+.ft-wordings { margin-top: 6px; font-size: 12px; }
+.ft-wordings summary { cursor: pointer; }
+.ft-off { opacity: .55; }
+.ft-active { flex: none; font-size: 13px; }
+.ft-try-note { margin: 6px 0 8px; }
+.ft-try-meta { margin: 12px 0 8px; }
+.ft-rebuilt { margin-top: 8px; }

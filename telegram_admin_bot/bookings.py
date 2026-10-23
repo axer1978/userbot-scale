@@ -12,6 +12,8 @@ text (there is no bot with buttons). They answer:
     CANCEL 7          cancel #7
     DONE 7 / NOSHOW 7 after the slot: it happened / they did not come
     LIST              what is waiting for an answer
+    READY 7           outcall #7: she is ready, he orders the taxi
+    IN 7 / TAXI 7     outcall #7: she is in the taxi, he sends the way to him
 
 Nothing here touches the database or the network; session_runtime does the
 wiring, booking_states decides what is allowed, booking_store writes it.
@@ -110,11 +112,24 @@ def _who(booking: Mapping[str, Any]) -> str:
     return who
 
 
-def format_request(booking: Mapping[str, Any], *, changed: bool = False) -> str:
-    """A new request, or one whose time the customer changed before you answered."""
+def _named(name: str) -> str:
+    """Her name ahead of a message to the owner (booking.name, else the
+    account's name), so an owner answering for several accounts sees whose
+    booking it is."""
+    return f"{name} — " if name else ""
+
+
+def format_request(booking: Mapping[str, Any], *, changed: bool = False, name: str = "") -> str:
+    """A new request, or one whose time the customer changed before you
+    answered: who asks, for whom (her name, else the account's), the extras
+    he asked for, when."""
     n = booking["number"]
     head = f"📅 Booking request #{n}" + (" (new time)" if changed else "")
-    lines = [head, f"Customer: {_who(booking)}", f"When: {describe_when(booking)}"]
+    lines = [head, f"Customer: {_who(booking)}"]
+    if name:
+        lines.append(f"Girl: {name}")
+    lines.append(f"Extras: {booking.get('extras') or 'none mentioned'}")
+    lines.append(f"When: {describe_when(booking)}")
     if booking.get("service"):
         lines.append(f"What: {booking['service']}")
     if booking.get("notes"):
@@ -123,11 +138,11 @@ def format_request(booking: Mapping[str, Any], *, changed: bool = False) -> str:
     return "\n".join(lines)
 
 
-def format_move_request(booking: Mapping[str, Any]) -> str:
+def format_move_request(booking: Mapping[str, Any], *, name: str = "") -> str:
     """The customer asks to move a confirmed booking."""
     n = booking["number"]
     return "\n".join([
-        f"🔁 #{n}: {_who(booking)} asks to move their booking",
+        f"🔁 {_named(name)}#{n}: {_who(booking)} asks to move their booking",
         f"From: {describe_when(booking)}",
         f"To:   {describe_proposal(booking)}",
         "",
@@ -135,12 +150,13 @@ def format_move_request(booking: Mapping[str, Any]) -> str:
     ])
 
 
-def format_owner_update(booking: Mapping[str, Any], what: str) -> str:
+def format_owner_update(booking: Mapping[str, Any], what: str, *, name: str = "") -> str:
     """Something the owner should know that they did not do themselves."""
-    return f"#{booking['number']} {_who(booking)}, {describe_when(booking)}: {what}"
+    return f"{_named(name)}#{booking['number']} {_who(booking)}, {describe_when(booking)}: {what}"
 
 
-def format_acknowledgement(booking: Mapping[str, Any], action: str) -> str:
+def format_acknowledgement(booking: Mapping[str, Any], action: str, *, outcall_taxi: bool = False,
+                           proof: bool = False) -> str:
     n, who = booking["number"], booking.get("customer_name") or "the customer"
     if action == "propose":
         return f"#{n}: {describe_proposal(booking)} proposed to {who}. You'll hear back when they answer."
@@ -153,14 +169,43 @@ def format_acknowledgement(booking: Mapping[str, Any], action: str) -> str:
         "cancel": f"cancelled ❌ — {who} will be told.",
         "mark_completed": "marked as done.",
         "mark_no_show": "marked as missed.",
+        "ready": f"ready ✅ — {who} is asked to order the taxi to your address and send its link. It will come here.",
+        "in_taxi": f"in the taxi ✅ — {who} is asked for the address, floor, way in and a photo of the place. "
+                   "They will come here.",
     }
-    return f"#{n} {words.get(action, action)}"
+    text = f"#{n} {words.get(action, action)}"
+    if outcall_taxi and action in ("confirm", "accept_proposal") and is_outcall(booking):
+        if proof:
+            text += (f" It's an outcall: {who} is asked for a photo that shows he's at the place (hotel card or "
+                     f"the building). It comes here, then he orders your taxi. READY {n} skips the photo.")
+        else:
+            text += f" It's an outcall: send READY {n} when you're ready, and {who} is told to order the taxi."
+    return text
 
 
-def format_list(bookings: Sequence[Mapping[str, Any]]) -> str:
-    if not bookings:
+def outcall_step(booking: Mapping[str, Any], *, proof: bool = False) -> str:
+    """Where a confirmed outcall's taxi steps stand, for the owner."""
+    n = booking["number"]
+    if booking.get("in_taxi_at"):
+        return "in the taxi"
+    if booking.get("taxi_link_at"):
+        return f"taxi link sent — send IN {n} when you're in"
+    if booking.get("proof_at"):
+        return "his photo came — waiting for his taxi link"
+    if booking.get("ready_at"):
+        return "ready — waiting for his taxi link"
+    if proof:
+        return f"waiting for his photo of the place (READY {n} skips it)"
+    return f"send READY {n} when you're ready"
+
+
+def format_list(bookings: Sequence[Mapping[str, Any]], outcalls: Sequence[Mapping[str, Any]] = (), *,
+                proof: bool = False) -> str:
+    if not bookings and not outcalls:
         return "Nothing is waiting for your answer right now."
-    lines = ["Waiting for your answer:"]
+    lines = []
+    if bookings:
+        lines.append("Waiting for your answer:")
     for b in bookings:
         if b["state"] == bs.CONFIRMED and b.get("proposed_by") == bs.CUSTOMER:
             lines.append(f"  #{b['number']} — {_who(b)} wants to move {describe_when(b)} → {describe_proposal(b)}")
@@ -168,8 +213,61 @@ def format_list(bookings: Sequence[Mapping[str, Any]]) -> str:
             lines.append(f"  #{b['number']} — {_who(b)}, you proposed {describe_proposal(b)} (waiting for them)")
         else:
             lines.append(f"  #{b['number']} — {_who(b)}, {describe_when(b)}")
-    lines += ["", "Reply YES <number>, NO <number>, or <number> <new time>."]
+    if bookings:
+        lines += ["", "Reply YES <number>, NO <number>, or <number> <new time>."]
+    if outcalls:
+        if lines:
+            lines.append("")
+        lines.append("Outcalls:")
+        lines += [f"  #{b['number']} — {_who(b)}, {describe_when(b)}: {outcall_step(b, proof=proof)}"
+                  for b in outcalls]
     return "\n".join(lines)
+
+
+# ------------------------------------------------- outcalls, to the owner
+
+
+def format_ready_reminder(booking: Mapping[str, Any]) -> str:
+    n = booking["number"]
+    return (f"🚕 #{n} {_who(booking)}, {describe_when(booking)} (outcall): send READY {n} when you're "
+            "ready — then he orders the taxi.")
+
+
+def format_taxi_link(booking: Mapping[str, Any], text: str, in_taxi_minutes: Optional[int]) -> str:
+    """The customer's message with the taxi link. `in_taxi_minutes`: when
+    he is told she is in the taxi without her IN n; None when no IN n is
+    wanted (he knows already, or is told at once)."""
+    n = booking["number"]
+    head = f"🚕 #{n} {_who(booking)} sent the taxi link:\n{text}"
+    if in_taxi_minutes is None:
+        return head
+    return (f"{head}\n\nSend IN {n} when you're in the taxi (if you don't, he is told you're in it in "
+            f"{in_taxi_minutes} min).")
+
+
+def format_proof_header(booking: Mapping[str, Any], caption: str = "") -> str:
+    """Before his proof photo goes on to her: what it is, and what comes next."""
+    head = (f"📷 #{booking['number']} {_who(booking)} sent his photo of the place (below). He's asked to order "
+            "your taxi now; the link will come here.")
+    return f"{head}\n{caption}" if caption else head
+
+
+def format_arrived(booking: Mapping[str, Any], said: str, *, way_in_sent: bool, name: str = "") -> str:
+    """An incall customer says he has arrived: what he wrote, and what the
+    owner does now."""
+    what = "he's here — the way in was sent to him." if way_in_sent else "he's here — go and meet him."
+    head = format_owner_update(booking, what, name=name)
+    return f"{head}\n{said}" if said else head
+
+
+def format_passed_on(booking: Mapping[str, Any], text: str) -> str:
+    """What the customer wrote while the outcall is under way, word for word."""
+    return f"💬 #{booking['number']} {_who(booking)}:\n{text}"
+
+
+def format_photo_header(booking: Mapping[str, Any], caption: str = "") -> str:
+    head = f"📷 #{booking['number']} {_who(booking)} sent a photo"
+    return f"{head}:\n{caption}" if caption else f"{head}:"
 
 
 def format_which(kind: str) -> str:
@@ -193,6 +291,9 @@ _LIST = {"list", "?", "saraksts", "список", "pending"}
 _PROPOSE = {"time", "propose", "move", "laiks", "время", "перенести"}
 _TODAY = {"today", "šodien", "sodien", "сегодня"}
 _TOMORROW = {"tomorrow", "rīt", "rit", "завтра"}
+_READY = {"ready", "gatava", "gatavs", "готова", "готов"}
+_TAXI = {"taxi", "taksi", "taksī", "такси"}
+_IN = {"in", "в", "iekšā"}
 
 _TIME = re.compile(r"^(\d{1,2})[:.](\d{2})$")
 _DMY = re.compile(r"^(\d{1,2})[./](\d{1,2})(?:[./](\d{2}|\d{4}))?$")
@@ -201,13 +302,19 @@ _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 
 @dataclass(frozen=True)
 class OwnerCommand:
-    kind: str                      # yes | no | propose | cancel | done | noshow | list
+    # yes | no | propose | cancel | done | noshow | list | ready | in_taxi,
+    # and from the reader of her own words: unclear | stays
+    kind: str
     number: Optional[int] = None
     # For propose: the wall time and, if given, the day ("today"/"tomorrow"
     # already resolved against `today`).
     at: Optional[dtime] = None
     day: Optional[date] = None
     error: str = ""
+    # A YES/NO with words after it ("ok in 20 min", "yes after 3"): the
+    # words may change what it means, so the reader of her own words decides
+    # when it can, and this stands only when it can't.
+    loose: bool = False
 
 
 def _word(token: str) -> str:
@@ -289,18 +396,38 @@ def parse_owner_reply(text: str, *, today: date) -> Optional[OwnerCommand]:
         at, day, error = _parse_when(tokens[2:], today)
         return OwnerCommand("propose", n, at, day, error)
 
-    kind = ("yes" if head in _YES else "no" if head in _NO else "cancel" if head in _CANCEL
+    # The taxi steps of an outcall: "READY 7", "IN 7", "TAXI 7", "IN TAXI 7",
+    # or the word alone for the only outcall under way. Anything after it
+    # but the number is conversation ("in 10 min", "ready when you are").
+    step, rest = None, tokens[1:]
+    if head in _READY:
+        step = "ready"
+    elif head in _TAXI:
+        step = "in_taxi"
+    elif head in _IN and rest and _word(rest[0]) in _TAXI:
+        step, rest = "in_taxi", rest[1:]
+    elif head == "in":
+        step = "in_taxi"
+    if step is not None:
+        if not rest:
+            return OwnerCommand(step)
+        if len(rest) == 1 and (number := _number(rest[0])) is not None:
+            return OwnerCommand(step, number)
+        return None
+
+    kind =("yes" if head in _YES else "no" if head in _NO else "cancel" if head in _CANCEL
             else "done" if head in _DONE else "noshow" if head in _NOSHOW else None)
     if kind is None:
         return None
     rest = tokens[1:]
     number = _number(rest[0]) if rest else None
+    loose = len(rest) > (1 if number is not None else 0)
     if rest and number is None and kind in ("yes", "no"):
         # "yes, see you then" to a single request is still a yes; anything
         # longer that does not start with a number is conversation.
         if len(rest) > 3:
             return None
-    return OwnerCommand(kind, number)
+    return OwnerCommand(kind, number, loose=loose and kind in ("yes", "no"))
 
 
 def resolve_local(cmd: OwnerCommand, booking: Mapping[str, Any]) -> datetime:
@@ -309,6 +436,177 @@ def resolve_local(cmd: OwnerCommand, booking: Mapping[str, Any]) -> datetime:
     zone = tzinfo_for(booking["tz"])
     day = cmd.day or booking["starts_at"].astimezone(zone).date()
     return datetime.combine(day, cmd.at, tzinfo=zone)
+
+
+# ------------------------------------ the owner's answer in her own words
+
+OWNER_ANSWER_SYSTEM_PROMPT = (
+    "You read the chat between a booking assistant ('me') and the person who "
+    "takes its bookings ('them': the owner, or the girl herself). 'me' sends "
+    "them the customers' booking requests; they answer, often in their own "
+    "words rather than with a command. Decide what their LATEST message means "
+    "for the bookings listed, given what each customer asked for. Answer with "
+    "a single JSON object and nothing else:\n"
+    '{"action": "yes"|"no"|"ready_at"|"time"|"cancel"|"done"|"noshow"|"ready"|'
+    '"in_taxi"|"list"|"unclear"|"none", "number": <booking number or null>, '
+    '"start": "YYYY-MM-DDTHH:MM" or null, "in_minutes": <integer or null>}\n'
+    "Actions:\n"
+    "- yes: they take the booking at the time the customer asked: 'yes', 'ok', "
+    "'yes I confirm', 'sure, let him come', 'fine', 'da', 'jā', '👍'. For a "
+    "customer asking to move a booking: they agree to the new time.\n"
+    "- no: they turn it down and give no other time: 'no', 'not today', "
+    "'I'm busy', 'can't'.\n"
+    "- ready_at: they say WHEN they will be ready or free, instead of a plain "
+    "yes: 'I'm ready in 20 minutes', 'give me half an hour', 'I will be able "
+    "to meet in 1 hour', 'free after 15:00', 'yes but in 40 min'. A delay goes "
+    "in in_minutes (counted from their latest message), a clock time in start.\n"
+    "- time: they put forward a different meeting time: 'can he come at "
+    "15:30?', 'tomorrow 12:00 instead', 'better at 8'. Put it in start.\n"
+    "- cancel: they call off a booking that is already confirmed.\n"
+    "- done / noshow: after the meeting: it happened / the customer did not come.\n"
+    "- ready: an outcall, and they are ready to leave NOW ('I'm ready', "
+    "'ready, he can order the taxi'). 'Ready in 20 minutes' is ready_at.\n"
+    "- in_taxi: an outcall, and they are in the taxi now.\n"
+    "- list: they ask what is waiting.\n"
+    "- unclear: it is about a booking but you cannot tell which answer it is.\n"
+    "- none: not about the bookings: a greeting, thanks, a question, chat.\n"
+    "number: the booking it is about: the one their message replies to (when "
+    "given below), the one they name by number or customer name, else the "
+    "only one waiting for their answer. null when you cannot tell.\n"
+    "Use 24-hour local time in the given timezone and resolve 'today', "
+    "'tomorrow' and bare hours ('at 8' in the afternoon is 20:00) from the "
+    "current date and time; never invent a time that was not said."
+)
+
+OWNER_ACTIONS = ("yes", "no", "ready_at", "time", "cancel", "done", "noshow", "ready", "in_taxi", "list",
+                 "unclear", "none")
+
+
+def owner_state_note(rows: Sequence[Mapping[str, Any]], *, outcall_taxi: bool = False, proof: bool = False) -> str:
+    """The bookings she may be answering about, for the reader of her words."""
+    lines = []
+    for b in rows:
+        if b["state"] == bs.CONFIRMED and b.get("proposed_by") == bs.CUSTOMER:
+            what = (f"confirmed for {describe_when(b)}; the customer asks to move it to "
+                    f"{describe_proposal(b)}, waiting for their answer")
+        elif b.get("proposed_by") == bs.OWNER:
+            what = (f"the customer asked for {describe_when(b)}; they proposed {describe_proposal(b)} instead, "
+                    "waiting for the customer")
+        elif b["state"] in (bs.REQUESTED, bs.PENDING):
+            what = f"the customer asks for {describe_when(b)}, waiting for their answer"
+        else:
+            what = f"confirmed for {describe_when(b)}"
+            if outcall_taxi and is_outcall(b):
+                what += f"; outcall: {outcall_step(b, proof=proof)}"
+        if is_outcall(b) and "outcall" not in what:
+            what += " (outcall)"
+        extras = f"; extras: {b['extras']}" if b.get("extras") else ""
+        lines.append(f"#{b['number']} {b.get('customer_name') or 'unknown customer'}: {what}{extras}")
+    return "\n".join(lines)
+
+
+def owner_answer_prompt(
+    transcript: str, tz_name: str, *, now: datetime, state_note: str, latest: str,
+    replying_to: Optional[int] = None,
+) -> str:
+    parts = [f"Current date and time: {now:%A %Y-%m-%d %H:%M} ({tz_name}).",
+             "Bookings:\n" + (state_note or "none."),
+             "Conversation, oldest first:\n\n" + transcript]
+    if replying_to is not None:
+        parts.append(f"\nTheir latest message replies to the message about booking #{replying_to}.")
+    parts.append("Their latest message, the one to decide on: " + " ".join(latest.split()))
+    return "\n".join(parts)
+
+
+def parse_owner_answer(text: str) -> Optional[dict[str, Any]]:
+    """The reader's JSON, cleaned: {"action", "number", "start",
+    "in_minutes"}. None when it is not about the bookings or unusable."""
+    match = re.search(r"\{.*\}", (text or "").strip(), re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or data.get("action") not in OWNER_ACTIONS or data["action"] == "none":
+        return None
+    number = data.get("number")
+    if isinstance(number, str):
+        number = _number(number)
+    minutes = data.get("in_minutes")
+    if isinstance(minutes, float) and minutes.is_integer():
+        minutes = int(minutes)
+    start = data.get("start")
+    return {
+        "action": data["action"],
+        "number": number if isinstance(number, int) and not isinstance(number, bool) and number > 0 else None,
+        "start": start if isinstance(start, str) and start.strip() else None,
+        "in_minutes": minutes if isinstance(minutes, int) and not isinstance(minutes, bool)
+        and 0 <= minutes <= 24 * 60 else None,
+    }
+
+
+def ready_time(at: datetime) -> datetime:
+    """When she says she will be ready, as a start: that minute or the next
+    five-minute mark after it."""
+    if at.second or at.microsecond:
+        at = at.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    return at + timedelta(minutes=-at.minute % 5)
+
+
+# "Ready in 20 minutes" when he asked for 20 past is a yes, and so is a few
+# minutes after it ("now" is the next 5-minute mark; she rounds).
+READY_SLACK = timedelta(minutes=5)
+
+
+def awaits_owner(booking: Mapping[str, Any]) -> bool:
+    """A request, or a move the customer asked for (BookingStore.awaiting_owner)."""
+    return booking["state"] in (bs.REQUESTED, bs.PENDING) or (
+        booking["state"] == bs.CONFIRMED and booking.get("proposed_by") == bs.CUSTOMER)
+
+
+def is_settled(booking: Mapping[str, Any]) -> bool:
+    """Confirmed with nothing to answer: a yes to it changes nothing."""
+    return booking["state"] == bs.CONFIRMED and booking.get("proposed_by") != bs.CUSTOMER
+
+
+def owner_command_from(
+    data: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], *, now: datetime, tz_name: str,
+    replied: Optional[Mapping[str, Any]] = None, outcall_taxi: bool = True,
+) -> Optional[OwnerCommand]:
+    """What the reader of her words found (parse_owner_answer), as the
+    command it amounts to for the bookings in `rows`. None: nothing to do
+    (an outcall step while the taxi steps are off)."""
+    action = data["action"]
+    number = data["number"] or (replied["number"] if replied else None)
+    booking = next((b for b in rows if b["number"] == number), None)
+    if action not in ("ready_at", "time"):
+        if action in ("ready", "in_taxi") and not outcall_taxi:
+            return None
+        if action == "yes" and booking is not None and is_settled(booking):
+            return OwnerCommand("stays", number)
+        return OwnerCommand(action, number)
+    # A moment she named.
+    awaiting = [b for b in rows if awaits_owner(b)]
+    if booking is None and number is None and len(awaiting) == 1:
+        booking = awaiting[0]
+    if booking is None:
+        return OwnerCommand("unclear", number)
+    if data.get("start"):
+        at = parse_local(data["start"], tz_name)
+    elif data.get("in_minutes") is not None:
+        at = now + timedelta(minutes=data["in_minutes"])
+    else:
+        at = None
+    if at is None:
+        return OwnerCommand("unclear", booking["number"])
+    at = ready_time(at)
+    asked = booking["proposed_starts_at"] if booking.get("proposed_by") == bs.CUSTOMER else booking["starts_at"]
+    # Ready by the time he asked for, or that very time: a yes.
+    if at == asked or (action == "ready_at" and at <= asked + READY_SLACK):
+        return OwnerCommand("stays" if is_settled(booking) else "yes", booking["number"])
+    local = at.astimezone(tzinfo_for(booking["tz"]))
+    return OwnerCommand("propose", booking["number"], at=local.time(), day=local.date())
 
 
 # ------------------------------------------------------- the customer's side
@@ -337,6 +635,7 @@ EXTRACT_SYSTEM_PROMPT = (
     '"confirm_attendance"|"waitlist", "start": "YYYY-MM-DDTHH:MM" or null, '
     '"asap": true|false, "outcall": true|false, '
     '"duration_minutes": <integer or null>, "service": "<a few words or empty>", '
+    '"extras": "<the extras they asked for, or empty>", '
     '"notes": "<anything the business should know, or empty>", '
     '"waitlist_from": "YYYY-MM-DDTHH:MM" or null, "waitlist_to": "YYYY-MM-DDTHH:MM" or null}\n'
     "Intents:\n"
@@ -370,6 +669,12 @@ EXTRACT_SYSTEM_PROMPT = (
     "or not.\n"
     "outcall: true when they want the business to come to them (their hotel, "
     "their place, 'outcall'), false otherwise.\n"
+    "extras: the extra services on top of the basic meeting that they asked "
+    "for or said they want anywhere in the conversation, in a few words each, "
+    "comma-separated, with the price when the chat named one ('domination "
+    "+50, cum on face +50'). Not the length, the place, incall/outcall or the "
+    "rate. Leave out what they asked about and then dropped, or what 'me' "
+    "said is not offered. Empty when none.\n"
     "Resolve relative dates from the current date and time given; an offset "
     "('in 40 min') counts from the message that said it. Use 24-hour local time "
     "in the given timezone; never invent a time that was not said. Half-hour "
@@ -463,6 +768,12 @@ def requested_slot(
 
 # ----------------------------------------------- what the reply writer knows
 
+def own_name_line(name: str) -> str:
+    """booking.name, for the customer: who they are meeting."""
+    return (f"Your name is {name}. Tell them once when you tell them an appointment is confirmed, and again "
+            "when they say they have arrived, so they know who they are meeting.")
+
+
 NO_DIRECTIONS_RULE = (
     "Never give directions, door codes or how to get in yourself — the way "
     "in is sent automatically once they have arrived."
@@ -495,7 +806,8 @@ def notice_line(booking: Mapping[str, Any]) -> str:
     return "NEWS TO PASS ON IN THIS REPLY: " + template.format(when=describe_when(booking), proposal=proposal)
 
 
-def standing_line(booking: Mapping[str, Any]) -> str:
+def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False, proof: bool = False,
+                  meets_outside: bool = False) -> str:
     when = describe_when(booking)
     state = booking["state"]
     if state in (bs.REQUESTED, bs.PENDING):
@@ -510,8 +822,13 @@ def standing_line(booking: Mapping[str, Any]) -> str:
             line += f" They asked to move it to {describe_proposal(booking)}; that is NOT confirmed yet."
         elif booking.get("proposed_by") == bs.OWNER:
             line += f" The business proposed moving it to {describe_proposal(booking)}; waiting for their answer."
+        if outcall_taxi and is_outcall(booking):
+            return line + " " + outcall_taxi_line(booking, proof=proof)
         if booking.get("instructions_sent_at"):
             line += " They have arrived and were already sent the entry instructions."
+        elif meets_outside and booking.get("arrived_at"):
+            line += (" They have arrived and you are coming out to meet them: say so in a few words of your "
+                     "own. " + NO_DIRECTIONS_RULE)
         else:
             line += " " + NO_DIRECTIONS_RULE
         return line
@@ -576,10 +893,32 @@ ADDRESS_FOLLOWS_LINE = (
 ADDRESS_TAG = "[address]"
 _ADDRESS_TAG = re.compile(r"\[\s*address\s*\]", re.IGNORECASE)
 ADDRESS_TAG_LINE = (
-    "The street address is set. Write [address] on a line of its own where it should go (with the prices "
-    "in your first reply, and again when they ask where you are) and the system puts the address there, "
+    "The street address is set. Write [address] on a line of its own where it should go (with your prices, "
+    "and again when they ask where you are) and the system puts the address there, "
     "word for word, as a message of its own. Never write the address yourself."
 )
+# booking.address_timing "when_asked".
+ADDRESS_WHEN_ASKED_LINE = (
+    "The street address is set. Write [address] on a line of its own only when they ask where you are "
+    "(not with your prices) and the system puts the address there, word for word, as a message of its "
+    "own. Never write the address yourself."
+)
+
+
+def address_tag_line(timing: str) -> str:
+    return ADDRESS_WHEN_ASKED_LINE if timing == "when_asked" else ADDRESS_TAG_LINE
+
+
+# Their message asks where she is (booking.address_timing "when_asked"):
+# EN, LV, RU, ET and the usual short forms.
+_ASKS_WHERE = re.compile(
+    r"(?i)(\bwhere\b|\bwher\b|\bwhr\b|addr?ess?|\badres|\blocat|\bloc\b|\bpin\b|\barea\b|\bstreet\b|"
+    r"\bkur\b|adrese|atrodies|\bkus\b|aadress|asukoht|где|адрес|локац|район|улиц|куда)"
+)
+
+
+def asks_where(text: str) -> bool:
+    return bool(_ASKS_WHERE.search(text or ""))
 
 
 def take_address_tag(text: str) -> tuple[str, bool]:
@@ -606,6 +945,110 @@ def fill_address(text: str, address: str) -> str:
 def is_outcall(booking: Mapping[str, Any]) -> bool:
     """The business goes to them (the request's notes say outcall)."""
     return "outcall" in str(booking.get("notes") or "").lower()
+
+
+# ------------------------------------------------- outcalls, to the customer
+# booking.outcall_taxi: she goes to him by a taxi he orders. The reply
+# writer speaks as her, so these say "you" for her and "them" for him.
+
+_NEWS = "NEWS TO PASS ON IN THIS REPLY: "
+
+
+def outcall_notice_line(booking: Mapping[str, Any], *, now: datetime, ready_minutes: int,
+                        has_address: bool, proof: bool = False) -> str:
+    """The news of a confirmed outcall's taxi steps. `proof`: he is asked
+    for a photo of the place before the taxi (booking.outcall_proof)."""
+    when = describe_when(booking)
+    notice = booking.get("customer_notice")
+    if notice == bs.NOTICE_READY:
+        if booking.get("proof_at"):
+            line = ("their photo of the place reached you, all good. In your own words, short: ask them to order "
+                    "a taxi for you now and to send you its link here, so you can see it coming.")
+        else:
+            line = (f"you are ready for the outcall on {when}. In your own words, short: ask them to order a "
+                    "taxi for you now and to send you its link here, so you can see it coming.")
+        if has_address:
+            line += " Your address, for the taxi, follows in a separate message."
+        return _NEWS + line
+    if notice == bs.NOTICE_IN_TAXI:
+        return _NEWS + (f"you are in the taxi now, on your way to them for the outcall on {when}. Tell them in "
+                        "your own words, and ask only for what you still need to find them: the exact address "
+                        "if they have not given it, the room or flat number, the floor, how to get in. Do not "
+                        "write [address].")
+    if proof:
+        return _NEWS + (f"the outcall on {when} has just been CONFIRMED. In your own words, short: tell them it "
+                        "is booked, and ask for a photo that shows they are at the place you are coming to (the "
+                        "hotel room key card, or the building or door). As soon as it comes they order your "
+                        "taxi; do not ask for the taxi yet.")
+    soon = booking["starts_at"] - now <= timedelta(minutes=ready_minutes + 60)
+    getting_ready = (f"You need about {ready_minutes} minutes to get ready; say you will text them as soon as "
+                     "you are ready" if soon else "Say you will text them when you are getting ready")
+    return _NEWS + (f"the outcall on {when} has just been CONFIRMED. In your own words: tell them it is booked "
+                    f"for that day and time. {getting_ready}, and that they then order the taxi to pick you up. "
+                    "Do not ask them to order it before that.")
+
+
+def outcall_taxi_line(booking: Mapping[str, Any], *, proof: bool = False) -> str:
+    """Where a confirmed outcall's taxi steps stand, for every reply."""
+    line = "It is an outcall: you go to them by a taxi they order."
+    if booking.get("in_taxi_at"):
+        return line + (" You are in the taxi on your way to them. If you still need something to find them "
+                       "(the exact address, the room or flat, the floor, how to get in), ask for it. Do not "
+                       "write [address]: you are coming to them.")
+    if booking.get("taxi_link_at"):
+        return line + (" They ordered your taxi and sent its link; you are about to get in. Do not write "
+                       "[address] again.")
+    if booking.get("proof_at"):
+        return line + (" Their photo of the place came, and you asked them to order your taxi and send you "
+                       "its link.")
+    if booking.get("ready_at"):
+        return line + (" You are ready and asked them to order a taxi to pick you up at your address and "
+                       "to send you its link.")
+    if proof:
+        return line + (" You asked them for a photo that shows they are at the place (the hotel room key card, "
+                       "or the building or door). No taxi until it comes: if they write without it, ask for it "
+                       "again in a few words of your own.")
+    return line + (" You are getting ready and will text them when you are ready; only then do they order "
+                   "the taxi. Do not ask them to order it before that.")
+
+
+TAXI_LINK_LINE = _NEWS + ("the taxi link they sent has reached you. A short thanks in your own words; do not "
+                          "repeat the link.")
+
+# His photo for the proof did not reach her (WhatsApp keeps view-once
+# photos from linked devices).
+PROOF_AGAIN_LINE = _NEWS + ("the photo they just sent did not come through to you (it may have been 'view "
+                            "once'). Ask them, short, to send it again as a normal photo.")
+
+PICKUP_ADDRESS_LINE = (
+    "Your address, for the taxi, is sent to them automatically in a separate message right after this "
+    "reply — do not write any address yourself."
+)
+
+# What the customer sends for an outcall photo, in the chat history: the
+# photo itself went on to the owner.
+PHOTO_PASSED_ON = "[photo for the outcall]"
+
+_LINK = re.compile(r"(?:https?://|www\.)[^\s<>\"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}/[^\s<>\"']*", re.IGNORECASE)
+# A link from a taxi app's "share my ride" (Bolt, Uber, Yandex Go, Yango,
+# Forus, Free Now, any ...taxi... site).
+_TAXI_HOST = re.compile(r"bolt\.|uber\.|ubr\.to|yango|go\.yandex|taxi|taksi|forus|free-?now|lyft\.|cabify|"
+                        r"careem|didi|gett\.|grab\.|taxify", re.IGNORECASE)
+# Where he is, not his ride.
+_MAP_HOST = re.compile(r"maps?\.|/maps|goo\.gl/maps|waze\.|2gis|openstreetmap|what3words", re.IGNORECASE)
+
+
+def find_links(text: str) -> list[str]:
+    return [m.group(0).rstrip(".,;:!?)»”") for m in _LINK.finditer(text or "")]
+
+
+def is_taxi_link(link: str, *, ready: bool) -> bool:
+    """A taxi app's ride link. Once she is ready (he was asked for the
+    link) any link but a map is taken for it."""
+    if _MAP_HOST.search(link):
+        return False
+    host = re.sub(r"^[a-z]+://", "", link, flags=re.IGNORECASE).split("/", 1)[0]
+    return bool(_TAXI_HOST.search(host)) or ready
 
 
 def context_for_reply(lines: Sequence[str]) -> str:

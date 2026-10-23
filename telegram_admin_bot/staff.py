@@ -112,6 +112,7 @@ ACTIONS = [
     Action("safety.global_stop", "Safety", "Global stop (every bot)", protective=_true("on")),
     Action("safety.hard_off", "Safety", "Hard-off: log an account out for good"),
     Action("safety.proxy", "Safety", "Change an account's proxy"),
+    Action("safety.deepseek_key", "Safety", "Replace an account's DeepSeek key"),
     Action("billing.edit", "Safety", "Billing: due dates, payments, status, grace settings"),
     # -------------------------------------------------------------- clients
     Action("clients.approve", "Clients", "Approve or reject client sign-ups"),
@@ -228,6 +229,7 @@ ROUTES: dict[RouteKey, Resolver] = {
     ("POST", "/api/alerts/{alert_id}/ack"): "alerts.ack",
     ("POST", "/api/alerts/ack-all"): "alerts.ack",
     ("PUT", "/api/tenants/{tenant_id}/proxy"): "safety.proxy",
+    ("PUT", "/api/tenants/{tenant_id}/deepseek-key"): "safety.deepseek_key",
     ("POST", "/api/tenants/{tenant_id}/soft-off"): "tenant.pause",
     ("POST", "/api/tenants/{tenant_id}/resume"): _resume,
     ("POST", "/api/tenants/{tenant_id}/hard-off"): "safety.hard_off",
