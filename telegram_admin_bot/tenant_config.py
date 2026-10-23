@@ -289,8 +289,14 @@ class Booking(_Strict):
     # chat yet. Keep door codes and the way in for arrival_instructions.
     address: str = Field("", max_length=2000)
     # Sent word for word, once, when the customer has arrived. Media items
-    # marked "send on arrival" go out right after it.
+    # marked "send on arrival" go out right after it. Empty: she comes out
+    # to meet him.
     arrival_instructions: str = Field("", max_length=20_000)
+    # The owner hears when an incall customer says he has arrived, with his
+    # message ("he's here — go and meet him", or that the way in went), and
+    # what he sends after that (a photo of where he is) until half an hour
+    # after the end.
+    arrival_to_owner: bool = True
     # Write nothing to a customer while a time they asked for waits for the
     # owner: the owner's answer is the next message they get. Their first
     # message still gets the first reply.

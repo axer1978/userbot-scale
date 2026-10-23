@@ -252,6 +252,14 @@ def format_proof_header(booking: Mapping[str, Any], caption: str = "") -> str:
     return f"{head}\n{caption}" if caption else head
 
 
+def format_arrived(booking: Mapping[str, Any], said: str, *, way_in_sent: bool, name: str = "") -> str:
+    """An incall customer says he has arrived: what he wrote, and what the
+    owner does now."""
+    what = "he's here — the way in was sent to him." if way_in_sent else "he's here — go and meet him."
+    head = format_owner_update(booking, what, name=name)
+    return f"{head}\n{said}" if said else head
+
+
 def format_passed_on(booking: Mapping[str, Any], text: str) -> str:
     """What the customer wrote while the outcall is under way, word for word."""
     return f"💬 #{booking['number']} {_who(booking)}:\n{text}"
@@ -798,7 +806,8 @@ def notice_line(booking: Mapping[str, Any]) -> str:
     return "NEWS TO PASS ON IN THIS REPLY: " + template.format(when=describe_when(booking), proposal=proposal)
 
 
-def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False, proof: bool = False) -> str:
+def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False, proof: bool = False,
+                  meets_outside: bool = False) -> str:
     when = describe_when(booking)
     state = booking["state"]
     if state in (bs.REQUESTED, bs.PENDING):
@@ -817,6 +826,9 @@ def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False, pro
             return line + " " + outcall_taxi_line(booking, proof=proof)
         if booking.get("instructions_sent_at"):
             line += " They have arrived and were already sent the entry instructions."
+        elif meets_outside and booking.get("arrived_at"):
+            line += (" They have arrived and you are coming out to meet them: say so in a few words of your "
+                     "own. " + NO_DIRECTIONS_RULE)
         else:
             line += " " + NO_DIRECTIONS_RULE
         return line

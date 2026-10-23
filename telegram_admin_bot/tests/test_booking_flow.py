@@ -1172,6 +1172,51 @@ async def test_arrival_sends_the_instructions_word_for_word_once(world):
     assert w.script["calls"] == replies + 1
 
 
+async def test_she_meets_him_outside_and_the_booking_phone_hears_he_is_here(world, his_photos):
+    w = world
+    w.app.config["booking"].update(arrival_instructions="", name="Isabela")
+    await confirmed_booking(w, "2030-03-04T12:30")
+    w.script["arrived"] = True
+    w.script["reply"] = "one sec love, I'm coming"
+    await customer(w, "I'm here, by the green door")
+    # His words go to the booking phone, once, and he is answered as her.
+    assert w.sent[OWNER][-1].startswith("Isabela — #1 Anna (@anna)")
+    assert "he's here — go and meet him.\nI'm here, by the green door" in w.sent[OWNER][-1]
+    assert "coming out to meet them" in w.script["notes"][-1]
+    assert w.sent[CUSTOMER][-1] == "one sec love, I'm coming"
+    assert (await only_booking(w))["arrived_at"] is not None
+
+    # What he sends after that goes on to her: words, and photos as photos.
+    calls = w.script["calls"]
+    await customer(w, "red jacket")
+    assert w.sent[OWNER][-1] == "💬 #1 Anna (@anna):\nred jacket"
+    await customer(w, "here", photo=True)
+    assert his_photos["files"] == [OWNER] and w.sent[OWNER][-1] == "📷 #1 Anna (@anna) sent a photo:\nhere"
+    # No new arrival message, and no more arrival checks once she knows.
+    assert sum("go and meet him" in m for m in w.sent[OWNER]) == 1
+    assert w.script["calls"] == calls + 2
+
+
+async def test_with_a_way_in_the_booking_phone_hears_it_was_sent(world):
+    w = world
+    await confirmed_booking(w, "2030-03-04T12:30")
+    w.script["arrived"] = True
+    await customer(w, "at the door")
+    assert w.sent[CUSTOMER][-1] == "Door code 4321, 2nd floor."
+    assert "he's here — the way in was sent to him.\nat the door" in w.sent[OWNER][-1]
+
+
+async def test_the_arrival_message_to_the_owner_can_be_switched_off(world):
+    w = world
+    w.app.config["booking"].update(arrival_instructions="", arrival_to_owner=False)
+    await confirmed_booking(w, "2030-03-04T12:30")
+    sent = len(w.sent[OWNER])
+    w.script["arrived"] = True
+    await customer(w, "I'm here")
+    await customer(w, "red jacket")
+    assert len(w.sent[OWNER]) == sent
+
+
 async def test_arrival_messages_are_deleted_for_both_sides_after_the_set_minutes(world, monkeypatch):
     w = world
     library = w.app.media_library
