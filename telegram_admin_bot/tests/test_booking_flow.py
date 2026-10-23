@@ -86,6 +86,7 @@ async def world(app, db, monkeypatch):
     async def fake_reply(**kw):
         script["calls"] += 1
         script["notes"].append(kw.get("booking_note", ""))
+        script["media_note"] = kw.get("media_note", "")
         script["no_reply_instruction"] = kw.get("no_reply_instruction", "")
         if kw.get("usage_sink"):
             await kw["usage_sink"]("deepseek-chat", {"prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 1000,
@@ -312,6 +313,39 @@ async def test_quiet_until_answered_still_sends_photos_they_ask_for(world, monke
     assert w.sent[CUSTOMER][-1] == "yes love, booked for tomorrow 15:00"
 
 
+async def test_the_greeting_video_goes_with_the_first_reply_only(world, monkeypatch):
+    w = world
+    library = w.app.media_library
+    library.dir.mkdir(parents=True, exist_ok=True)
+    (library.dir / "hi.mp4").write_bytes(b"video")
+    (library.dir / "me.jpg").write_bytes(b"\xff\xd8\xff me")
+    video = library.add_file("hi.mp4", "me saying hi")
+    photo = library.add_file("me.jpg", "me in a red dress")
+    library.set_flags(video["id"], greeting=True)
+    files = []
+    file_ids = iter(range(9000, 9100))
+
+    async def fake_deliver_file(peer, chat_id, item, path):
+        files.append(item["id"])
+        w.sent.setdefault(chat_id, []).append(f"[file {item['id']}]")
+        return SimpleNamespace(id=next(file_ids))
+
+    monkeypatch.setattr(w.app, "deliver_file", fake_deliver_file)
+    # Videos wait for approval, but not the greeting: the business chose it.
+    assert w.app.config["media"]["videos_need_approval"]
+
+    w.script["reply"] = "hi love 😘 what time do you want to come?"
+    await customer(w, "hi")
+    assert w.sent[CUSTOMER] == ["hi love 😘 what time do you want to come?", f"[file {video['id']}]"]
+    assert "the system sends video #1: me saying hi by itself" in w.script["media_note"]
+
+    # Not again; the photo he asks for goes as usual.
+    w.script["reply"] = f"here love\n[send {photo['id']}]"
+    await customer(w, "pics?")
+    assert files == [video["id"], photo["id"]]
+    assert "by itself" not in w.script["media_note"]
+
+
 async def test_a_question_whether_it_is_a_bot_gets_no_reply_and_no_model_call(world):
     w = world
     w.app.config["replies"]["skip_bot_questions"] = True
@@ -393,7 +427,7 @@ async def confirmed_outcall(w, start="2030-03-04T13:00"):
 
 async def test_an_outcall_runs_through_ready_taxi_and_the_way_to_him(world):
     w = world
-    w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
+    w.app.config["booking"].update(address="Brivibas iela 1, Riga", outcall_proof=False)
     await confirmed_outcall(w)
     # She is told how to go on; he hears it is booked and that she gets ready.
     assert "send READY 1" in w.sent[OWNER][-1]
@@ -480,6 +514,7 @@ async def test_with_no_wait_he_hears_she_is_in_the_taxi_with_the_link(world):
 
 async def test_she_is_reminded_once_to_send_ready(world):
     w = world
+    w.app.config["booking"]["outcall_proof"] = False
     await confirmed_outcall(w, "2030-03-04T12:30")  # confirmed at 12:00
     sent = len(w.sent[OWNER])
     await tick(w, NOW + timedelta(minutes=19))
@@ -492,6 +527,7 @@ async def test_she_is_reminded_once_to_send_ready(world):
 
 async def test_a_later_outcall_reminds_her_ahead_of_its_start(world):
     w = world
+    w.app.config["booking"]["outcall_proof"] = False
     await confirmed_outcall(w, "2030-03-04T18:00")
     assert "when you are getting ready" in w.script["notes"][-1]
     sent = len(w.sent[OWNER])
@@ -643,11 +679,115 @@ async def test_the_panel_refuses_taxi_steps_for_an_incall(world):
         await w.app.handle_command("booking_action", {"booking_id": b["id"], "action": "ready"})
 
 
+@pytest_asyncio.fixture
+async def his_photos(world, monkeypatch):
+    """His photos download (or not: "fetch" False) and go on to her."""
+    w = world
+    got = {"files": [], "fetch": True}
+    file_ids = iter(range(9000, 9100))
+
+    async def download_media(message, file=None):
+        if got["fetch"]:
+            with open(file, "wb") as fh:
+                fh.write(b"\xff\xd8\xff the hotel card")
+            return file
+        return None  # nothing written: a view-once photo on WhatsApp, say
+
+    async def fake_deliver_file(peer, chat_id, item, path):
+        got["files"].append(chat_id)
+        return SimpleNamespace(id=next(file_ids))
+
+    w.app.client = SimpleNamespace(download_media=download_media)
+    monkeypatch.setattr(w.app, "deliver_file", fake_deliver_file)
+    return got
+
+
+async def test_an_outcall_with_the_proof_runs_photo_taxi_and_the_way_to_him(world, his_photos):
+    w = world
+    w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"
+    await confirmed_outcall(w)
+    # She is told he is asked for the photo; he hears it is booked and is asked for it.
+    assert "asked for a photo that shows he's at the place" in w.sent[OWNER][-1]
+    assert "READY 1 skips the photo" in w.sent[OWNER][-1]
+    assert "ask for a photo that shows they are at the place" in w.script["notes"][-1]
+    assert "do not ask for the taxi yet" in w.script["notes"][-1]
+
+    # Words are not the proof: they go on to her, and nothing starts.
+    await customer(w, "I'm at Hotel Bellevue, room 312")
+    assert w.sent[OWNER][-1] == "💬 #1 Anna (@anna):\nI'm at Hotel Bellevue, room 312"
+    assert (await only_booking(w))["proof_at"] is None
+    assert "No taxi until it comes" in w.script["notes"][-1]
+
+    # His photo goes on to her as the proof, and he is asked for the taxi at
+    # once, with her address after the reply.
+    w.script["reply"] = "thank you love, order me a taxi and send the link"
+    await customer(w, "my key card", photo=True)
+    assert his_photos["files"] == [OWNER]
+    assert w.sent[OWNER][-1].startswith("📷 #1 Anna (@anna) sent his photo of the place (below). He's asked to order "
+                                        "your taxi now")
+    assert w.sent[OWNER][-1].endswith("\nmy key card")
+    b = await only_booking(w)
+    assert b["proof_at"] is not None and b["ready_at"] is not None
+    assert "their photo of the place reached you" in w.script["notes"][-1]
+    assert w.sent[CUSTOMER][-2:] == ["thank you love, order me a taxi and send the link", "Brivibas iela 1, Riga"]
+
+    # A second photo is just a photo.
+    await customer(w, "the entrance", photo=True)
+    assert w.sent[OWNER][-1] == "📷 #1 Anna (@anna) sent a photo:\nthe entrance"
+
+    # From here as before: his link goes to her, IN tells him she is coming.
+    w.script["reply"] = "thank you"
+    await customer(w, "https://bolt.eu/ride/abc123")
+    assert "sent the taxi link" in w.sent[OWNER][-1] and "Send IN 1" in w.sent[OWNER][-1]
+    await owner(w, "IN 1")
+    assert w.sent[OWNER][-1].startswith("#1 in the taxi ✅")
+    assert "you are in the taxi now" in w.script["notes"][-1]
+
+
+async def test_a_proof_photo_that_does_not_come_through_is_asked_for_again(world, his_photos):
+    w = world
+    his_photos["fetch"] = False
+    await confirmed_outcall(w)
+    await customer(w, "", photo=True)
+    assert "could not be fetched" in w.sent[OWNER][-1] and "he is asked to send it again" in w.sent[OWNER][-1]
+    assert (await only_booking(w))["proof_at"] is None
+    assert "did not come through to you" in w.script["notes"][-1]
+
+    his_photos["fetch"] = True
+    await customer(w, "again", photo=True)
+    assert (await only_booking(w))["proof_at"] is not None
+
+
+async def test_ready_skips_the_proof_photo(world, his_photos):
+    w = world
+    await confirmed_outcall(w)
+    await owner(w, "READY 1")
+    b = await only_booking(w)
+    assert b["ready_at"] is not None and b["proof_at"] is None
+    assert "you are ready for the outcall" in w.script["notes"][-1]
+    # A photo now is no proof: it just goes on.
+    await customer(w, "the hotel", photo=True)
+    assert w.sent[OWNER][-1] == "📷 #1 Anna (@anna) sent a photo:\nthe hotel"
+    assert (await only_booking(w))["proof_at"] is None
+
+
+async def test_with_the_proof_she_is_not_reminded_to_send_ready(world):
+    w = world
+    await confirmed_outcall(w, "2030-03-04T12:30")
+    sent = len(w.sent[OWNER])
+    await tick(w, NOW + timedelta(minutes=25))
+    assert len(w.sent[OWNER]) == sent
+
+
 async def test_list_shows_the_outcalls_under_way(world):
     w = world
     await confirmed_outcall(w)
     await owner(w, "LIST")
-    assert "Outcalls:" in w.sent[OWNER][-1] and "send READY 1" in w.sent[OWNER][-1]
+    assert "Outcalls:" in w.sent[OWNER][-1] and "waiting for his photo of the place (READY 1 skips it)" in \
+        w.sent[OWNER][-1]
+    w.app.config["booking"]["outcall_proof"] = False
+    await owner(w, "LIST")
+    assert "send READY 1" in w.sent[OWNER][-1]
 
 
 async def test_nothing_is_confirmed_without_the_owner(world):

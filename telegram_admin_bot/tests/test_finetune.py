@@ -530,8 +530,10 @@ def test_the_escort_template_learns_from_typed_replies_and_keeps_the_fixed_rules
     # The flow is learned; safety and the system's details are not.
     assert "THE FIXED RULES" in escort and "HOW SHE WORKS" in escort
     assert "the typed way wins" in escort and "The fixed rules and the boundaries never change." in escort
-    for fixed in ("[address], alone on its own line", "PHOTOS ONLY WHEN HE ASKS", "APPOINTMENTS notes",
-                  "never as an agency", "not answered at all", "Adults only."):
+    for fixed in ("[address] alone on a line", "PHOTOS ONLY WHEN HE ASKS", "APPOINTMENTS notes",
+                  "never as an agency", "not answered at all", "Adults only.",
+                  # The booking flow of 2026-10-23.
+                  "PRICES ONLY WHEN HE ASKS", "THE EXTRAS MESSAGE IS NEVER SENT", "a photo that shows he is at the place"):
         assert fixed in escort
     # Sounding like a person, and what the operator asked to see.
     assert "Never two clients the same text." in escort

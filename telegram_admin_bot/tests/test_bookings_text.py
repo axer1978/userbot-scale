@@ -118,22 +118,42 @@ def test_the_taxi_steps_as_the_reply_writer_reads_them():
     now = datetime(2026, 10, 1, 20, 30, tzinfo=RIGA)
     ready = bookings.outcall_notice_line(outcall(customer_notice=bs.NOTICE_READY), now=now, ready_minutes=20,
                                          has_address=True)
-    assert "order a taxi to pick you up now" in ready and "taxi's link" in ready and "separate message" in ready
+    assert "order a taxi for you now" in ready and "its link" in ready and "separate message" in ready
+    assert "In your own words" in ready
     assert "separate message" not in bookings.outcall_notice_line(
         outcall(customer_notice=bs.NOTICE_READY), now=now, ready_minutes=20, has_address=False)
     in_taxi = bookings.outcall_notice_line(outcall(customer_notice=bs.NOTICE_IN_TAXI), now=now, ready_minutes=20,
                                            has_address=True)
-    assert "in the taxi now" in in_taxi and "floor" in in_taxi and "photo of the entrance" in in_taxi
+    assert "in the taxi now" in in_taxi and "floor" in in_taxi and "still need to find them" in in_taxi
 
     assert "Do not ask them to order it" in bookings.standing_line(outcall(), outcall_taxi=True)
     assert "send you its link" in bookings.standing_line(outcall(ready_at=now), outcall_taxi=True)
     assert "about to get in" in bookings.standing_line(outcall(ready_at=now, taxi_link_at=now), outcall_taxi=True)
     on_way = bookings.standing_line(outcall(ready_at=now, taxi_link_at=now, in_taxi_at=now), outcall_taxi=True)
-    assert "on your way to them" in on_way and "ask for what is missing" in on_way
+    assert "on your way to them" in on_way and "still need something to find them" in on_way
     # Never the incall rule about the way in.
     assert bookings.NO_DIRECTIONS_RULE not in on_way
     # With the taxi steps off, an outcall reads as before.
     assert bookings.NO_DIRECTIONS_RULE in bookings.standing_line(outcall())
+
+
+def test_with_the_proof_he_is_asked_for_a_photo_of_the_place_before_the_taxi():
+    now = datetime(2026, 10, 1, 20, 30, tzinfo=RIGA)
+    confirmed = bookings.outcall_notice_line(outcall(customer_notice=bs.NOTICE_CONFIRMED), now=now,
+                                             ready_minutes=20, has_address=True, proof=True)
+    assert "CONFIRMED" in confirmed and "hotel room key card" in confirmed and "do not ask for the taxi yet" in confirmed
+    assert "get ready" not in confirmed
+    waiting = bookings.standing_line(outcall(), outcall_taxi=True, proof=True)
+    assert "No taxi until it comes" in waiting
+    came = bookings.outcall_notice_line(outcall(customer_notice=bs.NOTICE_READY, proof_at=now, ready_at=now),
+                                        now=now, ready_minutes=20, has_address=True, proof=True)
+    assert "their photo of the place reached you" in came and "order a taxi for you now" in came
+    assert "separate message" in came
+    assert "Their photo of the place came" in bookings.standing_line(outcall(proof_at=now, ready_at=now),
+                                                                     outcall_taxi=True, proof=True)
+    # Once she is ready by READY n, the photo is no longer asked for.
+    assert "photo" not in bookings.standing_line(outcall(ready_at=now), outcall_taxi=True, proof=True)
+    assert "did not come through" in bookings.PROOF_AGAIN_LINE
 
 
 def test_the_owner_hears_how_to_take_an_outcall_on():
@@ -145,6 +165,14 @@ def test_the_owner_hears_how_to_take_an_outcall_on():
     assert "Send IN" not in bookings.format_taxi_link(outcall(), "https://bolt.eu/r/1", None)
     listed = bookings.format_list([], [outcall(ready_at=datetime(2026, 10, 1, 20, 0, tzinfo=RIGA))])
     assert "Outcalls:" in listed and "#5 — Anna" in listed and "waiting for his taxi link" in listed
+    # With the proof: he sends a photo of the place first; READY skips it.
+    proof = bookings.format_acknowledgement(outcall(), "confirm", outcall_taxi=True, proof=True)
+    assert "photo that shows he's at the place" in proof and "READY 5 skips the photo" in proof
+    assert "waiting for his photo of the place" in bookings.format_list([], [outcall()], proof=True)
+    came = datetime(2026, 10, 1, 20, 0, tzinfo=RIGA)
+    assert "his photo came" in bookings.outcall_step(outcall(proof_at=came, ready_at=came), proof=True)
+    header = bookings.format_proof_header(outcall(), "room 312")
+    assert header.startswith("📷 #5 Anna") and "order your taxi now" in header and header.endswith("\nroom 312")
 
 
 def test_a_date_that_looks_like_a_time_is_read_as_the_date():

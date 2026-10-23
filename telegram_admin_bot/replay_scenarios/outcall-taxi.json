@@ -2,6 +2,7 @@
  "tenant": 1,
  "business": "Nikol, Riga",
  "note": "The taxi steps of an outcall (booking.outcall_taxi). Every chat is an outcall; they are excused from the fixed messages and the first-reply address check.",
+ "outcall_proof": false,
  "except_categories": [
   "outcall before ready",
   "outcall full",

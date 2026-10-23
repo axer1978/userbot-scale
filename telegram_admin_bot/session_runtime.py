@@ -1220,6 +1220,13 @@ class SessionRuntime:
             self.media_library.for_ai(), ask_before_video=self.config["media"].get("ask_before_video", True)
         )
 
+    def greeting_media(self, history: list[dict[str, Any]]) -> list[int]:
+        """The files marked "greeting" that go out with the first reply in a
+        chat; none once anything was said to them (by the bot or by hand)."""
+        if any(m.get("role") == "assistant" for m in history):
+            return []
+        return [item["id"] for item in self.media_library.greeting_items()][:media.MAX_ATTACHMENTS_PER_REPLY]
+
     async def photos_they_asked_for(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """The photos (no videos) to send because their messages since our
         last one ask to see them: those this chat has not had. A cheap
@@ -1706,6 +1713,10 @@ class SessionRuntime:
             media_note = self.media_prompt()
             if media_note and (had := media.sent_line(self.media_library.for_ai(), history)):
                 media_note += "\n" + had
+            # The files marked "greeting" go with the first reply in a chat.
+            greeting = [] if photos_only or not media_note else self.greeting_media(history)
+            if greeting:
+                media_note += "\n" + media.greeting_line([self.media_library.get(i) for i in greeting])
             prompt = self.bundle.prompt if self.bundle is not None else None
             # Earlier moments like this one, with the business's real replies
             # (config retrieval): the note, and the replies in it for the
@@ -1766,6 +1777,9 @@ class SessionRuntime:
                            if (item := self.media_library.get(i)) is not None and not item.get("send_on_arrival")]
             if not media_note:
                 attachments = []
+            if greeting:
+                attachments = [*greeting, *(i for i in attachments if i not in greeting)]
+                attachments = attachments[:media.MAX_ATTACHMENTS_PER_REPLY]
             parts = self.burst_parts(text)
             if not parts and not attachments:
                 raise ai_responder.AIResponderError("The reply came back empty.")
@@ -1774,8 +1788,9 @@ class SessionRuntime:
                     media.label(self.media_library.get(i)) for i in attachments
                 ))
 
+            # The greeting video is the business's own choice, not the AI's.
             holds_video = any(
-                (self.media_library.get(i) or {}).get("kind") == media.VIDEO for i in attachments
+                (self.media_library.get(i) or {}).get("kind") == media.VIDEO for i in attachments if i not in greeting
             )
             hold = holds_video and self.config["media"]["videos_need_approval"]
             verdict = await self.check_policy(chat_id, text, prompt)

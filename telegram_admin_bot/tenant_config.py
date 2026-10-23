@@ -284,10 +284,9 @@ class Booking(_Strict):
     # How long a freed slot is held for the first person on the waitlist
     # before it is offered to the next one.
     waitlist_offer_hours: int = Field(12, ge=1, le=168)
-    # Sent word for word where a reply writes [address] (with the prices in
-    # the first reply, or when they ask where), and after a confirmation if
-    # it is not in the chat yet. Keep door codes and the way in for
-    # arrival_instructions.
+    # Sent word for word where a reply writes [address] (with the prices,
+    # or when they ask where), and after a confirmation if it is not in the
+    # chat yet. Keep door codes and the way in for arrival_instructions.
     address: str = Field("", max_length=2000)
     # Sent word for word, once, when the customer has arrived. Media items
     # marked "send on arrival" go out right after it.
@@ -315,8 +314,14 @@ class Booking(_Strict):
     # photo of the place. Everything he sends after the confirmation goes on
     # to the owner, photos too. Off: an outcall is only confirmed.
     outcall_taxi: bool = True
+    # With the taxi steps: instead of waiting for her READY n, he is asked
+    # after the confirmation for a photo that shows he is at the place (the
+    # hotel key card, the building). His first photo goes on to her and is
+    # the proof: he is then asked at once to order her taxi. READY n still
+    # skips the photo. Off: READY n starts the taxi step, as before.
+    outcall_proof: bool = True
     # How long she needs to get ready (he is told; she is reminded to send
-    # READY n when it has passed).
+    # READY n when it has passed). Not used with outcall_proof.
     outcall_ready_minutes: int = Field(20, ge=5, le=240)
     # No IN n this long after his taxi link reached her: he is told she is
     # in the taxi anyway. 0 = as soon as the link comes.

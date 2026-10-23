@@ -155,7 +155,8 @@ def format_owner_update(booking: Mapping[str, Any], what: str, *, name: str = ""
     return f"{_named(name)}#{booking['number']} {_who(booking)}, {describe_when(booking)}: {what}"
 
 
-def format_acknowledgement(booking: Mapping[str, Any], action: str, *, outcall_taxi: bool = False) -> str:
+def format_acknowledgement(booking: Mapping[str, Any], action: str, *, outcall_taxi: bool = False,
+                           proof: bool = False) -> str:
     n, who = booking["number"], booking.get("customer_name") or "the customer"
     if action == "propose":
         return f"#{n}: {describe_proposal(booking)} proposed to {who}. You'll hear back when they answer."
@@ -174,23 +175,32 @@ def format_acknowledgement(booking: Mapping[str, Any], action: str, *, outcall_t
     }
     text = f"#{n} {words.get(action, action)}"
     if outcall_taxi and action in ("confirm", "accept_proposal") and is_outcall(booking):
-        text += f" It's an outcall: send READY {n} when you're ready, and {who} is told to order the taxi."
+        if proof:
+            text += (f" It's an outcall: {who} is asked for a photo that shows he's at the place (hotel card or "
+                     f"the building). It comes here, then he orders your taxi. READY {n} skips the photo.")
+        else:
+            text += f" It's an outcall: send READY {n} when you're ready, and {who} is told to order the taxi."
     return text
 
 
-def outcall_step(booking: Mapping[str, Any]) -> str:
+def outcall_step(booking: Mapping[str, Any], *, proof: bool = False) -> str:
     """Where a confirmed outcall's taxi steps stand, for the owner."""
     n = booking["number"]
     if booking.get("in_taxi_at"):
         return "in the taxi"
     if booking.get("taxi_link_at"):
         return f"taxi link sent — send IN {n} when you're in"
+    if booking.get("proof_at"):
+        return "his photo came — waiting for his taxi link"
     if booking.get("ready_at"):
         return "ready — waiting for his taxi link"
+    if proof:
+        return f"waiting for his photo of the place (READY {n} skips it)"
     return f"send READY {n} when you're ready"
 
 
-def format_list(bookings: Sequence[Mapping[str, Any]], outcalls: Sequence[Mapping[str, Any]] = ()) -> str:
+def format_list(bookings: Sequence[Mapping[str, Any]], outcalls: Sequence[Mapping[str, Any]] = (), *,
+                proof: bool = False) -> str:
     if not bookings and not outcalls:
         return "Nothing is waiting for your answer right now."
     lines = []
@@ -209,7 +219,8 @@ def format_list(bookings: Sequence[Mapping[str, Any]], outcalls: Sequence[Mappin
         if lines:
             lines.append("")
         lines.append("Outcalls:")
-        lines += [f"  #{b['number']} — {_who(b)}, {describe_when(b)}: {outcall_step(b)}" for b in outcalls]
+        lines += [f"  #{b['number']} — {_who(b)}, {describe_when(b)}: {outcall_step(b, proof=proof)}"
+                  for b in outcalls]
     return "\n".join(lines)
 
 
@@ -232,6 +243,13 @@ def format_taxi_link(booking: Mapping[str, Any], text: str, in_taxi_minutes: Opt
         return head
     return (f"{head}\n\nSend IN {n} when you're in the taxi (if you don't, he is told you're in it in "
             f"{in_taxi_minutes} min).")
+
+
+def format_proof_header(booking: Mapping[str, Any], caption: str = "") -> str:
+    """Before his proof photo goes on to her: what it is, and what comes next."""
+    head = (f"📷 #{booking['number']} {_who(booking)} sent his photo of the place (below). He's asked to order "
+            "your taxi now; the link will come here.")
+    return f"{head}\n{caption}" if caption else head
 
 
 def format_passed_on(booking: Mapping[str, Any], text: str) -> str:
@@ -456,7 +474,7 @@ OWNER_ACTIONS = ("yes", "no", "ready_at", "time", "cancel", "done", "noshow", "r
                  "unclear", "none")
 
 
-def owner_state_note(rows: Sequence[Mapping[str, Any]], *, outcall_taxi: bool = False) -> str:
+def owner_state_note(rows: Sequence[Mapping[str, Any]], *, outcall_taxi: bool = False, proof: bool = False) -> str:
     """The bookings she may be answering about, for the reader of her words."""
     lines = []
     for b in rows:
@@ -471,7 +489,7 @@ def owner_state_note(rows: Sequence[Mapping[str, Any]], *, outcall_taxi: bool = 
         else:
             what = f"confirmed for {describe_when(b)}"
             if outcall_taxi and is_outcall(b):
-                what += f"; outcall: {outcall_step(b)}"
+                what += f"; outcall: {outcall_step(b, proof=proof)}"
         if is_outcall(b) and "outcall" not in what:
             what += " (outcall)"
         extras = f"; extras: {b['extras']}" if b.get("extras") else ""
@@ -780,7 +798,7 @@ def notice_line(booking: Mapping[str, Any]) -> str:
     return "NEWS TO PASS ON IN THIS REPLY: " + template.format(when=describe_when(booking), proposal=proposal)
 
 
-def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False) -> str:
+def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False, proof: bool = False) -> str:
     when = describe_when(booking)
     state = booking["state"]
     if state in (bs.REQUESTED, bs.PENDING):
@@ -796,7 +814,7 @@ def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False) -> 
         elif booking.get("proposed_by") == bs.OWNER:
             line += f" The business proposed moving it to {describe_proposal(booking)}; waiting for their answer."
         if outcall_taxi and is_outcall(booking):
-            return line + " " + outcall_taxi_line(booking)
+            return line + " " + outcall_taxi_line(booking, proof=proof)
         if booking.get("instructions_sent_at"):
             line += " They have arrived and were already sent the entry instructions."
         else:
@@ -863,8 +881,8 @@ ADDRESS_FOLLOWS_LINE = (
 ADDRESS_TAG = "[address]"
 _ADDRESS_TAG = re.compile(r"\[\s*address\s*\]", re.IGNORECASE)
 ADDRESS_TAG_LINE = (
-    "The street address is set. Write [address] on a line of its own where it should go (with the prices "
-    "in your first reply, and again when they ask where you are) and the system puts the address there, "
+    "The street address is set. Write [address] on a line of its own where it should go (with your prices, "
+    "and again when they ask where you are) and the system puts the address there, "
     "word for word, as a message of its own. Never write the address yourself."
 )
 
@@ -903,47 +921,70 @@ _NEWS = "NEWS TO PASS ON IN THIS REPLY: "
 
 
 def outcall_notice_line(booking: Mapping[str, Any], *, now: datetime, ready_minutes: int,
-                        has_address: bool) -> str:
-    """The news of a confirmed outcall's taxi steps."""
+                        has_address: bool, proof: bool = False) -> str:
+    """The news of a confirmed outcall's taxi steps. `proof`: he is asked
+    for a photo of the place before the taxi (booking.outcall_proof)."""
     when = describe_when(booking)
     notice = booking.get("customer_notice")
     if notice == bs.NOTICE_READY:
-        line = (f"you are ready for the outcall on {when}. Tell them to order a taxi to pick you up now and "
-                "to send you the taxi's link here, so you can see it coming.")
+        if booking.get("proof_at"):
+            line = ("their photo of the place reached you, all good. In your own words, short: ask them to order "
+                    "a taxi for you now and to send you its link here, so you can see it coming.")
+        else:
+            line = (f"you are ready for the outcall on {when}. In your own words, short: ask them to order a "
+                    "taxi for you now and to send you its link here, so you can see it coming.")
         if has_address:
             line += " Your address, for the taxi, follows in a separate message."
         return _NEWS + line
     if notice == bs.NOTICE_IN_TAXI:
-        return _NEWS + (f"you are in the taxi now, on your way to them for the outcall on {when}. Ask them to "
-                        "send the exact address, the floor and flat number, how to get in (entrance, door "
-                        "code) and a photo of the entrance or the building, so you find it easily. Do not "
+        return _NEWS + (f"you are in the taxi now, on your way to them for the outcall on {when}. Tell them in "
+                        "your own words, and ask only for what you still need to find them: the exact address "
+                        "if they have not given it, the room or flat number, the floor, how to get in. Do not "
                         "write [address].")
+    if proof:
+        return _NEWS + (f"the outcall on {when} has just been CONFIRMED. In your own words, short: tell them it "
+                        "is booked, and ask for a photo that shows they are at the place you are coming to (the "
+                        "hotel room key card, or the building or door). As soon as it comes they order your "
+                        "taxi; do not ask for the taxi yet.")
     soon = booking["starts_at"] - now <= timedelta(minutes=ready_minutes + 60)
     getting_ready = (f"You need about {ready_minutes} minutes to get ready; say you will text them as soon as "
                      "you are ready" if soon else "Say you will text them when you are getting ready")
-    return _NEWS + (f"the outcall on {when} has just been CONFIRMED. Tell them it is booked, restating the day "
-                    f"and time. {getting_ready}, and that they then order the taxi to pick you up. Do not ask "
-                    "them to order it before that.")
+    return _NEWS + (f"the outcall on {when} has just been CONFIRMED. In your own words: tell them it is booked "
+                    f"for that day and time. {getting_ready}, and that they then order the taxi to pick you up. "
+                    "Do not ask them to order it before that.")
 
 
-def outcall_taxi_line(booking: Mapping[str, Any]) -> str:
+def outcall_taxi_line(booking: Mapping[str, Any], *, proof: bool = False) -> str:
     """Where a confirmed outcall's taxi steps stand, for every reply."""
     line = "It is an outcall: you go to them by a taxi they order."
     if booking.get("in_taxi_at"):
-        return line + (" You are in the taxi on your way to them. If they have not sent the exact address, "
-                       "the floor and flat, how to get in and a photo of the entrance yet, ask for what is "
-                       "missing. Do not write [address]: you are coming to them.")
+        return line + (" You are in the taxi on your way to them. If you still need something to find them "
+                       "(the exact address, the room or flat, the floor, how to get in), ask for it. Do not "
+                       "write [address]: you are coming to them.")
     if booking.get("taxi_link_at"):
-        return line + (" They ordered the taxi and sent its link; you are about to get in. Do not write "
+        return line + (" They ordered your taxi and sent its link; you are about to get in. Do not write "
                        "[address] again.")
+    if booking.get("proof_at"):
+        return line + (" Their photo of the place came, and you asked them to order your taxi and send you "
+                       "its link.")
     if booking.get("ready_at"):
         return line + (" You are ready and asked them to order a taxi to pick you up at your address and "
                        "to send you its link.")
+    if proof:
+        return line + (" You asked them for a photo that shows they are at the place (the hotel room key card, "
+                       "or the building or door). No taxi until it comes: if they write without it, ask for it "
+                       "again in a few words of your own.")
     return line + (" You are getting ready and will text them when you are ready; only then do they order "
                    "the taxi. Do not ask them to order it before that.")
 
 
-TAXI_LINK_LINE = _NEWS + "the taxi link they sent has reached you. Thank them briefly; do not repeat the link."
+TAXI_LINK_LINE = _NEWS + ("the taxi link they sent has reached you. A short thanks in your own words; do not "
+                          "repeat the link.")
+
+# His photo for the proof did not reach her (WhatsApp keeps view-once
+# photos from linked devices).
+PROOF_AGAIN_LINE = _NEWS + ("the photo they just sent did not come through to you (it may have been 'view "
+                            "once'). Ask them, short, to send it again as a normal photo.")
 
 PICKUP_ADDRESS_LINE = (
     "Your address, for the taxi, is sent to them automatically in a separate message right after this "
