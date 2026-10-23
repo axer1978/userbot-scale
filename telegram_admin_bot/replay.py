@@ -253,7 +253,7 @@ def fake_booking(state: str, now: datetime, tz: str, start: Optional[datetime] =
 def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[datetime] = None,
                  address_follows: bool = False, address_set: bool = False, quiet: bool = False,
                  outcall: bool = False, outcall_taxi: bool = True, ready_minutes: int = 20,
-                 name: str = "", proof: bool = False) -> str:
+                 name: str = "", proof: bool = False, address_timing: str = "with_prices") -> str:
     """The booking part of the reply prompt, as BookingFlow.reply_note
     writes it for a chat in this state."""
     lines = []
@@ -278,7 +278,7 @@ def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[d
         if name:
             lines.append(bookings.own_name_line(name))
     if address_set:
-        lines.append(bookings.ADDRESS_TAG_LINE)
+        lines.append(bookings.address_tag_line(address_timing))
     return bookings.context_for_reply(lines)
 
 
@@ -432,6 +432,7 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
     way_in = (ctx.config["booking"].get("arrival_instructions") or "").strip()
     taxi = bool(ctx.config["booking"].get("outcall_taxi", True))
     proof = taxi and bool(scenario.get("outcall_proof", ctx.config["booking"].get("outcall_proof", True)))
+    timing = ctx.config["booking"].get("address_timing", "with_prices")
     # The library of this chat: the test photos, and the greeting video.
     library = [*ctx.photos, *([TEST_GREETING] if scenario.get("greeting_video") else [])]
     library_note = ctx.library_note(library)
@@ -521,7 +522,8 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
             booking_note=booking_note(state, now, ctx.tz, start,
                                       address_follows=bool(address) and not outcall and not address_sent,
                                       address_set=bool(address), quiet=quiet, outcall=outcall,
-                                      outcall_taxi=taxi, ready_minutes=ready_minutes, name=name, proof=proof),
+                                      outcall_taxi=taxi, ready_minutes=ready_minutes, name=name, proof=proof,
+                                      address_timing=timing),
             system_prompt=ctx.prompt.text,
             media_note=media_note,
             language_locked=ctx.config["language_policy"] != "mirror", burst_max=burst["max_messages"],
@@ -532,6 +534,9 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
         # The address the reply asked for goes in as a message of its own
         # (shown as sent by the system); the reply is checked without it.
         text, tagged = bookings.take_address_tag(text)
+        # As in the runtime: "when_asked" drops a tag he did not ask for.
+        if tagged and timing == "when_asked" and not bookings.asks_where("\n".join(media.latest_from_them(history))):
+            tagged = False
         parts = ai_responder.split_burst(text, burst["max_messages"], burst.get("keep_together", True),
                                          ai_responder.fixed_blocks(ctx.prompt.text))
         sent = "\n".join(parts)
@@ -543,7 +548,7 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
             failed.append("sent no rates message")
         if step.get("details") is False and details:
             failed += [f"sent the fixed message starting {d.splitlines()[0][:40]!r}" for d in details]
-        if (details and address and not tagged and not address_sent
+        if (details and address and not tagged and not address_sent and timing == "with_prices"
                 and not scenario.get("first_reply_address", True)):
             failed.append("sent the prices without the address")
         if tagged and state in NO_ADDRESS_STATES:

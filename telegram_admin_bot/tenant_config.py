@@ -288,6 +288,11 @@ class Booking(_Strict):
     # or when they ask where), and after a confirmation if it is not in the
     # chat yet. Keep door codes and the way in for arrival_instructions.
     address: str = Field("", max_length=2000)
+    # When the reply may write [address] before a booking: with the prices
+    # and whenever they ask where (with_prices), or only when they ask where
+    # (when_asked; a tag in any other reply is dropped). After a
+    # confirmation the address follows either way.
+    address_timing: Literal["with_prices", "when_asked"] = "with_prices"
     # Sent word for word, once, when the customer has arrived. Media items
     # marked "send on arrival" go out right after it. Empty: she comes out
     # to meet him.

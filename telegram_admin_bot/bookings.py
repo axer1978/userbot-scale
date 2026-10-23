@@ -897,6 +897,28 @@ ADDRESS_TAG_LINE = (
     "and again when they ask where you are) and the system puts the address there, "
     "word for word, as a message of its own. Never write the address yourself."
 )
+# booking.address_timing "when_asked".
+ADDRESS_WHEN_ASKED_LINE = (
+    "The street address is set. Write [address] on a line of its own only when they ask where you are "
+    "(not with your prices) and the system puts the address there, word for word, as a message of its "
+    "own. Never write the address yourself."
+)
+
+
+def address_tag_line(timing: str) -> str:
+    return ADDRESS_WHEN_ASKED_LINE if timing == "when_asked" else ADDRESS_TAG_LINE
+
+
+# Their message asks where she is (booking.address_timing "when_asked"):
+# EN, LV, RU, ET and the usual short forms.
+_ASKS_WHERE = re.compile(
+    r"(?i)(\bwhere\b|\bwher\b|\bwhr\b|addr?ess?|\badres|\blocat|\bloc\b|\bpin\b|\barea\b|\bstreet\b|"
+    r"\bkur\b|adrese|atrodies|\bkus\b|aadress|asukoht|где|адрес|локац|район|улиц|куда)"
+)
+
+
+def asks_where(text: str) -> bool:
+    return bool(_ASKS_WHERE.search(text or ""))
 
 
 def take_address_tag(text: str) -> tuple[str, bool]:

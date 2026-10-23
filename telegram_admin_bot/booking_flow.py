@@ -808,7 +808,7 @@ class BookingFlow:
         if self.her_name() and (with_notice or standing):
             lines.append(bookings.own_name_line(self.her_name()))
         if self.address():
-            lines.append(bookings.ADDRESS_TAG_LINE)
+            lines.append(bookings.address_tag_line(self.settings.get("address_timing", "with_prices")))
         transient = list(self.pending_lines.get(chat_id, []))
         lines.extend(transient)
         return ReplyNote(
@@ -864,11 +864,15 @@ class BookingFlow:
         """booking.address, or "" when bookings are off or none is set."""
         return (self.settings.get("address") or "").strip() if self.enabled() else ""
 
-    def fill_address(self, text: str, *, follows: bool = False) -> str:
+    def fill_address(self, text: str, *, follows: bool = False, latest: str = "") -> str:
         """A reply's [address] tag as the address itself, a message of its
         own. `follows`: the address is sent right after this reply anyway
-        (a confirmation, her taxi), so the tag is only dropped."""
+        (a confirmation, her taxi), so the tag is only dropped. With
+        booking.address_timing "when_asked" the tag only counts when their
+        `latest` messages ask where she is."""
         if follows:
+            return bookings.take_address_tag(text)[0]
+        if self.settings.get("address_timing") == "when_asked" and not bookings.asks_where(latest):
             return bookings.take_address_tag(text)[0]
         return bookings.fill_address(text, self.address())
 

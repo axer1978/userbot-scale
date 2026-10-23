@@ -240,6 +240,30 @@ async def test_the_address_goes_with_the_prices_and_not_again_after_the_confirma
     assert "address is sent to them automatically" not in w.script["notes"][-1]
 
 
+async def test_with_address_only_when_asked_the_prices_go_without_it(world):
+    w = world
+    w.app.config["booking"].update(address="Brivibas iela 1, Riga", address_timing="when_asked")
+    w.script["reply"] = "hi love, 100 for 30 min\n[address]"
+    await customer(w, "hi, prices?")
+    assert "only when they ask where you are" in w.script["notes"][-1]
+    # Not asked where: the tag is dropped, the prices go alone.
+    assert w.sent[CUSTOMER][-1] == "hi love, 100 for 30 min" and "Brivibas iela 1, Riga" not in w.sent[CUSTOMER]
+
+    w.script["reply"] = "here love\n[address]"
+    await customer(w, "where are you?")
+    assert w.sent[CUSTOMER][-2:] == ["here love", "Brivibas iela 1, Riga"]
+
+
+async def test_with_address_only_when_asked_a_confirmation_still_brings_it(world):
+    w = world
+    w.app.config["booking"].update(address="Brivibas iela 1, Riga", address_timing="when_asked")
+    w.script["reply"] = "checking, one moment"
+    await customer(w, "tomorrow at 15?", book())
+    w.script["reply"] = "booked for tomorrow 15:00"
+    await owner(w, "YES 1")
+    assert w.sent[CUSTOMER][-2:] == ["booked for tomorrow 15:00", "Brivibas iela 1, Riga"]
+
+
 async def test_quiet_until_answered_says_nothing_until_the_owner_answers(world):
     w = world
     w.app.config["booking"]["quiet_until_answered"] = True
