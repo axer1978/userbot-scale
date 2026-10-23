@@ -252,6 +252,14 @@ def format_proof_header(booking: Mapping[str, Any], caption: str = "") -> str:
     return f"{head}\n{caption}" if caption else head
 
 
+def format_arrived(booking: Mapping[str, Any], said: str, *, way_in_sent: bool, name: str = "") -> str:
+    """An incall customer says he has arrived: what he wrote, and what the
+    owner does now."""
+    what = "he's here — the way in was sent to him." if way_in_sent else "he's here — go and meet him."
+    head = format_owner_update(booking, what, name=name)
+    return f"{head}\n{said}" if said else head
+
+
 def format_passed_on(booking: Mapping[str, Any], text: str) -> str:
     """What the customer wrote while the outcall is under way, word for word."""
     return f"💬 #{booking['number']} {_who(booking)}:\n{text}"
@@ -798,7 +806,8 @@ def notice_line(booking: Mapping[str, Any]) -> str:
     return "NEWS TO PASS ON IN THIS REPLY: " + template.format(when=describe_when(booking), proposal=proposal)
 
 
-def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False, proof: bool = False) -> str:
+def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False, proof: bool = False,
+                  meets_outside: bool = False) -> str:
     when = describe_when(booking)
     state = booking["state"]
     if state in (bs.REQUESTED, bs.PENDING):
@@ -817,6 +826,9 @@ def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False, pro
             return line + " " + outcall_taxi_line(booking, proof=proof)
         if booking.get("instructions_sent_at"):
             line += " They have arrived and were already sent the entry instructions."
+        elif meets_outside and booking.get("arrived_at"):
+            line += (" They have arrived and you are coming out to meet them: say so in a few words of your "
+                     "own. " + NO_DIRECTIONS_RULE)
         else:
             line += " " + NO_DIRECTIONS_RULE
         return line
@@ -885,6 +897,28 @@ ADDRESS_TAG_LINE = (
     "and again when they ask where you are) and the system puts the address there, "
     "word for word, as a message of its own. Never write the address yourself."
 )
+# booking.address_timing "when_asked".
+ADDRESS_WHEN_ASKED_LINE = (
+    "The street address is set. Write [address] on a line of its own only when they ask where you are "
+    "(not with your prices) and the system puts the address there, word for word, as a message of its "
+    "own. Never write the address yourself."
+)
+
+
+def address_tag_line(timing: str) -> str:
+    return ADDRESS_WHEN_ASKED_LINE if timing == "when_asked" else ADDRESS_TAG_LINE
+
+
+# Their message asks where she is (booking.address_timing "when_asked"):
+# EN, LV, RU, ET and the usual short forms.
+_ASKS_WHERE = re.compile(
+    r"(?i)(\bwhere\b|\bwher\b|\bwhr\b|addr?ess?|\badres|\blocat|\bloc\b|\bpin\b|\barea\b|\bstreet\b|"
+    r"\bkur\b|adrese|atrodies|\bkus\b|aadress|asukoht|где|адрес|локац|район|улиц|куда)"
+)
+
+
+def asks_where(text: str) -> bool:
+    return bool(_ASKS_WHERE.search(text or ""))
 
 
 def take_address_tag(text: str) -> tuple[str, bool]:

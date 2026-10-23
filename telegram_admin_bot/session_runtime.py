@@ -1765,7 +1765,8 @@ class SessionRuntime:
 
             text, attachments = media.split_attachments(text)
             # When the address follows this reply anyway, a tag would send it twice.
-            text = self.flow.fill_address(text, follows=note.address_for is not None)
+            text = self.flow.fill_address(text, follows=note.address_for is not None,
+                                          latest="\n".join(media.latest_from_them(history)))
             # The fallback phrases are looked for in the model's own words: a
             # varied reply may have lost the full stop or emoji they end in.
             fallback = self.fallback_phrase(text)

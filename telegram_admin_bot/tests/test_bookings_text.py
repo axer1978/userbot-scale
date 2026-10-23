@@ -400,3 +400,14 @@ def test_the_address_goes_where_the_reply_wrote_the_tag_as_a_message_of_its_own(
     assert bookings.fill_address("here love\n[address]", "") == "here love"
     assert bookings.fill_address("no tag here", "X") == "no tag here"
     assert bookings.take_address_tag("hi\n[address]\nwhat time?") == ("hi\n\nwhat time?", True)
+
+
+def test_the_address_note_follows_when_the_address_may_go():
+    assert bookings.address_tag_line("with_prices") == bookings.ADDRESS_TAG_LINE
+    asked = bookings.address_tag_line("when_asked")
+    assert "only when they ask where you are" in asked and "not with your prices" in asked
+    for where in ("where are you?", "address pls", "send location", "kur tu esi?", "где ты?", "kus sa oled",
+                  "what area?"):
+        assert bookings.asks_where(where), where
+    for other in ("how much?", "ok 22:00", "price for 1 hour", "do you do domination?", "somewhere nice"):
+        assert not bookings.asks_where(other), other

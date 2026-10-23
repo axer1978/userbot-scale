@@ -240,6 +240,30 @@ async def test_the_address_goes_with_the_prices_and_not_again_after_the_confirma
     assert "address is sent to them automatically" not in w.script["notes"][-1]
 
 
+async def test_with_address_only_when_asked_the_prices_go_without_it(world):
+    w = world
+    w.app.config["booking"].update(address="Brivibas iela 1, Riga", address_timing="when_asked")
+    w.script["reply"] = "hi love, 100 for 30 min\n[address]"
+    await customer(w, "hi, prices?")
+    assert "only when they ask where you are" in w.script["notes"][-1]
+    # Not asked where: the tag is dropped, the prices go alone.
+    assert w.sent[CUSTOMER][-1] == "hi love, 100 for 30 min" and "Brivibas iela 1, Riga" not in w.sent[CUSTOMER]
+
+    w.script["reply"] = "here love\n[address]"
+    await customer(w, "where are you?")
+    assert w.sent[CUSTOMER][-2:] == ["here love", "Brivibas iela 1, Riga"]
+
+
+async def test_with_address_only_when_asked_a_confirmation_still_brings_it(world):
+    w = world
+    w.app.config["booking"].update(address="Brivibas iela 1, Riga", address_timing="when_asked")
+    w.script["reply"] = "checking, one moment"
+    await customer(w, "tomorrow at 15?", book())
+    w.script["reply"] = "booked for tomorrow 15:00"
+    await owner(w, "YES 1")
+    assert w.sent[CUSTOMER][-2:] == ["booked for tomorrow 15:00", "Brivibas iela 1, Riga"]
+
+
 async def test_quiet_until_answered_says_nothing_until_the_owner_answers(world):
     w = world
     w.app.config["booking"]["quiet_until_answered"] = True
@@ -1170,6 +1194,51 @@ async def test_arrival_sends_the_instructions_word_for_word_once(world):
     await customer(w, "I'm here!!")
     assert w.sent[CUSTOMER].count("Door code 4321, 2nd floor.") == 1
     assert w.script["calls"] == replies + 1
+
+
+async def test_she_meets_him_outside_and_the_booking_phone_hears_he_is_here(world, his_photos):
+    w = world
+    w.app.config["booking"].update(arrival_instructions="", name="Isabela")
+    await confirmed_booking(w, "2030-03-04T12:30")
+    w.script["arrived"] = True
+    w.script["reply"] = "one sec love, I'm coming"
+    await customer(w, "I'm here, by the green door")
+    # His words go to the booking phone, once, and he is answered as her.
+    assert w.sent[OWNER][-1].startswith("Isabela — #1 Anna (@anna)")
+    assert "he's here — go and meet him.\nI'm here, by the green door" in w.sent[OWNER][-1]
+    assert "coming out to meet them" in w.script["notes"][-1]
+    assert w.sent[CUSTOMER][-1] == "one sec love, I'm coming"
+    assert (await only_booking(w))["arrived_at"] is not None
+
+    # What he sends after that goes on to her: words, and photos as photos.
+    calls = w.script["calls"]
+    await customer(w, "red jacket")
+    assert w.sent[OWNER][-1] == "💬 #1 Anna (@anna):\nred jacket"
+    await customer(w, "here", photo=True)
+    assert his_photos["files"] == [OWNER] and w.sent[OWNER][-1] == "📷 #1 Anna (@anna) sent a photo:\nhere"
+    # No new arrival message, and no more arrival checks once she knows.
+    assert sum("go and meet him" in m for m in w.sent[OWNER]) == 1
+    assert w.script["calls"] == calls + 2
+
+
+async def test_with_a_way_in_the_booking_phone_hears_it_was_sent(world):
+    w = world
+    await confirmed_booking(w, "2030-03-04T12:30")
+    w.script["arrived"] = True
+    await customer(w, "at the door")
+    assert w.sent[CUSTOMER][-1] == "Door code 4321, 2nd floor."
+    assert "he's here — the way in was sent to him.\nat the door" in w.sent[OWNER][-1]
+
+
+async def test_the_arrival_message_to_the_owner_can_be_switched_off(world):
+    w = world
+    w.app.config["booking"].update(arrival_instructions="", arrival_to_owner=False)
+    await confirmed_booking(w, "2030-03-04T12:30")
+    sent = len(w.sent[OWNER])
+    w.script["arrived"] = True
+    await customer(w, "I'm here")
+    await customer(w, "red jacket")
+    assert len(w.sent[OWNER]) == sent
 
 
 async def test_arrival_messages_are_deleted_for_both_sides_after_the_set_minutes(world, monkeypatch):
