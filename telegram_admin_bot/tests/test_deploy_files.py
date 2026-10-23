@@ -354,7 +354,8 @@ def test_wa_gateway_runs_unprivileged_and_keeps_nothing_on_disk():
             assert {n.strip() for n in imp.split(",")} <= {"readFileSync"}, path.name
     # The data of record stays on Postgres's named volume across down/up/rebuild.
     assert "pgdata:/var/lib/postgresql/data" in SERVICES["postgres"]["volumes"]
-    assert re.match(r"^postgres:16", SERVICES["postgres"]["image"])  # 17+ moves the data directory
+    # Postgres 16 (with pgvector): 17+ moves the data directory.
+    assert re.match(r"^pgvector/pgvector:[\d.]+-pg16-trixie$", SERVICES["postgres"]["image"])
 
 
 # --- Environment variables ---------------------------------------------------------
