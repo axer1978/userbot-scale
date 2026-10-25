@@ -750,8 +750,9 @@ export type PromptRule = {
   section: string;
   text: string;
   // draft_edit: a draft an operator changed before approving it; correction:
-  // a correction on a flagged chat; manual: typed by the admin.
-  source: "draft_edit" | "correction" | "manual";
+  // a correction on a flagged chat; manual: typed by the admin; booker: an
+  // instruction for every customer the booker wrote in her booking chat.
+  source: "draft_edit" | "correction" | "manual" | "booker";
   source_ref: { tenant_id?: number; message_id?: number; example_id?: number };
   status: RuleStatus;
   // The prompt version tag that holds it, once merged ("b1/i1v3/c2").

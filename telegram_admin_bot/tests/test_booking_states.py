@@ -35,6 +35,9 @@ def _calls():
                            {bs.CONFIRMED}, set(bs.DECIDERS)),
         "mark_no_show": (lambda b, a: bs.mark_no_show(b, actor=a, now=LATER + timedelta(hours=2)),
                          {bs.CONFIRMED}, set(bs.DECIDERS)),
+        "change_length": (lambda b, a: bs.change_length(b, actor=a, ends_at=LATER + timedelta(hours=2),
+                                                        blocked_until=LATER + timedelta(hours=2), now=NOW),
+                          {bs.CONFIRMED}, set(bs.DECIDERS)),
     }
 
 
@@ -65,6 +68,52 @@ def test_only_a_person_on_the_business_side_confirms():
 def test_a_booking_in_the_past_cannot_be_confirmed():
     with pytest.raises(bs.IllegalTransition, match="past"):
         bs.confirm(booking(starts=NOW - timedelta(minutes=1)), actor=bs.OWNER, now=NOW)
+
+
+def test_a_yes_can_set_the_length():
+    b = booking()
+    b["blocked_until"] = b["ends_at"] + timedelta(minutes=15)
+    # As asked: the end stays where it is.
+    assert "ends_at" not in bs.confirm(b, actor=bs.OWNER, now=NOW).fields
+    # "Yes, but only 30 minutes": the new end, with the same 15 minutes after it.
+    change = bs.confirm(b, actor=bs.OWNER, now=NOW, ends_at=LATER + timedelta(minutes=30))
+    assert change.fields["ends_at"] == LATER + timedelta(minutes=30)
+    assert change.fields["blocked_until"] == LATER + timedelta(minutes=45)
+    change = bs.confirm(b, actor=bs.OWNER, now=NOW, ends_at=LATER + timedelta(hours=2),
+                        blocked_until=LATER + timedelta(hours=2))
+    assert change.fields["blocked_until"] == LATER + timedelta(hours=2)
+    with pytest.raises(bs.IllegalTransition, match="not after its start"):
+        bs.confirm(b, actor=bs.OWNER, now=NOW, ends_at=LATER)
+
+
+def test_the_owner_takes_a_move_for_the_length_she_gives():
+    new = LATER + timedelta(days=1)
+    b = booking(bs.CONFIRMED, proposed_by=bs.CUSTOMER, proposed=new)
+    change = bs.accept_proposal(b, actor=bs.OWNER, now=NOW, blocked_until=new + timedelta(hours=2),
+                                ends_at=new + timedelta(hours=2))
+    assert (change.fields["starts_at"], change.fields["ends_at"]) == (new, new + timedelta(hours=2))
+    assert bs.accept_proposal(b, actor=bs.OWNER, now=NOW, blocked_until=new)\
+        .fields["ends_at"] == new + timedelta(hours=1)
+
+
+def test_the_length_of_a_confirmed_booking_changes_with_the_customer_told():
+    b = booking(bs.CONFIRMED, proposed_by=bs.CUSTOMER, proposed=LATER + timedelta(days=1))
+    change = bs.change_length(b, actor=bs.OWNER, ends_at=LATER + timedelta(hours=2),
+                              blocked_until=LATER + timedelta(hours=2, minutes=10), now=NOW)
+    assert (change.action, change.from_state, change.to_state) == ("change_length", bs.CONFIRMED, bs.CONFIRMED)
+    assert change.fields == {"ends_at": LATER + timedelta(hours=2),
+                             "blocked_until": LATER + timedelta(hours=2, minutes=10),
+                             "customer_notice": bs.NOTICE_LENGTH}
+    # Under way it can still be made longer or shorter, as long as the new
+    # end is to come; never to before its start.
+    under_way = booking(bs.CONFIRMED, starts=NOW - timedelta(minutes=30))
+    bs.change_length(under_way, actor=bs.OWNER, ends_at=NOW + timedelta(minutes=5),
+                     blocked_until=NOW + timedelta(minutes=5), now=NOW)
+    with pytest.raises(bs.IllegalTransition, match="past"):
+        bs.change_length(under_way, actor=bs.OWNER, ends_at=NOW - timedelta(minutes=5),
+                         blocked_until=NOW, now=NOW)
+    with pytest.raises(bs.IllegalTransition, match="not after its start"):
+        bs.change_length(b, actor=bs.OWNER, ends_at=LATER - timedelta(minutes=5), blocked_until=LATER, now=NOW)
 
 
 def test_submitted_is_the_system_moving_a_request_to_the_owner():

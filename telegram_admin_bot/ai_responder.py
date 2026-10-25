@@ -9,9 +9,12 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Sequence
 
 import httpx
+
+if TYPE_CHECKING:  # pragma: no cover
+    import bookings
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +138,9 @@ REQUEST_TIMEOUT_SECONDS = 60.0
 # own timeout counts per read, so a server trickling bytes could otherwise
 # hold a reply (and a slot of the tenant's AI gate) for as long as it likes.
 TOTAL_DEADLINE_SECONDS = 150.0
+# Reading the booker's own words: her messages wait in line behind it (they
+# are carried out in order), so a model that is down costs her less than this.
+OWNER_READ_DEADLINE_SECONDS = 40.0
 
 
 # Awaited with (model, token counts) after every successful completion.
@@ -752,14 +758,18 @@ SUMMARY_SYSTEM_PROMPT = (
 _NO_SUMMARY = "NONE"
 
 
-def render_transcript(history: list[dict[str, str]]) -> str:
-    """History as a plain 'them:/me:' script, which summarises better than JSON."""
+def render_transcript(history: list[dict[str, Any]], zone: Any = None) -> str:
+    """History as a plain 'them:/me:' script, which summarises better than JSON.
+    With `zone`, a message that carries its time ("at", as
+    get_history_for_ai(with_times=True) gives it) starts with it: "[Tue 20 Oct 12:31]"."""
     lines = []
     for message in history:
         speaker = "them" if message.get("role") == "user" else "me"
         text = " ".join((message.get("content") or "").split())
         if text:
-            lines.append(f"{speaker}: {text}")
+            at = message.get("at")
+            stamp = f"[{at.astimezone(zone):%a %d %b %H:%M}] " if zone is not None and isinstance(at, datetime) else ""
+            lines.append(f"{stamp}{speaker}: {text}")
     return "\n".join(lines)
 
 
@@ -853,7 +863,7 @@ async def extract_booking(
 async def read_owner_answer(
     *,
     api_key: str,
-    history: list[dict[str, str]],
+    history: list[dict[str, Any]],
     latest: str,
     tz_name: str,
     now: datetime,
@@ -862,10 +872,12 @@ async def read_owner_answer(
     replying_to: Optional[int] = None,
     client: Optional[httpx.AsyncClient] = None,
     usage_sink: Optional[UsageSink] = None,
-) -> Optional[dict[str, Any]]:
-    """What the owner's answer in her own words means for the bookings in
-    `state_note` ("ready in 20 minutes", "yes I confirm"), as
-    bookings.parse_owner_answer returns it. None when it is not about them."""
+) -> Optional["bookings.OwnerReading"]:
+    """Everything the booker's answer in her own words means for the bookings
+    in `state_note` ("yes but tell him to bring cash", "yes 3, no 4"), as
+    bookings.parse_owner_answer returns it: an empty reading when it is about
+    none of them, None when the model's answer can't be used. `history` is
+    her chat, its messages with their times ("at") when it has them."""
     import bookings
 
     text = await _complete(
@@ -873,10 +885,13 @@ async def read_owner_answer(
         messages=[
             {"role": "system", "content": bookings.OWNER_ANSWER_SYSTEM_PROMPT},
             {"role": "user", "content": bookings.owner_answer_prompt(
-                render_transcript(history), tz_name, now=now, state_note=state_note, latest=latest,
-                replying_to=replying_to)},
+                render_transcript(history, bookings.tzinfo_for(tz_name)), tz_name, now=now,
+                state_note=state_note, latest=latest, replying_to=replying_to)},
         ],
-        ai_config={**ai_config, "max_tokens": 80, "temperature": 0.0},
+        # Room for an answer per booking with the words for him; JSON mode,
+        # so a reading is never lost to a broken reply.
+        ai_config={**ai_config, "max_tokens": 1200, "temperature": 0.0,
+                   "response_format": {"type": "json_object"}, "deadline_s": OWNER_READ_DEADLINE_SECONDS},
         client=client,
         **_sink(usage_sink),
     )
@@ -959,6 +974,8 @@ async def _complete(
         "max_tokens": ai_config.get("max_tokens", 400),
         "temperature": ai_config.get("temperature", 1.0),
     }
+    if ai_config.get("response_format"):
+        payload["response_format"] = ai_config["response_format"]
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -967,7 +984,7 @@ async def _complete(
     owns_client = client is None
     http = client or httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS)
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + TOTAL_DEADLINE_SECONDS
+    deadline = loop.time() + float(ai_config.get("deadline_s") or TOTAL_DEADLINE_SECONDS)
     try:
         last_error = "DeepSeek request failed."
         attempt = 0

@@ -243,7 +243,9 @@ async def test_upgrading_a_populated_0005_database_keeps_the_data_and_adds_the_r
                              # 0019: the extras he asked for
                              "extras",
                              # 0020: his photo of the place (outcall proof)
-                             "proof_at"}}
+                             "proof_at",
+                             # 0022: the booker's own words
+                             "booker_news", "extras_ok", "extras_no", "booker_asked_at"}}
     for table, rows in before.items():
         added = new_cols.get(table, set())
         assert [{k: v for k, v in r.items() if k not in added} for r in after[table]] == rows, table

@@ -711,14 +711,16 @@ class Database:
             )
         return [_message(r) for r in rows]
 
-    async def get_history_for_ai(self, chat_id: int, limit: int = 30, *,
-                                 with_times: bool = False) -> list[dict[str, Any]]:
+    async def get_history_for_ai(self, chat_id: int, limit: int = 30, *, with_times: bool = False,
+                                 upto_id: Optional[int] = None) -> list[dict[str, Any]]:
         """Recent exchange as OpenAI-style role/content pairs.
 
         Drafts that were never approved, rejections and error rows are left
         out — only what actually crossed the wire is context for the model.
         `with_times` adds "at", when the row was stored (the reply's clock,
         ai_responder.Clock); the caller takes it out before the API sees it.
+        `upto_id`: their messages stored after that row are left out (one
+        message of theirs read while their later ones wait); ours stay.
         """
         tid = await self.tenant_id()
         async with self._pool.acquire() as con:
@@ -740,6 +742,8 @@ class Database:
                 [DIR_IN, DIR_OUT],
                 limit,
             )
+        if upto_id is not None:
+            rows = [r for r in rows if not (r["direction"] == DIR_IN and r["id"] > upto_id)]
         history: list[dict[str, Any]] = [
             {"role": "user" if r["direction"] == DIR_IN else "assistant", "content": r["text"]}
             for r in rows
@@ -748,6 +752,16 @@ class Database:
             for message, r in zip(history, rows):
                 message["at"] = r["created_at"]
         return history
+
+    async def last_outgoing(self, chat_id: int) -> Optional[dict[str, Any]]:
+        """The last message that went out in this chat (sent, not a draft)."""
+        tid = await self.tenant_id()
+        async with self._pool.acquire() as con:
+            row = await con.fetchrow(
+                "SELECT * FROM messages WHERE tenant_id = $1 AND chat_id = $2 AND direction = $3 AND status = $4 "
+                "ORDER BY id DESC LIMIT 1", tid, chat_id, DIR_OUT, STATUS_SENT,
+            )
+        return dict(row) if row is not None else None
 
     async def update_message(
         self,

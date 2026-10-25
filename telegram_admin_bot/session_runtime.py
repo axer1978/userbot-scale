@@ -257,6 +257,12 @@ class SessionRuntime:
         self.offline_timer: Optional[asyncio.Task] = None
         self.active_chats: set[int] = set()
         self.sending_chats: set[int] = set()
+        # chat -> the tasks sending to it now (begin_sending), each with how
+        # many of its sends are under way (sends inside sends): those a newer
+        # draft never cuts short — a draft only waiting can be cancelled.
+        # And the signal a newer draft waits on until they are all done.
+        self._sending: dict[int, dict[Optional[asyncio.Task], int]] = {}
+        self._send_idle: dict[int, asyncio.Event] = {}
 
         self.flow = booking_flow.BookingFlow(self)
         self.REMINDER_TICK_SECONDS = 60
@@ -726,7 +732,9 @@ class SessionRuntime:
             dropped: set[int] = set()
             for chat_id, task in list(self.draft_tasks.items()):
                 if task is not current:
-                    if not task.done() and chat_id not in self.sending_chats:
+                    # Every draft but the one sending (waiting ones too) is
+                    # cut short, and its customer queued as unanswered.
+                    if not task.done() and not self.is_sending(chat_id, task):
                         dropped.add(chat_id)
                     self.cancel_draft(chat_id)
             dropped.update(await scheduler.clear_all_deferred(self.pool, self.tenant_id))
@@ -1604,11 +1612,50 @@ class SessionRuntime:
         except Exception as exc:
             log.warning("[%s] Could not %s: %s: %s", self.session_id, what, type(exc).__name__, exc)
 
+    def begin_sending(self, chat_id: int) -> None:
+        """A send to this chat starts (a reply and the marking of what it
+        told, the address, the way in): a newer draft does not cut it short
+        (cancel_draft), and waits for it before it reads the chat
+        (wait_while_sending), so news it carries is never said twice. Sends
+        inside sends are counted, and sends from several tasks at once (a
+        reply, and the way in sent when his photo comes): each one sending
+        is safe, whichever started first. Ended by end_sending in the same
+        task."""
+        task = asyncio.current_task()
+        senders = self._sending.setdefault(chat_id, {})
+        senders[task] = senders.get(task, 0) + 1
+        self.sending_chats.add(chat_id)
+        self._send_idle.setdefault(chat_id, asyncio.Event()).clear()
+
+    def end_sending(self, chat_id: int) -> None:
+        task = asyncio.current_task()
+        senders = self._sending.get(chat_id, {})
+        left = senders.get(task, 1) - 1
+        if left > 0:
+            senders[task] = left
+            return
+        senders.pop(task, None)
+        if senders:
+            return
+        self._sending.pop(chat_id, None)
+        self.sending_chats.discard(chat_id)
+        self._send_idle.setdefault(chat_id, asyncio.Event()).set()
+
+    def is_sending(self, chat_id: int, task: Optional[asyncio.Task]) -> bool:
+        """`task` is inside a send to this chat (begin_sending)."""
+        return task in self._sending.get(chat_id, {})
+
+    async def wait_while_sending(self, chat_id: int) -> None:
+        """Until no send to this chat is under way (begin_sending)."""
+        while chat_id in self.sending_chats:
+            await self._send_idle.setdefault(chat_id, asyncio.Event()).wait()
+
     def cancel_draft(self, chat_id: int) -> None:
         task = self.draft_tasks.pop(chat_id, None)
         if task is None or task.done():
             return
-        if chat_id in self.sending_chats:
+        if self.is_sending(chat_id, task):
+            # One sending: it finishes, and marks what it told as told.
             return
         task.cancel()
 
@@ -1642,6 +1689,10 @@ class SessionRuntime:
             await self.hub.broadcast({"type": "drafting", "chat_id": chat_id, "delay_seconds": round(delay, 1)})
             log.info("[%s]   drafting a reply for chat %s in %.0fs…", self.session_id, chat_id, delay)
             await asyncio.sleep(delay)
+            # A reply still going out in this chat first: what it told is
+            # marked as told before this one reads the chat and its news —
+            # and the checks below see how things stand once it may go.
+            await self.wait_while_sending(chat_id)
             # Quiet hours may have been switched on or moved while waiting.
             if (left := self.quiet_seconds_left()) > 0:
                 await self.defer_reply(chat_id, left + humanlike.sample_reply_delay(self.config["reply_delay"]))
@@ -1677,9 +1728,10 @@ class SessionRuntime:
             note = await self.flow.reply_note(chat_id)
             # While their time waits for the owner nothing is said — except
             # that photos they ask to see still go out: those they have not
-            # had, on their own, with no text.
+            # had, on their own, with no text. The owner's own words for
+            # them always go out.
             photos_only: list[dict[str, Any]] = []
-            if await self.flow.quiet_until_answered(chat_id, history):
+            if not note.her_words and await self.flow.quiet_until_answered(chat_id, history):
                 photos_only = await self.photos_they_asked_for(history)
                 if not photos_only:
                     await self.skip_reply(chat_id, OWNER_SKIP)
@@ -1800,38 +1852,41 @@ class SessionRuntime:
             # The fallback phrase was found before sending (above), queued
             # after: the reply still goes out (or is drafted) as normal.
 
-            if self.config["auto_send"] and self.transport.can_send and not hold and verdict.ok:
-                self.sending_chats.add(chat_id)
-                try:
+            # From here a newer draft does not cut this one short (cancel_draft):
+            # once the reply is out or saved, the news it carried must be marked
+            # as told (flow.delivered), or it would be said twice.
+            self.begin_sending(chat_id)
+            try:
+                if self.config["auto_send"] and self.transport.can_send and not hold and verdict.ok:
                     await self.send_burst(
                         chat_id, parts, typing=True, attachments=attachments,
                         actor=audit.BOT, reason="automatic reply", llm_model=model, prompt_version=version,
                     )
-                finally:
-                    self.sending_chats.discard(chat_id)
-                log.info(
-                    "[%s] Auto-sent AI reply to chat %s%s.", self.session_id, chat_id,
-                    f" as {len(parts)} messages" if len(parts) > 1 else "",
-                )
-            else:
-                if hold and self.config["auto_send"]:
-                    log.info("[%s]   reply carries a video — held for approval in the panel.", self.session_id)
-                row = await self.db.record_message(
-                    chat_id, DIR_OUT, STATUS_PENDING, text, bump_preview=False, attachments=attachments,
-                    llm_model=model, prompt_version=version,
-                )
-                if row is not None:
-                    await self.push_message(row)
-                log.info("[%s] Draft awaiting approval for chat %s.", self.session_id, chat_id)
-                # Waiting for approval because auto_send is off or for a
-                # video is a normal draft; held by policy is unanswered.
-                if not verdict.ok:
-                    await self.queue_unanswered(chat_id, unanswered.POLICY_HOLD, "; ".join(verdict.reasons))
-            if fallback:
-                await self.queue_unanswered(chat_id, unanswered.FALLBACK, f"the reply contains “{fallback}”")
-            if not photos_only:
-                # Photos alone pass on no booking news.
-                await self.flow.delivered(chat_id, note)
+                    log.info(
+                        "[%s] Auto-sent AI reply to chat %s%s.", self.session_id, chat_id,
+                        f" as {len(parts)} messages" if len(parts) > 1 else "",
+                    )
+                else:
+                    if hold and self.config["auto_send"]:
+                        log.info("[%s]   reply carries a video — held for approval in the panel.", self.session_id)
+                    row = await self.db.record_message(
+                        chat_id, DIR_OUT, STATUS_PENDING, text, bump_preview=False, attachments=attachments,
+                        llm_model=model, prompt_version=version,
+                    )
+                    if row is not None:
+                        await self.push_message(row)
+                    log.info("[%s] Draft awaiting approval for chat %s.", self.session_id, chat_id)
+                    # Waiting for approval because auto_send is off or for a
+                    # video is a normal draft; held by policy is unanswered.
+                    if not verdict.ok:
+                        await self.queue_unanswered(chat_id, unanswered.POLICY_HOLD, "; ".join(verdict.reasons))
+                if fallback:
+                    await self.queue_unanswered(chat_id, unanswered.FALLBACK, f"the reply contains “{fallback}”")
+                if not photos_only:
+                    # Photos alone pass on no booking news.
+                    await self.flow.delivered(chat_id, note)
+            finally:
+                self.end_sending(chat_id)
             await scheduler.clear_deferred(self.pool, self.tenant_id, chat_id)
             self.schedule_go_offline(chat_id)
 
@@ -2273,8 +2328,11 @@ class SessionRuntime:
         if is_provider:
             if has_photo and await self.save_owner_photo(message, text):
                 return
-            if has_text and await self.flow.on_owner_message(chat_id, text, message.reply_to):
-                log.info("[%s]   booking command from the owner — handled.", self.session_id)
+            # A command, or (booking.owner_free_text) anything she writes:
+            # read and answered by the booking flow, never with a reply
+            # meant for a customer.
+            if has_text and await self.flow.on_owner_message(chat_id, text, message.reply_to, message_id):
+                log.info("[%s]   message from the booking owner — handled by the booking flow.", self.session_id)
                 return
             log.info("[%s]   message from the booking owner; replying as usual.", self.session_id)
 

@@ -55,12 +55,26 @@ _WRITABLE = {
     "attendance_confirmed_at", "arrived_at", "arrival_photo_match", "instructions_sent_at",
     "instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at",
     "ready_at", "ready_reminded_at", "taxi_link", "taxi_link_at", "in_taxi_at", "in_taxi_by", "proof_at",
-    "customer_name", "customer_username",
+    "customer_name", "customer_username", "extras_ok", "extras_no", "booker_asked_at",
 }
 
 
 def _row(record: Optional[asyncpg.Record]) -> Optional[dict[str, Any]]:
     return dict(record) if record is not None else None
+
+
+def _booking(record: asyncpg.Record) -> dict[str, Any]:
+    """A bookings row, with booker_news as the list it holds (asyncpg hands
+    JSONB over as text). booker_news is written only by add_booker_news and
+    clear_booker_news, never through apply() or set_fields()."""
+    booking = dict(record)
+    if isinstance(booking.get("booker_news"), str):
+        booking["booker_news"] = json.loads(booking["booker_news"])
+    return booking
+
+
+def _booking_or_none(record: Optional[asyncpg.Record]) -> Optional[dict[str, Any]]:
+    return _booking(record) if record is not None else None
 
 
 def public(booking: dict[str, Any]) -> dict[str, Any]:
@@ -87,10 +101,10 @@ class BookingStore:
         )
         if row is None:
             raise BookingNotFound(f"no booking {booking_id}")
-        return dict(row)
+        return _booking(row)
 
     async def by_number(self, number: int) -> Optional[dict[str, Any]]:
-        return _row(await self.pool.fetchrow(
+        return _booking_or_none(await self.pool.fetchrow(
             "SELECT * FROM bookings WHERE tenant_id = $1 AND number = $2", self.tenant_id, number,
         ))
 
@@ -102,14 +116,66 @@ class BookingStore:
             "AND ($4 OR ends_at > now() - interval '12 hours') ORDER BY starts_at",
             self.tenant_id, chat_id, list(states), include_past,
         )
-        return [dict(r) for r in rows]
+        return [_booking(r) for r in rows]
 
     async def with_notice(self, chat_id: int) -> list[dict[str, Any]]:
         rows = await self.pool.fetch(
             "SELECT * FROM bookings WHERE tenant_id = $1 AND chat_id = $2 AND customer_notice IS NOT NULL "
             "ORDER BY updated_at", self.tenant_id, chat_id,
         )
-        return [dict(r) for r in rows]
+        return [_booking(r) for r in rows]
+
+    async def with_news(self, chat_id: int) -> list[dict[str, Any]]:
+        """The chat's bookings (in any state) holding words of the booker's
+        that his next reply has to pass on."""
+        rows = await self.pool.fetch(
+            "SELECT * FROM bookings WHERE tenant_id = $1 AND chat_id = $2 AND booker_news <> '[]'::jsonb "
+            "ORDER BY number", self.tenant_id, chat_id,
+        )
+        return [_booking(r) for r in rows]
+
+    async def all_with_news(self) -> list[dict[str, Any]]:
+        """Every booking of the tenant still holding words of the booker's
+        (the tick drops those too old to pass on)."""
+        rows = await self.pool.fetch(
+            "SELECT * FROM bookings WHERE tenant_id = $1 AND booker_news <> '[]'::jsonb ORDER BY number",
+            self.tenant_id,
+        )
+        return [_booking(r) for r in rows]
+
+    async def clear_notice(self, booking_id: int, told: dict[str, Any]) -> None:
+        """The customer was told the notice in `told` (customer_notice and
+        the times it was about, as the reply read them): cleared only while
+        the booking still says exactly that, so a newer notice set while the
+        reply went out — the same kind of notice with new times too ("make
+        it 2 hours" during "it's booked") — stays for the next reply."""
+        await self.pool.execute(
+            "UPDATE bookings SET updated_at = now(), customer_notice = NULL "
+            "WHERE tenant_id = $1 AND id = $2 AND customer_notice = $3 AND starts_at = $4 AND ends_at = $5 "
+            "AND proposed_starts_at IS NOT DISTINCT FROM $6 AND proposed_ends_at IS NOT DISTINCT FROM $7",
+            self.tenant_id, booking_id, told["customer_notice"], told["starts_at"], told["ends_at"],
+            told.get("proposed_starts_at"), told.get("proposed_ends_at"),
+        )
+
+    async def refused_extras(self, chat_id: int) -> list[str]:
+        """The extras the booker refused for this chat's customer, on any of
+        its bookings (any state, past ones too), each once. Her latest word
+        on an extra counts: one she refused and later took is not refused."""
+        rows = await self.pool.fetch(
+            "SELECT extras_ok, extras_no FROM bookings WHERE tenant_id = $1 AND chat_id = $2 "
+            "AND (extras_ok <> '' OR extras_no <> '') ORDER BY number", self.tenant_id, chat_id,
+        )
+        # Extra (any case) -> as she wrote it when her last word was no, else
+        # None; in the order of her last words.
+        said: dict[str, Optional[str]] = {}
+        for row in rows:
+            for column, refused in (("extras_ok", False), ("extras_no", True)):
+                for item in row[column].split(","):
+                    item = " ".join(item.split())
+                    if item:
+                        said.pop(item.lower(), None)
+                        said[item.lower()] = item if refused else None
+        return [item for item in said.values() if item]
 
     async def awaiting_owner(self) -> list[dict[str, Any]]:
         """What the owner can answer right now: new requests, and moves the
@@ -120,7 +186,7 @@ class BookingStore:
             ") AND starts_at > now() - interval '1 day' ORDER BY number",
             self.tenant_id,
         )
-        return [dict(r) for r in rows]
+        return [_booking(r) for r in rows]
 
     async def due_cleanups(self, now: datetime) -> list[dict[str, Any]]:
         """Bookings whose arrival messages are due to be deleted."""
@@ -129,14 +195,14 @@ class BookingStore:
             "AND instructions_cleaned_at IS NULL ORDER BY instructions_cleanup_at",
             self.tenant_id, now,
         )
-        return [dict(r) for r in rows]
+        return [_booking(r) for r in rows]
 
     async def unsent(self) -> list[dict[str, Any]]:
         rows = await self.pool.fetch(
             "SELECT * FROM bookings WHERE tenant_id = $1 AND state = 'requested' AND starts_at > now() "
             "ORDER BY number", self.tenant_id,
         )
-        return [dict(r) for r in rows]
+        return [_booking(r) for r in rows]
 
     async def between(
         self, start: datetime, end: datetime, states: Optional[Sequence[str]] = None,
@@ -146,7 +212,7 @@ class BookingStore:
             "AND ($4::text[] IS NULL OR state = ANY($4::text[])) ORDER BY starts_at, number",
             self.tenant_id, start, end, list(states) if states else None,
         )
-        return [dict(r) for r in rows]
+        return [_booking(r) for r in rows]
 
     async def busy(
         self, start: datetime, end: datetime, *, exclude_id: Optional[int] = None,
@@ -213,7 +279,7 @@ class BookingStore:
                 )
         except asyncpg.exceptions.ExclusionViolationError:
             raise SlotTaken("that time overlaps another booking") from None
-        return dict(row)
+        return _booking(row)
 
     async def apply(self, booking: dict[str, Any], change: bs.Change, *, actor: str) -> dict[str, Any]:
         """Write a transition computed by booking_states from `booking`."""
@@ -249,7 +315,7 @@ class BookingStore:
                 )
         except asyncpg.exceptions.ExclusionViolationError:
             raise SlotTaken("that time overlaps another booking") from None
-        return dict(row)
+        return _booking(row)
 
     async def set_fields(self, booking_id: int, **fields: Any) -> dict[str, Any]:
         """Bookkeeping that is not a state change (calendar id, notice told,
@@ -266,7 +332,7 @@ class BookingStore:
         )
         if row is None:
             raise BookingNotFound(f"no booking {booking_id}")
-        return dict(row)
+        return _booking(row)
 
     async def set_once(self, booking_id: int, column: str, value: Any, **fields: Any) -> Optional[dict[str, Any]]:
         """Set `column` (and `fields`) on a confirmed booking only while the
@@ -279,10 +345,43 @@ class BookingStore:
         for key, field_value in fields.items():
             args.append(field_value)
             sets.append(f"{key} = ${len(args)}")
-        return _row(await self.pool.fetchrow(
+        return _booking_or_none(await self.pool.fetchrow(
             f"UPDATE bookings SET {', '.join(sets)} WHERE tenant_id = $1 AND id = $2 AND {column} IS NULL "
             "AND state = 'confirmed' RETURNING *", *args,
         ))
+
+    async def add_booker_news(self, booking_id: int, item: dict[str, Any], **fields: Any) -> dict[str, Any]:
+        """The booker's words for his next reply (bookings.booker_news_item),
+        added in the statement itself, so words added at the same moment
+        (or a reply clearing older ones) are never lost; `fields` (her
+        extras, booker_asked_at) are written with them."""
+        unknown = set(fields) - _WRITABLE
+        if unknown:
+            raise ValueError(f"not writable: {sorted(unknown)}")
+        sets = ["updated_at = now()", "booker_news = booker_news || jsonb_build_array($3::jsonb)"]
+        args: list[Any] = [self.tenant_id, booking_id, json.dumps(item)]
+        for key, value in fields.items():
+            args.append(value)
+            sets.append(f"{key} = ${len(args)}")
+        row = await self.pool.fetchrow(
+            f"UPDATE bookings SET {', '.join(sets)} WHERE tenant_id = $1 AND id = $2 RETURNING *", *args,
+        )
+        if row is None:
+            raise BookingNotFound(f"no booking {booking_id}")
+        return _booking(row)
+
+    async def clear_booker_news(self, booking_id: int, item_ids: Sequence[str]) -> None:
+        """The booker's words that a reply carried, by their ids: anything
+        added since that reply was written stays for the next one."""
+        if not item_ids:
+            return
+        await self.pool.execute(
+            "UPDATE bookings SET updated_at = now(), booker_news = COALESCE(("
+            "  SELECT jsonb_agg(news.item ORDER BY news.n) FROM jsonb_array_elements(booker_news) "
+            "  WITH ORDINALITY AS news(item, n) WHERE NOT COALESCE(news.item->>'id' = ANY($3::text[]), false)"
+            "), '[]'::jsonb) WHERE tenant_id = $1 AND id = $2",
+            self.tenant_id, booking_id, list(item_ids),
+        )
 
     async def _event(
         self, con: asyncpg.Connection, booking_id: int, from_state: Optional[str], to_state: str,
@@ -326,7 +425,7 @@ class BookingStore:
         }
         out = []
         for row in rows:
-            booking = dict(row)
+            booking = _booking(row)
             confirmed_at = booking["decided_at"] or booking["created_at"]
             # Only the latest due reminder of a booking goes out: after a
             # restart that skipped the 24 h one, the 2 h one alone is sent.
