@@ -806,6 +806,8 @@ async def run_case(data: dict[str, Any], case: dict[str, Any], *, key: str, tz: 
         return Result(case, "model could not be read", False)
     commands = bookings.owner_commands_from(reading.answers, rows, now=now, tz_name=tz, replied=replied,
                                             outcall_taxi=outcall_taxi, typed=case["latest"])
+    # As the runtime: a remark about one customer is no rule for all of them.
+    heard, reading = reading, replace(reading, standing=bookings.standing_for_all(reading.standing, rows))
     plan = bookings.plan_owner_answer(typed, commands, standing=reading.standing,
                                       held_words=bool(asked and asked["held"]),
                                       settled={b["number"] for b in rows if bookings.is_settled(b)})
@@ -826,7 +828,7 @@ async def run_case(data: dict[str, Any], case: dict[str, Any], *, key: str, tz: 
     wrong = judge(case, cmds, done, now=now, tz=tz, rows=rows, earlier_lost=plan.earlier_lost)
     if case.get("from_reading") and not commands:
         wrong.append("from_reading: the reading had nothing for it; only the question the plan leads to")
-    raw = {"answers": [dict(a) for a in reading.answers], "standing": reading.standing}
+    raw = {"answers": [dict(a) for a in heard.answers], "standing": heard.standing}
     return Result(case, "; ".join([got, *notes]), not wrong, raw, wrong)
 
 

@@ -843,3 +843,35 @@ def test_she_is_told_when_the_reading_agrees_but_drops_what_she_said_before():
     # The same for a plain YES without a number.
     plan = bookings.plan_owner_answer(bookings.OwnerCommand("yes"), [plain], held_words=True)
     assert plan.commands == (plain,) and plan.earlier_lost
+
+
+# ------------------------------------- from the first run against the real model
+
+
+@pytest.mark.parametrize("typed, kinds", [
+    ("yes i confirm", [("unclear", None)]),           # names neither: asked which
+    ("both fine", [("yes", 3), ("yes", 4)]),
+    ("оба норм", [("yes", 3), ("yes", 4)]),
+    ("los dos bien", [("yes", 3), ("yes", 4)]),
+    ("yes 3 and 4", [("yes", 3), ("yes", 4)]),
+    ("yes to Khan and Marco", [("yes", 3), ("yes", 4)]),
+    ("yes to Khan", [("yes", 3), ("unclear", 4)]),    # the other one: yes or no?
+])
+def test_a_yes_to_several_waiting_bookings_needs_them_named(typed, kinds):
+    got = commands([{"action": "yes", "number": 3}, {"action": "yes", "number": 4}], typed=typed)
+    assert [(c.kind, c.number) for c in got] == kinds
+    if kinds == [("unclear", None)]:
+        assert (got[0].missing, got[0].candidates) == ("which", (3, 4))
+
+
+def test_one_waiting_booking_and_a_confirmed_one_are_not_asked_about():
+    # A yes to the waiting one and a "stays" for the confirmed one: nothing to ask.
+    got = commands([{"action": "yes", "number": 3}, {"action": "yes", "number": 6}], typed="yes i confirm")
+    assert [(c.kind, c.number) for c in got] == [("yes", 3), ("stays", 6)]
+
+
+def test_a_remark_about_one_customer_is_no_rule_for_all():
+    rows = [_row(6, bs.CONFIRMED, customer_name="Juris")]
+    assert bookings.standing_for_all("after today don't take Juris again", rows) == ""
+    assert bookings.standing_for_all("from now on cash only", rows) == "from now on cash only"
+    assert bookings.standing_for_all("", rows) == ""

@@ -641,6 +641,8 @@ class BookingFlow:
             reading.answers, rows, now=self.now(), tz_name=self.tz, replied=self._replied(rows, reply_to, quoted),
             outcall_taxi=self.outcall_taxi(), typed=text,
         )
+        # A remark about one customer is no rule for all of them.
+        reading = replace(reading, standing=bookings.standing_for_all(reading.standing, rows))
         plan = bookings.plan_owner_answer(
             cmd, commands, standing=reading.standing, held_words=answering and self._held_words(cmd),
             settled={b["number"] for b in rows if bookings.is_settled(b)},

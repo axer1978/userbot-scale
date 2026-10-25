@@ -497,8 +497,8 @@ OWNER_ANSWER_SYSTEM_PROMPT = (
     "asking to move a booking: they agree to the new time. A yes with a condition ('yes if he comes "
     "alone', 'yes but only 1 hour', 'ok, cash only') is still yes; the condition goes in the fields "
     "below.\n"
-    "- no: they turn it down and give no other time: 'no', 'not today', 'I'm busy', 'can't', 'нет', "
-    "'nē', 'no puedo'.\n"
+    "- no: they turn it down and give no other time, now or earlier in the chat: 'no', 'not "
+    "today', 'I'm busy', 'can't', 'нет', 'nē', 'no puedo'.\n"
     "- ready_at: they say WHEN they will be ready or free instead of a plain yes: 'I'm ready in 20 "
     "minutes', 'give me half an hour', 'I can meet in 1 hour', 'free after 15:00', 'yes but in 40 "
     "min'. A delay goes in in_minutes (counted from their latest message), a clock time in start.\n"
@@ -518,8 +518,13 @@ OWNER_ANSWER_SYSTEM_PROMPT = (
     "The fields of an answer:\n"
     "- number: the booking it is about: the one their message replies to (when given below), the "
     "one they name by number or by the customer's name, else the only booking it can be about; "
-    "null when you cannot tell. When my last message asked them something (which booking? what "
-    "time?), their latest message answers it: read the two of theirs together.\n"
+    "null when you cannot tell. A yes or no that names no booking while several wait for their "
+    "answer is ONE answer with number null — never one answer per booking — unless they clearly "
+    "mean all of them ('both fine', 'all ok', 'оба', 'abi', 'los dos'). When my last message asked "
+    "them something (which booking? what time?), their latest message answers it: read the two of "
+    "theirs together. When their latest message points back at something they said before ('like "
+    "I said', 'как я и говорила', 'kā jau teicu', 'como te dije'), act on what they said then: a "
+    "time they gave then ('today only after 20:00') is the time now (action time), not a no.\n"
     "- start / in_minutes: only with ready_at and time. 24-hour local time in the given timezone; "
     "resolve 'today', 'tomorrow' and bare hours ('at 8' in the afternoon is 20:00) from the "
     "current date and time. Never invent a time that was not said.\n"
@@ -541,7 +546,9 @@ OWNER_ANSWER_SYSTEM_PROMPT = (
     "- for_me: true when they ask ME something about the booking: 'how long does he want?', 'what "
     "extras did he ask for?', 'is it outcall?', 'did he send the photo?'.\n"
     "standing: an instruction about ALL future customers rather than one booking ('from now on "
-    "cash only', 'no more anal for anyone'), in their words; else null.\n"
+    "cash only', 'no more anal for anyone'), in their words; else null. Never about one customer: "
+    "'don't take him again', 'after today not him', 'he's banned' are private remarks and go "
+    "nowhere.\n"
     "Put each thing in one place only, and make nothing up: an empty list, null or false is always "
     "better than a guess."
 )
@@ -989,7 +996,53 @@ def owner_commands_from(
             commands.append(cmd)
         else:
             commands[same] = _merge(commands[same], cmd)
-    return commands
+    return _unnamed_asked(commands, rows, typed)
+
+
+# Her words mean every booking waiting for her answer ("both fine", "all ok").
+_ALL = re.compile(r"(?i)\b(?:both|all|each|every|оба|обе|обоих|все|всех|abi|abas|abiem|visi|visas|visiem|ambos|"
+                  r"ambas|todos|todas|los\s+dos|las\s+dos)\b")
+
+
+def _names_booking(booking: Mapping[str, Any], typed: str) -> bool:
+    """Her message names this booking: its number, or the customer's name."""
+    if booking.get("number") in _typed_numbers(typed):
+        return True
+    name = " ".join(str(booking.get("customer_name") or "").split()).casefold()
+    return len(name) >= 2 and re.search(rf"(?<!\w){re.escape(name)}(?!\w)", typed.casefold()) is not None
+
+
+def _unnamed_asked(commands: list[OwnerCommand], rows: Sequence[Mapping[str, Any]],
+                   typed: Optional[str]) -> list[OwnerCommand]:
+    """A yes / no the reading gives to several bookings waiting for her answer
+    when her message names none of them and does not say "both" or "all"
+    ("yes i confirm" with two requests waiting): never carried out on the
+    reading's word. The ones she named stay; for the others she is asked
+    (yes or no, or which one)."""
+    if typed is None or _ALL.search(typed):
+        return commands
+    waiting = {b["number"]: b for b in rows if awaits_owner(b)}
+    changing = [c for c in commands if c.kind in ("yes", "no") and c.number in waiting]
+    if len(changing) < 2:
+        return commands
+    unnamed = [c for c in changing if not _names_booking(waiting[c.number], typed)]
+    if not unnamed:
+        return commands
+    kept = [c for c in commands if c not in unnamed]
+    first = unnamed[0]
+    if len(unnamed) == 1:
+        return kept + [replace(first, kind="unclear", at=None, day=None)]
+    return kept + [replace(first, kind="unclear", number=None, missing="which",
+                           candidates=tuple(c.number for c in unnamed), at=None, day=None)]
+
+
+def standing_for_all(standing: str, rows: Sequence[Mapping[str, Any]]) -> str:
+    """Her instruction for every customer, as read — "" when it names one of
+    them ("after today don't take Juris again"): a remark about one man
+    stays private, it is no rule."""
+    if standing and any(_names_booking({"customer_name": b.get("customer_name")}, standing) for b in rows):
+        return ""
+    return standing
 
 
 def owner_command_from(
