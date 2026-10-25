@@ -7,6 +7,7 @@ import {
   BOOKING_STATES, fmtDay, fmtDayKey, fmtShortDay, fmtTime, fmtWhen, percent, QUEUE_REASONS,
 } from "@/lib/owner/format";
 import type { Booking, Dashboard as DashboardData, Overview, QueueItem } from "@/lib/owner/types";
+import { BookingMessages } from "./BookingMessages";
 import { useMe, useOwner } from "./context";
 import { PhotosSection } from "./Photos";
 import { Section, Segmented, StatusLine, Tile, s } from "./parts";
@@ -14,6 +15,9 @@ import { SettingsSheet } from "./Settings";
 import { useOwnerData } from "./useOwnerData";
 
 type View = "all" | number | null;
+type Page = "dashboard" | "messages";
+
+const PAGES = [["dashboard", "Dashboard"], ["messages", "Booking messages"]] as const;
 
 const VIEW_KEY = "owner.view";
 
@@ -38,15 +42,36 @@ export function Dashboard() {
   const me = useMe();
   const ids = useMemo(() => me.tenants.map((t) => t.id), [me.tenants]);
   const [view, setViewState] = useState<View>(() => firstView(ids));
+  const [page, setPageState] = useState<Page>("dashboard");
   const [reloadKey, setReloadKey] = useState(0);
   const [settings, setSettings] = useState(false);
   const top = useRef<HTMLDivElement>(null);
+  // Unsaved edits on Booking messages: moving away asks first.
+  const dirty = useRef(false);
+  const setDirty = useCallback((value: boolean) => { dirty.current = value; }, []);
+
+  function leaveOk(): boolean {
+    if (!dirty.current) return true;
+    if (!window.confirm("Your booking messages have unsaved changes. Leave without saving them?")) return false;
+    dirty.current = false;
+    return true;
+  }
 
   function setView(next: View) {
+    if (!leaveOk()) return;
     setViewState(next);
     writeView(next);
     top.current?.scrollIntoView({ block: "start" });
   }
+
+  function setPage(next: Page) {
+    if (next === page || !leaveOk()) return;
+    setPageState(next);
+    top.current?.scrollIntoView({ block: "start" });
+  }
+
+  // Booking messages are per business: the one picked, else the first.
+  const messagesTenant = me.tenants.find((t) => t.id === view) ?? me.tenants[0];
 
   return (
     <>
@@ -57,21 +82,34 @@ export function Dashboard() {
           <span className={cx(s.muted, s.small)}>{me.display_name || me.username}</span>
         </div>
         <button type="button" className={`${s.btn} ${s.ghost}`} title="Load the latest numbers"
-                onClick={() => setReloadKey((k) => k + 1)}>Refresh</button>
+                onClick={() => { if (leaveOk()) setReloadKey((k) => k + 1); }}>Refresh</button>
         <button type="button" className={s.btn} onClick={() => setSettings(true)}>Settings</button>
       </header>
+      {me.tenants.length > 0 && (
+        <nav className={s.switcher} aria-label="Pages">
+          <Segmented options={PAGES} value={page} onChange={setPage} />
+        </nav>
+      )}
       {me.tenants.length > 1 && (
         <div className={s.switcher}>
           <label htmlFor="switcher" className={s.srOnly}>Business</label>
-          <select id="switcher" value={String(view)} onChange={(e) => setView(e.target.value === "all" ? "all" : Number(e.target.value))}>
-            <option value="all">All my businesses</option>
-            {me.tenants.map((t) => <option key={t.id} value={String(t.id)}>{t.name}</option>)}
-          </select>
+          {page === "messages" && messagesTenant ? (
+            <select id="switcher" value={String(messagesTenant.id)} onChange={(e) => setView(Number(e.target.value))}>
+              {me.tenants.map((t) => <option key={t.id} value={String(t.id)}>{t.name}</option>)}
+            </select>
+          ) : (
+            <select id="switcher" value={String(view)} onChange={(e) => setView(e.target.value === "all" ? "all" : Number(e.target.value))}>
+              <option value="all">All my businesses</option>
+              {me.tenants.map((t) => <option key={t.id} value={String(t.id)}>{t.name}</option>)}
+            </select>
+          )}
         </div>
       )}
       <main className={s.content}>
         {!me.tenants.length ? (
           <div className={s.empty}>No business is linked to your login yet. Please contact your provider.</div>
+        ) : page === "messages" && messagesTenant ? (
+          <BookingMessages key={`${messagesTenant.id}:${reloadKey}`} tenant={messagesTenant} onDirtyChange={setDirty} />
         ) : view === "all" ? (
           <OverviewView key={`all:${reloadKey}`} onOpen={setView} />
         ) : view !== null ? (

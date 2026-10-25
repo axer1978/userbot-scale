@@ -938,3 +938,48 @@ export type ChatExampleView = {
   // Messages written since it was flagged.
   newer: number;
 };
+
+/* ------------------------------------------------ messages to the booker */
+// GET/PUT /api/tenants/{id}/booker-messages (admin) and
+// /api/owner/booker-messages?tenant_id=N (owner): the language of the bot's
+// messages to the person who answers booking requests, and the account's
+// own wording for the main ones (booker_settings.py).
+
+export type BookerLanguage = "en" | "ru" | "lv" | "es";
+
+export type BookerBlank = { name: string; about: string };
+
+export type BookerTemplate = {
+  key: string;
+  label: string;
+  about: string;
+  blanks: BookerBlank[];
+  // The default text in every language.
+  defaults: Record<BookerLanguage, string>;
+  // Blanks added back automatically when the text leaves them out.
+  kept: string[];
+};
+
+export type BookerPreview = {
+  // Each message as the bot would send it, for a made-up booking.
+  preview: Record<string, string>;
+  // What is wrong with a text (that one then shows as its default).
+  problems: Record<string, string[]>;
+};
+
+export type BookerMessagesView = BookerPreview & {
+  language: BookerLanguage;
+  // The account's own texts; a missing one is the default.
+  messages: Record<string, string>;
+  languages: { key: BookerLanguage; label: string }[];
+  templates: BookerTemplate[];
+  max_length: number;
+  revision: number;
+};
+
+export type BookerMessagesBody = {
+  language: BookerLanguage;
+  messages: Record<string, string>;
+  expected_revision?: number;
+  reason?: string;
+};

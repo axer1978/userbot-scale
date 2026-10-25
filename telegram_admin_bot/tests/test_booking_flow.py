@@ -206,6 +206,28 @@ async def test_without_her_name_the_owner_sees_the_account_name_and_the_customer
     assert "Your name is" not in w.script["notes"][-1]
 
 
+async def test_the_accounts_own_confirmed_message_goes_to_the_owner(world):
+    w = world
+    w.app.config["booking"]["booker_messages"] = {"confirmed": "Done #{number}, {customer} {when}"}
+    await customer(w, "tomorrow at 15?", book())
+    # The request has no text of the account's: the default.
+    assert w.sent[OWNER][-1].startswith("📅 Booking request #1\n")
+
+    await owner(w, "YES 1")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1] == "Done #1, Anna Tue 05 Mar 2030, 15:00–16:00"
+
+
+async def test_an_own_message_that_cannot_be_used_falls_back_to_the_default(world):
+    w = world
+    # Stored without the panel's check: a blank the message does not have.
+    w.app.config["booking"]["booker_messages"] = {"confirmed": "Done #{number} {nope}"}
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1] == "#1 confirmed ✅ for Tue 05 Mar 2030, 15:00–16:00 (1 hour) — Anna will be told."
+
+
 async def test_the_address_follows_the_reply_that_says_it_is_confirmed(world):
     w = world
     w.app.config["booking"]["address"] = "Brivibas iela 1, Riga"

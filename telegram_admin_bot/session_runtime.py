@@ -893,8 +893,7 @@ class SessionRuntime:
         await self.clear_deferred(chat_id)
         excerpt = text if len(text) <= 300 else text[:299] + "…"
         row = await self.flow.send_owner(
-            f"⚠️ {name} needs a person: their message contains “{keyword}”. The bot has stopped answering "
-            f"them until the chat is switched back on in the panel.\n\n“{excerpt}”",
+            self.flow.texts().say("escalation", name=name, keyword=keyword, excerpt=excerpt),
             reason="escalation to the owner",
         )
         told = row is not None
