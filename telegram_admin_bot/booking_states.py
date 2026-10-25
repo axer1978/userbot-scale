@@ -251,11 +251,13 @@ def change_length(
 ) -> Change:
     """The owner makes a confirmed booking longer or shorter ("make it 2
     hours"): same start, a new end. Also while it is under way, as long as
-    the new end is still to come."""
+    the new end is still to come. A notice he has not been told yet (it is
+    confirmed, she is ready, she is in the taxi) is kept: it says the new
+    end too, and dropping it would lose that news."""
     state = _require(booking, "change the length of", (CONFIRMED,), actor, DECIDERS)
     _future(ends_at, now, "the new end")
     return Change("change_length", state, CONFIRMED, {
-        **_length(booking, ends_at, blocked_until), "customer_notice": NOTICE_LENGTH,
+        **_length(booking, ends_at, blocked_until), "customer_notice": booking.get("customer_notice") or NOTICE_LENGTH,
     })
 
 

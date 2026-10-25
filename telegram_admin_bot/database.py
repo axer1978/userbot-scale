@@ -711,14 +711,16 @@ class Database:
             )
         return [_message(r) for r in rows]
 
-    async def get_history_for_ai(self, chat_id: int, limit: int = 30, *,
-                                 with_times: bool = False) -> list[dict[str, Any]]:
+    async def get_history_for_ai(self, chat_id: int, limit: int = 30, *, with_times: bool = False,
+                                 upto_id: Optional[int] = None) -> list[dict[str, Any]]:
         """Recent exchange as OpenAI-style role/content pairs.
 
         Drafts that were never approved, rejections and error rows are left
         out — only what actually crossed the wire is context for the model.
         `with_times` adds "at", when the row was stored (the reply's clock,
         ai_responder.Clock); the caller takes it out before the API sees it.
+        `upto_id`: their messages stored after that row are left out (one
+        message of theirs read while their later ones wait); ours stay.
         """
         tid = await self.tenant_id()
         async with self._pool.acquire() as con:
@@ -740,6 +742,8 @@ class Database:
                 [DIR_IN, DIR_OUT],
                 limit,
             )
+        if upto_id is not None:
+            rows = [r for r in rows if not (r["direction"] == DIR_IN and r["id"] > upto_id)]
         history: list[dict[str, Any]] = [
             {"role": "user" if r["direction"] == DIR_IN else "assistant", "content": r["text"]}
             for r in rows

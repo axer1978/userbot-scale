@@ -134,6 +134,24 @@ class BookingStore:
         )
         return [_booking(r) for r in rows]
 
+    async def all_with_news(self) -> list[dict[str, Any]]:
+        """Every booking of the tenant still holding words of the booker's
+        (the tick drops those too old to pass on)."""
+        rows = await self.pool.fetch(
+            "SELECT * FROM bookings WHERE tenant_id = $1 AND booker_news <> '[]'::jsonb ORDER BY number",
+            self.tenant_id,
+        )
+        return [_booking(r) for r in rows]
+
+    async def clear_notice(self, booking_id: int, notice: str) -> None:
+        """The customer was told `notice`: cleared only while it is still
+        that one, so a newer notice set while the reply went out stays."""
+        await self.pool.execute(
+            "UPDATE bookings SET updated_at = now(), customer_notice = NULL "
+            "WHERE tenant_id = $1 AND id = $2 AND customer_notice = $3",
+            self.tenant_id, booking_id, notice,
+        )
+
     async def refused_extras(self, chat_id: int) -> list[str]:
         """The extras the booker refused for this chat's customer, on any of
         its bookings (any state, past ones too), each once. Her latest word

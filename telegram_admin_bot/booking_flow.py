@@ -29,11 +29,12 @@ free, what state the booking goes to, and who is told what, is decided here.
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextvars
 import logging
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Sequence
@@ -80,6 +81,16 @@ ASKED_FOR = timedelta(hours=3)
 # After the bot asked her something (which booking? yes or no?), her next
 # message within this long is read together with the one it asked about.
 ANSWER_WINDOW = timedelta(minutes=30)
+# Her words for him that no reply has carried after this long (his chat not
+# answered: paused, taken over, the account off) are dropped, and she is
+# told; so are words about a meeting that has ended since.
+NEWS_FOR = timedelta(hours=24)
+# How many of the messages sent to her are remembered with their booking
+# (a quote of one of them falls on that booking).
+ABOUT_KEPT = 500
+# Reading her words never holds her next messages (or a WhatsApp inbox)
+# longer than this, waiting for a free AI slot included.
+OWNER_READ_BUDGET = ai_responder.OWNER_READ_DEADLINE_SECONDS + 10
 # Her commands that change a booking (and so end a question she had put to
 # him about it).
 CHANGES = ("yes", "no", "propose", "cancel", "done", "noshow", "ready", "in_taxi")
@@ -110,6 +121,9 @@ class ReplyNote:
     # The owner's words for him this reply passes on: booking id -> the ids
     # of its booker_news items, cleared once the reply is out.
     her_words: dict[int, list[str]] = field(default_factory=dict)
+    # The notice of each booking this reply tells (booking id -> notice): a
+    # newer one set while it goes out is kept.
+    notices: dict[int, str] = field(default_factory=dict)
 
     @property
     def has_news(self) -> bool:
@@ -124,6 +138,12 @@ class OwnerOutcome:
     line: str
     booking: Optional[dict[str, Any]] = None
     went: bool = False
+    # Her line asks her something about these bookings: her next message
+    # answers it, and is read together with this one.
+    asks: tuple[int, ...] = ()
+    # The booking itself did not change (a length that is not free), but
+    # her words for him go on all the same.
+    words_go: bool = False
 
 
 class BookingFlow:
@@ -152,8 +172,19 @@ class BookingFlow:
         # The owner's messages are carried out one at a time, in order: the
         # next one is read knowing what the last one did.
         self._owner_lock = asyncio.Lock()
-        # When the bot last asked her a question her next message answers.
-        self._asked_her_at: Optional[datetime] = None
+        # The bot's questions to her that her next message may answer:
+        # booking number -> (when asked, the id of the question's message,
+        # whether her message it asked about carried words, a length or
+        # extras). Set once the question is out (answer_owner).
+        self._held: dict[int, tuple[datetime, Optional[int], bool]] = {}
+        self._pending_held: list[tuple[int, bool]] = []
+        # Which booking each message sent to her is about (by its id; the
+        # last ABOUT_KEPT), and what the last one was about (0: several, or
+        # none): a quote of one, or her bare YES right after it, falls on it.
+        self._about: "collections.OrderedDict[str, int]" = collections.OrderedDict()
+        self._last_about: Optional[int] = None
+        # The bookings her message being handled is about (answer_owner).
+        self._answer_about: set[int] = set()
         self._provider: tuple[str, Optional[int], float] = ("", None, 0.0)
         self._calendar: Optional[google_calendar.GoogleCalendar] = None
         self._calendar_key: tuple[str, str] = ("", "")
@@ -486,9 +517,27 @@ class BookingFlow:
             await self.rt.push_error(booking["chat_id"], f"Booking #{booking['number']}: could not reach the owner "
                                      "(check booking.provider). They can still answer from the panel.")
             return
+        self._remember(row, booking["number"])
         ref = self.owner_message_ref(row)
         if remember and any(ref.values()):
             await self.store.set_fields(booking["id"], **ref)
+
+    def _remember(self, row: Optional[dict[str, Any]], about: Optional[int]) -> None:
+        """A message went to her about booking `about` (0 or None: several,
+        or none): a quote of it, or her bare YES right after it, falls on it."""
+        if row is None:
+            return
+        self._last_about = about or 0
+        ref = row.get("wa_message_id") or row.get("telegram_id")
+        if ref is not None and about:
+            self._about[str(ref)] = about
+            self._about.move_to_end(str(ref))
+            while len(self._about) > ABOUT_KEPT:
+                self._about.popitem(last=False)
+
+    def _quoted(self, reply_to: Any) -> Optional[int]:
+        """The booking a message she quoted is about, when the bot knows."""
+        return self._about.get(str(reply_to)) if reply_to is not None else None
 
     def owner_message_ref(self, row: dict[str, Any]) -> dict[str, Any]:
         """Where the id of a message sent to the owner is kept: Telegram's
@@ -515,6 +564,7 @@ class BookingFlow:
         try:
             request = bookings.format_request(booking, changed=changed, name=self.owner_name())
             row = await self.rt.send_as_me(provider, request, reason="booking request to the owner")
+            self._remember(row, booking["number"])
         except Exception as exc:
             if not await self.rt.handle_send_failure(provider, exc):
                 await self.rt.push_error(booking["chat_id"], f"Could not send booking #{booking['number']} to the "
@@ -534,19 +584,22 @@ class BookingFlow:
         await self.sync_calendar(None, booking)
         return True
 
-    async def on_owner_message(self, chat_id: int, text: str, reply_to: Optional[int]) -> bool:
+    async def on_owner_message(self, chat_id: int, text: str, reply_to: Any, message_id: Optional[int] = None) -> bool:
         """The owner's message in her chat. True when it was dealt with here
         and gets no ordinary reply: a command, and — while her own words are
         read (booking.owner_free_text) — every message, so her chat never
         gets a customer's reply. Her messages are carried out one at a time,
-        in the order they came."""
+        in the order they came. `message_id`: its stored row, so the reader
+        sees her chat up to it and not the messages she sent after it."""
         async with self._owner_lock:
             held: set[int] = set()
             token = _held_nudges.set(held)
             try:
-                return await self._owner_message(chat_id, text, reply_to)
+                return await self._owner_message(chat_id, text, reply_to, message_id)
             finally:
                 _held_nudges.reset(token)
+                self._pending_held.clear()
+                self._answer_about.clear()
                 # Each customer's chat she changed gets its one reply now; one
                 # that can't be started does not keep the others from theirs.
                 for customer_chat in sorted(held):
@@ -558,80 +611,154 @@ class BookingFlow:
                         log.exception("[%s] Could not start the reply in chat %s after the owner's answer",
                                       self.rt.session_id, customer_chat)
 
-    async def _owner_message(self, chat_id: int, text: str, reply_to: Optional[int]) -> bool:
+    async def _owner_message(self, chat_id: int, text: str, reply_to: Any, message_id: Optional[int]) -> bool:
         cmd = bookings.parse_owner_reply(text, today=self.local_today())
         if cmd is not None and cmd.kind in ("ready", "in_taxi") and not self.outcall_taxi():
             cmd = None
-        free_text = bool(self.settings.get("owner_free_text", True))
-        # She was just asked something about her last message (which booking?
-        # yes or no?): this one answers it, and is read together with it, so
-        # what she said there (the length, the words for him) is not lost to
-        # a plain YES.
-        now = self.now()
-        answering = self._asked_her_at is not None and now - self._asked_her_at < ANSWER_WINDOW
-        self._asked_her_at = None
-        if cmd is not None and (not free_text or (not cmd.loose and not answering)):
-            # A strict command never costs a model call.
+        if not self.settings.get("owner_free_text", True):
+            # Commands only, as they always were.
+            if cmd is None:
+                return False
             await self.answer_owner(chat_id, [await self.owner_command(cmd, reply_to)])
             return True
-        if not free_text:
-            return False
+        quoted = self._quoted(reply_to)
+        answering = False
+        if cmd is not None and not cmd.loose:
+            cmd, read_it, answering = await self._strict(cmd, reply_to, quoted, message_id)
+            if not read_it:
+                # A strict command never costs a model call.
+                await self.answer_owner(chat_id, [await self.owner_command(cmd, reply_to)])
+                return True
         # Her own words ("yes, tell him to bring cash", "yes 3, no 4", "I'm
         # ready in 20 minutes"), read against what each customer asked for.
         rows = await self.owner_rows()
-        reading = await self.read_owner_answer(chat_id, text, reply_to, rows)
+        reading, failed = await self.read_owner_answer(chat_id, text, reply_to, rows, quoted=quoted,
+                                                       upto_id=message_id)
         if reading is None:
-            await self.answer_owner(chat_id, await self._unread(cmd, text, rows, reply_to, answering))
+            await self.answer_owner(chat_id, await self._unread(cmd, text, rows, reply_to, failed, answering))
             return True
         commands = bookings.owner_commands_from(
-            reading.answers, rows, now=now, tz_name=self.tz, replied=self._replied(rows, reply_to),
+            reading.answers, rows, now=self.now(), tz_name=self.tz, replied=self._replied(rows, reply_to, quoted),
             outcall_taxi=self.outcall_taxi(), typed=text,
         )
-        log.info("[%s]   owner's answer read as %s%s", self.rt.session_id,
+        plan = bookings.plan_owner_answer(
+            cmd, commands, standing=reading.standing, held_words=answering and self._held_words(cmd),
+            settled={b["number"] for b in rows if bookings.is_settled(b)},
+        )
+        log.info("[%s]   owner's answer read as %s%s%s", self.rt.session_id,
                  ", ".join(f"{c.kind} #{c.number or '-'}" for c in commands) or "nothing about the bookings",
-                 " + a standing instruction" if reading.standing else "")
-        if cmd is not None and cmd.number is not None and not any(c.number == cmd.number for c in commands):
-            # She typed a number the reading has nothing for ("YES 3 ..."
-            # read as about #4): asked, nothing carried out.
-            await self.answer_owner(chat_id, [await self._ask_about(cmd.number)])
-            return True
-        if not commands and cmd is not None and not reading.standing:
-            # A loose YES / NO read as about no booking ("no problem babe",
-            # "ok thanks"): it does not count, but while something waits for
-            # her answer she is asked rather than left thinking it did.
-            await self.answer_owner(chat_id, [await self._ask_about(cmd.number)])
+                 " + a standing instruction" if reading.standing else "",
+                 f"; she is asked about #{plan.ask or '-'}" if plan.ask is not None else "")
+        if plan.ask is not None:
+            # Something of hers can't be carried out as read (a number she
+            # typed that the reading misses, her yes read as a no, a YES / NO
+            # read as about nothing while a request waits): one question —
+            # and an instruction for every customer in it is still saved.
+            lines = [await self._ask_about(plan.ask or quoted)]
+            if reading.standing:
+                lines.append(await self.save_standing(chat_id, reading.standing))
+            await self.answer_owner(chat_id, lines)
             return True
         # Every part of it, in the order she wrote it, and one answer back.
         # Nothing about any booking (thanks, small talk, a remark about him)
         # gets no answer at all.
-        lines = [await self.owner_command(c, reply_to) for c in commands]
+        lines = [await self.owner_command(c, reply_to) for c in plan.commands]
+        if plan.earlier_lost:
+            lines.append(bookings.EARLIER_NOT_APPLIED)
         if reading.standing:
             lines.append(await self.save_standing(chat_id, reading.standing))
         await self.answer_owner(chat_id, lines)
         return True
 
+    async def _strict(self, cmd: bookings.OwnerCommand, reply_to: Any, quoted: Optional[int],
+                      message_id: Optional[int]) -> tuple[bookings.OwnerCommand, bool, bool]:
+        """Her strict command (YES 3, NO, 3 15:30, CANCEL 3), the booking a
+        quote of hers names put on it: (the command, whether it is read by
+        the model after all, whether it answers the bot's question). Read
+        when it answers a question the bot asked her about her message
+        before it (the length, the words for him there count); when she
+        quoted a message about a booking that does not wait for her answer
+        ("ok" to his answer about the length means that length, never a yes
+        to another customer), or one the bot can't place; and a bare YES /
+        NO right after the bot told her about another booking than the one
+        it would fall on. LIST, READY and IN are never read."""
+        if cmd.kind in ("list", "ready", "in_taxi"):
+            return cmd, False, False
+        awaiting = await self.store.awaiting_owner()
+        if reply_to is not None and cmd.number is None:
+            if any(reply_to in (b.get("provider_message_id"), b.get("provider_wa_message_id")) for b in awaiting):
+                pass  # the request itself: it is the booking, as always
+            elif quoted is not None and any(b["number"] == quoted for b in awaiting):
+                cmd = replace(cmd, number=quoted)
+            else:
+                return cmd, True, self._answers_held(cmd, message_id)
+        if self._answers_held(cmd, message_id):
+            return cmd, True, True
+        if cmd.number is None and reply_to is None and cmd.kind in ("yes", "no"):
+            target = awaiting[0]["number"] if len(awaiting) == 1 else None
+            if self._last_about not in (None, target):
+                return cmd, True, False
+        return cmd, False, False
+
+    def _fresh_held(self, message_id: Optional[int]) -> dict[int, tuple[datetime, Optional[int], bool]]:
+        """The bot's questions to her her message (`message_id`) can answer:
+        asked less than ANSWER_WINDOW ago, and before she wrote it."""
+        now = self.now()
+        return {n: held for n, held in self._held.items()
+                if now - held[0] < ANSWER_WINDOW and (message_id is None or held[1] is None or held[1] < message_id)}
+
+    def _answers_held(self, cmd: Optional[bookings.OwnerCommand], message_id: Optional[int]) -> bool:
+        if cmd is None:
+            return False
+        fresh = self._fresh_held(message_id)
+        if cmd.number is not None:
+            return cmd.number in fresh
+        return bool(fresh) and cmd.kind in ("yes", "no")
+
+    def _held_words(self, cmd: Optional[bookings.OwnerCommand]) -> bool:
+        """The message the bot asked her about carried words, a length or
+        extras (lost if her answer to the question can't take them)."""
+        if cmd is None:
+            return False
+        if cmd.number is not None:
+            return self._held.get(cmd.number, (None, None, False))[2]
+        return any(held[2] for held in self._held.values())
+
+    def _settle_held(self, number: int) -> None:
+        """Her command on booking `number` went through: the question it
+        answered, and every other booking that question named, are over."""
+        held = self._held.pop(number, None)
+        if held is not None and held[1] is not None:
+            for other in [n for n, h in self._held.items() if h[1] == held[1]]:
+                self._held.pop(other, None)
+
     async def _unread(self, cmd: Optional[bookings.OwnerCommand], text: str, rows: Sequence[dict[str, Any]],
-                      reply_to: Optional[int], answering: bool) -> list[str]:
-        """Her lines when her words could not be read (the model down or out
-        of budget, an answer that can't be used). What she typed as a
-        command stands — a YES only when nothing after it may turn it into
-        something else ("ok, not today", "yes 3 hours"), a NO / CANCEL /
-        DONE / NOSHOW only with its number — and she is told the rest of her
-        message did nothing. Anything else gets the commands back."""
+                      reply_to: Any, failed: str, answering: bool) -> list[str]:
+        """Her lines when her words could not be read. `failed`: "down" (the
+        model can't be asked: down, out of budget, too slow) or "unusable"
+        (it answered something that can't be used). What she typed strictly
+        stands. A loose command stands only while the model is down — a YES
+        when nothing after it may turn it into something else ("ok, not
+        today", "yes at 9", "yes 3 hours"), a NO / CANCEL / DONE / NOSHOW
+        with its number and no other time after it — and she is told the
+        rest of her message did nothing. Anything else gets the commands
+        back, or, with nothing open, a line that nothing was done."""
         if cmd is not None:
             if not cmd.loose:
                 stands = True
-            elif cmd.kind == "yes":
-                stands = not bookings.loose_doubt(text)
+            elif failed != "down":
+                stands = False
             else:
-                stands = cmd.number is not None
+                stands = (cmd.kind == "yes" or cmd.number is not None) and not bookings.loose_doubt(text, cmd.kind)
             if stands:
                 lines = [await self.owner_command(cmd, reply_to)]
                 if cmd.loose:
                     return lines + [bookings.READ_REST_FAILED]
                 return lines + [bookings.READ_EARLIER_FAILED] if answering else lines
+        if not rows:
+            return [bookings.READ_NOTHING_FAILED]
         waiting = [b["number"] for b in rows if bookings.awaits_owner(b)]
-        return [bookings.read_failed(waiting or [b["number"] for b in rows])] if rows else []
+        return [bookings.read_failed(waiting or [b["number"] for b in rows])]
 
     async def _ask_about(self, number: Optional[int]) -> str:
         """Her one question when an answer of hers can't be placed: about the
@@ -641,31 +768,45 @@ class BookingFlow:
             awaiting[0] if len(awaiting) == 1 else None)
         if booking is None and not awaiting:
             return ""
-        self._asked_her_at = self.now()
         if booking is not None:
+            self._pending_held.append((booking["number"], False))
+            self._answer_about.add(booking["number"])
             return bookings.format_question(bookings.OwnerCommand("unclear", booking["number"]), booking)
+        self._pending_held.extend((b["number"], False) for b in awaiting)
         return bookings.format_which_one(awaiting)
 
     async def answer_owner(self, chat_id: int, lines: Sequence[str]) -> None:
         """One message back to her for everything in hers; none when there
-        is nothing to say."""
+        is nothing to say. The questions in it are held for her next
+        message, and what it is about remembered (a quote of it)."""
         text = "\n".join(line for line in lines if line)
+        about = next(iter(self._answer_about)) if len(self._answer_about) == 1 else 0
         if not text:
             return
         try:
-            await self.rt.send_as_me(chat_id, text, reason="booking answer to the owner")
+            row = await self.rt.send_as_me(chat_id, text, reason="booking answer to the owner")
         except Exception as exc:
             await self.rt.handle_send_failure(chat_id, exc)
+            return
+        self._remember(row, about)
+        asked_at, question = self.now(), row.get("id") if row else None
+        for number, words in self._pending_held:
+            self._held[number] = (asked_at, question, words)
+        self._pending_held.clear()
 
-    async def owner_command(self, cmd: bookings.OwnerCommand, reply_to: Optional[int]) -> str:
+    async def owner_command(self, cmd: bookings.OwnerCommand, reply_to: Any) -> str:
         """One command of hers carried out, and her line for it: what was
         done, what goes on to him, the answer to what she asked."""
         try:
             outcome = await self._carry_out(cmd, reply_to)
-            if not outcome.went and outcome.line and cmd.kind != "list":
-                # Not carried out (which booking? not free?): her next message
-                # answers it, and is read together with this one.
-                self._asked_her_at = self.now()
+            if outcome.booking is not None:
+                self._answer_about.add(outcome.booking["number"])
+                if outcome.went:
+                    self._settle_held(outcome.booking["number"])
+            # A question to her (which booking? yes or no?): her next message
+            # answers it, and what she said here is read with it.
+            held_words = cmd.has_words or cmd.minutes is not None
+            self._pending_held.extend((number, held_words) for number in outcome.asks)
             return await self._afterwards(cmd, outcome)
         except asyncio.CancelledError:
             raise
@@ -675,29 +816,41 @@ class BookingFlow:
             return (f"#{cmd.number}" if cmd.number else "That") + \
                 f": something went wrong ({type(exc).__name__}); check the Bookings page."
 
-    async def _carry_out(self, cmd: bookings.OwnerCommand, reply_to: Optional[int]) -> OwnerOutcome:
+    async def _carry_out(self, cmd: bookings.OwnerCommand, reply_to: Any) -> OwnerOutcome:
         if cmd.kind == "list":
             outcalls = await self.outcalls_under_way() if self.outcall_taxi() else []
             return OwnerOutcome(bookings.format_list(await self.store.awaiting_owner(), outcalls,
                                                      proof=self.outcall_proof()))
         if cmd.kind in ("ready", "in_taxi"):
-            return await self.outcall_command(cmd)
+            outcome = await self.outcall_command(cmd)
+            if outcome.went and cmd.minutes and outcome.booking is not None \
+                    and cmd.minutes != _minutes(outcome.booking):
+                # "ready, and make it 2 hours": the step, then the length.
+                length = await self._length(cmd, outcome.booking)
+                outcome = replace(outcome, line=f"{outcome.line}\n{length.line}",
+                                  booking=length.booking or outcome.booking)
+            return outcome
         booking = None if cmd.missing == "which" else await self._target(cmd, reply_to)
         if booking is None:
-            return OwnerOutcome(await self._which(cmd))
+            asks = cmd.candidates or tuple(b["number"] for b in await self.store.awaiting_owner())
+            return OwnerOutcome(await self._which(cmd), asks=asks)
         n = booking["number"]
         if cmd.kind == "unclear":
-            return OwnerOutcome(bookings.format_question(cmd, booking), booking)
+            return OwnerOutcome(bookings.format_question(cmd, booking), booking, asks=(n,))
         if cmd.kind in ("stays", "none"):
             if not cmd.minutes or cmd.minutes == _minutes(booking):
                 # Nothing about the booking changes: only her words for him,
                 # or her own question about it.
                 words_only = cmd.kind == "none" and (cmd.has_words or cmd.for_me)
                 line = "" if words_only else f"#{n} stays as it is: {bookings.describe_when(booking)}."
+                if cmd.kind == "stays" and cmd.at is not None and not cmd.has_words:
+                    line += (f" You'll be ready at {cmd.at:%H:%M}; nothing went to him — say \"tell him ...\" if "
+                             "he should know.")
                 return OwnerOutcome(line, booking, went=True)
             if booking["state"] != bs.CONFIRMED:
                 # A length for a request she has not taken: her yes sets it.
-                return OwnerOutcome(bookings.format_question(cmd, booking), booking)
+                return OwnerOutcome(bookings.format_question(cmd, booking), booking, asks=(n,))
+            return await self._length(cmd, booking)
         if cmd.error:
             return OwnerOutcome(f"#{n}: {cmd.error}. " + bookings.ANSWER_HELP.format(n=n), booking)
         try:
@@ -711,6 +864,26 @@ class BookingFlow:
             return OwnerOutcome(f"#{n}: that time now overlaps another booking.", booking)
         except booking_store.StaleBooking:
             return OwnerOutcome(f"#{n} changed meanwhile; send LIST to see where things stand.", booking)
+        line = bookings.format_acknowledgement(updated, change.action, outcall_taxi=self.outcall_taxi(),
+                                               proof=self.outcall_proof())
+        return OwnerOutcome(line, updated, went=True)
+
+    async def _length(self, cmd: bookings.OwnerCommand, booking: dict[str, Any]) -> OwnerOutcome:
+        """A new length for a confirmed booking ("make it 2 hours"). Her
+        words for him go on whether or not the length is free."""
+        n = booking["number"]
+        try:
+            change = await self._change_for(replace(cmd, kind="stays"), booking)
+            if isinstance(change, str):
+                return OwnerOutcome(change, booking, words_go=True)
+            updated = await self.change(booking, change, actor=bs.OWNER, via=VIA_OWNER)
+        except bs.IllegalTransition as exc:
+            return OwnerOutcome(f"#{n}: {exc}.", booking, words_go=True)
+        except booking_store.SlotTaken:
+            return OwnerOutcome(f"#{n}: that length now overlaps another booking.", booking, words_go=True)
+        except booking_store.StaleBooking:
+            return OwnerOutcome(f"#{n} changed meanwhile; send LIST to see where things stand.", booking,
+                                words_go=True)
         line = bookings.format_acknowledgement(updated, change.action, outcall_taxi=self.outcall_taxi(),
                                                proof=self.outcall_proof())
         return OwnerOutcome(line, updated, went=True)
@@ -774,8 +947,10 @@ class BookingFlow:
         now = self.now()
         if end <= now:
             return "past"
-        result = await self.check(max(start, now + timedelta(minutes=1)), end, exclude_id=booking["id"],
-                                  hours=False)
+        # Up to the end of its buffer: that is what it holds (the overlap
+        # rule in the database counts it too).
+        result = await self.check(max(start, now + timedelta(minutes=1)), end + self.buffer_of(booking),
+                                  exclude_id=booking["id"], hours=False)
         return "" if result.ok else result.reason
 
     @staticmethod
@@ -788,31 +963,37 @@ class BookingFlow:
         """What follows her command once it is carried out. A question she
         had put to him ends when she acts on the booking; her words for him
         go on only when it went through (a decline with "tell him I'm busy
-        today" does, a yes that could not be confirmed does not); what she
-        asked about the booking is answered from it, to her alone."""
+        today" does, a yes that could not be confirmed does not) or when the
+        booking was not to change anyway (her words with a length that is
+        not free); a refusal of an extra holds whatever became of the rest;
+        what she asked about the booking is answered from it, to her alone."""
         line, booking = outcome.line, outcome.booking
-        if booking is not None and not outcome.went and cmd.extras_no:
+        if booking is not None and not (outcome.went or outcome.words_go) and cmd.extras_no:
             # A refusal holds whatever became of the rest: he is not offered
             # it meanwhile (he is told only once her answer goes through).
             booking = await self.store.set_fields(
                 booking["id"], extras_no=bookings.extras_joined(booking.get("extras_no") or "", cmd.extras_no),
                 extras_ok=_without(booking.get("extras_ok") or "", cmd.extras_no))
-        if booking is not None and outcome.went:
-            if cmd.kind in CHANGES and booking.get("booker_asked_at") and not cmd.ask:
-                booking = await self.store.set_fields(booking["id"], booker_asked_at=None)
-            if cmd.has_words:
-                booking = await self.pass_words(booking, cmd)
-                line = line + bookings.passing_on_words(cmd) if line else bookings.format_words_ack(booking, cmd)
+        if booking is not None and outcome.went and cmd.kind in CHANGES and booking.get("booker_asked_at") \
+                and not cmd.ask:
+            booking = await self.store.set_fields(booking["id"], booker_asked_at=None)
+        if booking is not None and (outcome.went or outcome.words_go) and cmd.has_words:
+            booking, now_or_later = await self.pass_words(booking, cmd)
+            line = line + bookings.passing_on_words(cmd) if line else bookings.format_words_ack(booking, cmd)
+            if not now_or_later:
+                line += " " + bookings.WORDS_WAIT
         if cmd.for_me and booking is not None:
             facts = bookings.format_facts(booking, outcall_taxi=self.outcall_taxi(), proof=self.outcall_proof())
             line = f"{line}\n{facts}" if line else facts
         return line
 
-    async def pass_words(self, booking: dict[str, Any], cmd: bookings.OwnerCommand) -> dict[str, Any]:
+    async def pass_words(self, booking: dict[str, Any], cmd: bookings.OwnerCommand) -> tuple[dict[str, Any], bool]:
         """Her words for him (what to tell him, what to ask him, the extras
         she takes or refuses) wait on the booking for his next reply, which
-        is started. Her extras stay on the booking too: one she refused is
-        never offered to him again (reply_note), unless she takes it later."""
+        is started; words already waiting for him are not added twice. Her
+        extras stay on the booking too: one she refused is never offered to
+        him again (reply_note), unless she takes it later. Returns the
+        booking, and whether a reply can go to him now."""
         now = self.now()
         fields: dict[str, Any] = {}
         if cmd.extras_ok or cmd.extras_no:
@@ -823,11 +1004,15 @@ class BookingFlow:
         if cmd.ask:
             # His answers go on to her for a while (pass_on).
             fields["booker_asked_at"] = now
-        updated = await self.store.add_booker_news(booking["id"], bookings.booker_news_item(cmd, at=now), **fields)
-        await self.announce(updated, f"💬 Booking #{updated['number']}: the owner's words go to him with the next "
-                                     f"reply ({_words(cmd)}).")
+        item = bookings.booker_news_item(cmd, at=now)
+        if any(_same_words(waiting, item) for waiting in booking.get("booker_news") or ()):
+            updated = await self.store.set_fields(booking["id"], **fields) if fields else booking
+        else:
+            updated = await self.store.add_booker_news(booking["id"], item, **fields)
+            await self.announce(updated, f"💬 Booking #{updated['number']}: the owner's words go to him with the "
+                                         f"next reply ({_words(cmd)}).")
         await self.nudge(updated["chat_id"])
-        return updated
+        return updated, await self.can_reply(updated["chat_id"])
 
     async def _which(self, cmd: bookings.OwnerCommand) -> str:
         """No one booking could be told for her command: she is asked which."""
@@ -838,7 +1023,7 @@ class BookingFlow:
             return bookings.format_question(cmd)
         return bookings.format_which(cmd.kind if cmd.kind not in ("propose", "stays", "none") else "yes")
 
-    async def _target(self, cmd: bookings.OwnerCommand, reply_to: Optional[int]) -> Optional[dict[str, Any]]:
+    async def _target(self, cmd: bookings.OwnerCommand, reply_to: Any) -> Optional[dict[str, Any]]:
         if cmd.number is not None:
             return await self.store.by_number(cmd.number)
         awaiting = await self.store.awaiting_owner()
@@ -846,58 +1031,75 @@ class BookingFlow:
             for booking in awaiting:
                 if reply_to in (booking.get("provider_message_id"), booking.get("provider_wa_message_id")):
                     return booking
+            # She quoted another message the bot sent her about a booking:
+            # that booking, never the one that merely waits.
+            quoted = self._quoted(reply_to)
+            if quoted is not None:
+                return await self.store.by_number(quoted)
         if cmd.kind in ("yes", "no", "unclear") and len(awaiting) == 1:
             return awaiting[0]
         return None
 
     async def owner_rows(self) -> list[dict[str, Any]]:
         """The bookings her words may be about, by number: what waits for her
-        answer, the outcalls under way, and the confirmed ones from a while
-        ago (cancel one, mark one that just ended) to a week ahead."""
+        answer, the outcalls under way, the confirmed ones from a while ago
+        (cancel one, mark one that just ended) to a week ahead, and those
+        over in that time ("ask him why he cancelled")."""
         now = self.now()
         open_ = {b["id"]: b for b in await self.store.awaiting_owner()}
         if self.outcall_taxi():
             open_.update((b["id"], b) for b in await self.outcalls_under_way())
         open_.update((b["id"], b) for b in await self.store.between(
-            now - OWNER_LOOKBACK, now + OWNER_LOOKAHEAD, (bs.CONFIRMED,)))
+            now - OWNER_LOOKBACK, now + OWNER_LOOKAHEAD, (bs.CONFIRMED, *bs.FINAL)))
         return sorted(open_.values(), key=lambda b: b["number"])
 
     @staticmethod
-    def _replied(rows: Sequence[dict[str, Any]], reply_to: Optional[int]) -> Optional[dict[str, Any]]:
-        """The booking whose message hers replies to (she quoted it)."""
+    def _replied(rows: Sequence[dict[str, Any]], reply_to: Any,
+                 quoted: Optional[int] = None) -> Optional[dict[str, Any]]:
+        """The booking whose message hers replies to (she quoted it): its
+        request, or another message the bot sent her about it."""
         if reply_to is None:
             return None
-        return next((b for b in rows if reply_to in (b.get("provider_message_id"), b.get("provider_wa_message_id"))),
-                    None)
+        return next((b for b in rows if reply_to in (b.get("provider_message_id"), b.get("provider_wa_message_id"))
+                     or (quoted is not None and b["number"] == quoted)), None)
 
-    async def read_owner_answer(self, chat_id: int, text: str, reply_to: Optional[int],
-                                rows: Sequence[dict[str, Any]]) -> Optional[bookings.OwnerReading]:
+    async def read_owner_answer(self, chat_id: int, text: str, reply_to: Any, rows: Sequence[dict[str, Any]], *,
+                                quoted: Optional[int] = None,
+                                upto_id: Optional[int] = None) -> tuple[Optional[bookings.OwnerReading], str]:
         """Her message in her own words, read by the model against the
-        bookings she may mean (`rows`, owner_rows) with her recent chat and
-        when each message came: everything it says about each of them, and
-        an empty reading when it is about none. Asked with nothing open too,
-        so an instruction for every customer ("from now on cash only") is
-        never lost. None when it could not be read: the model can't be asked
-        (down, out of budget) or its answer can't be used."""
-        if not text.strip() or await self.rt.ai_limit_reason():
-            return None
-        replied = self._replied(rows, reply_to)
-        history = await self.rt.db.get_history_for_ai(chat_id, limit=OWNER_HISTORY, with_times=True)
+        bookings she may mean (`rows`, owner_rows) with her recent chat up to
+        it (`upto_id`: not the messages she sent after it) and when each
+        message came: everything it says about each of them, and an empty
+        reading when it is about none. Asked with nothing open too, so an
+        instruction for every customer ("from now on cash only") is never
+        lost. Returns (reading, why it is None): "down" when the model can't
+        be asked (down, out of budget, no answer within OWNER_READ_BUDGET),
+        "unusable" when it answered something that can't be used."""
+        if not text.strip():
+            return bookings.OwnerReading(), ""
+        if await self.rt.ai_limit_reason():
+            return None, "down"
+        replied = self._replied(rows, reply_to, quoted)
+        history = await self.rt.db.get_history_for_ai(chat_id, limit=OWNER_HISTORY, with_times=True,
+                                                      upto_id=upto_id)
         try:
-            async with self.rt.ai_gate():
-                reading = await ai_responder.read_owner_answer(
-                    api_key=self.rt.deepseek_key, history=history, latest=text, tz_name=self.tz, now=self.now(),
-                    state_note=bookings.owner_state_note(rows, outcall_taxi=self.outcall_taxi(),
-                                                         proof=self.outcall_proof()),
-                    replying_to=replied["number"] if replied else None, ai_config=self.rt.config["ai"],
-                    client=self.rt.http_client, usage_sink=self.rt.usage_sink("owner_answer"),
-                )
-        except ai_responder.AIResponderError as exc:
-            log.warning("[%s] Could not read the owner's answer: %s", self.rt.session_id, exc)
-            return None
+            async with asyncio.timeout(OWNER_READ_BUDGET):
+                async with self.rt.ai_gate():
+                    reading = await ai_responder.read_owner_answer(
+                        api_key=self.rt.deepseek_key, history=history, latest=text, tz_name=self.tz,
+                        now=self.now(), state_note=bookings.owner_state_note(
+                            rows, outcall_taxi=self.outcall_taxi(), proof=self.outcall_proof()),
+                        replying_to=replied["number"] if replied else None, ai_config=self.rt.config["ai"],
+                        client=self.rt.http_client, usage_sink=self.rt.usage_sink("owner_answer"),
+                    )
+        except (ai_responder.AIResponderError, TimeoutError) as exc:
+            log.warning("[%s] Could not read the owner's answer: %s", self.rt.session_id,
+                        exc if str(exc) else type(exc).__name__)
+            return None, "down"
         if reading is None:
             log.warning("[%s] The owner's answer came back unreadable from the model.", self.rt.session_id)
-        return reading
+            return None, "unusable"
+        return reading, ""
 
     async def save_standing(self, chat_id: int, text: str) -> str:
         """A standing instruction of hers for every customer ("from now on
@@ -1084,12 +1286,18 @@ class BookingFlow:
             # Inside one of the owner's messages: once all of it is done.
             held.add(chat_id)
             return
+        if await self.can_reply(chat_id):
+            self.rt.schedule_draft(chat_id)
+
+    async def can_reply(self, chat_id: int) -> bool:
+        """A reply can be started in this customer's chat now: the account is
+        not off, his chat not paused or taken over, not kept out by staging."""
         if self.rt.paused():
-            return
+            return False
         conversation = await self.rt.db.get_conversation(chat_id)
         if conversation is None or self.rt.silenced(conversation):
-            return
-        self.rt.schedule_draft(chat_id)
+            return False
+        return not await self.rt.staged_out(chat_id, conversation.get("username"))
 
     # --------------------------------------------------- the reply writer
 
@@ -1138,9 +1346,14 @@ class BookingFlow:
         # refused him, in every reply from then on.
         her_words: dict[int, list[str]] = {}
         items: list[dict[str, Any]] = []
+        now = self.now()
         for booking in await self.store.with_news(chat_id):
-            her_words[booking["id"]] = [item["id"] for item in booking["booker_news"] if item.get("id")]
-            items.extend(booking["booker_news"])
+            # Only what is still worth saying; the tick drops the rest and
+            # tells her.
+            fresh = [item for item in booking["booker_news"] if item.get("id") and _news_fresh(item, booking, now)]
+            if fresh:
+                her_words[booking["id"]] = [item["id"] for item in fresh]
+                items.extend(fresh)
         if items:
             lines.append(bookings.booker_news_line(items))
         lines.append(bookings.refused_extras_line(await self.store.refused_extras(chat_id)))
@@ -1153,13 +1366,17 @@ class BookingFlow:
         return ReplyNote(
             text=bookings.context_for_reply(lines), notice_ids=sorted(told), transient=transient,
             reminder=self.reminders_out.get(chat_id), address_for=self.address_due.get(chat_id),
-            her_words=her_words,
+            her_words=her_words, notices={b["id"]: b["customer_notice"] for b in with_notice},
         )
 
     async def delivered(self, chat_id: int, note: ReplyNote) -> None:
         """The reply carrying `note` was sent or saved for approval."""
         for booking_id in note.notice_ids:
-            await self.store.set_fields(booking_id, customer_notice=None)
+            if booking_id in note.notices:
+                # Only the notice it told: a newer one set meanwhile stays.
+                await self.store.clear_notice(booking_id, note.notices[booking_id])
+            else:
+                await self.store.set_fields(booking_id, customer_notice=None)
         # Only the words this reply carried: any she added meanwhile wait
         # for the next one.
         for booking_id, item_ids in note.her_words.items():
@@ -1241,7 +1458,7 @@ class BookingFlow:
         rt, chat_id = self.rt, booking["chat_id"]
         if not text or booking["state"] not in bs.LIVE:
             return
-        rt.sending_chats.add(chat_id)
+        rt.begin_sending(chat_id)
         try:
             await rt.send_as_me(chat_id, text, typing=True, reason=f"address for booking #{booking['number']}")
         except Exception as exc:
@@ -1249,7 +1466,7 @@ class BookingFlow:
                 await rt.push_error(chat_id, f"Could not send the address: {type(exc).__name__}: {exc}")
             return
         finally:
-            rt.sending_chats.discard(chat_id)
+            rt.end_sending(chat_id)
         await self.announce(booking, f"📍 Booking #{booking['number']}: address sent.")
 
     # ------------------------------------------------------------ arrival
@@ -1352,7 +1569,7 @@ class BookingFlow:
                                          "set (booking.arrival_instructions), so she comes out to meet him.")
             return False
         rt.cancel_draft(chat_id)
-        rt.sending_chats.add(chat_id)
+        rt.begin_sending(chat_id)
         sent: list[int] = []
         try:
             row = await rt.send_as_me(chat_id, text, typing=True, reason="arrival instructions")
@@ -1375,7 +1592,7 @@ class BookingFlow:
                 await rt.push_error(chat_id, f"Could not send the arrival instructions: {type(exc).__name__}: {exc}")
             return False
         finally:
-            rt.sending_chats.discard(chat_id)
+            rt.end_sending(chat_id)
         self.let_in.add(chat_id)
         minutes = int(self.settings.get("arrival_cleanup_minutes") or 0)
         fields: dict[str, Any] = {"instructions_sent_at": self.now(), "instructions_message_ids": sent}
@@ -1571,7 +1788,10 @@ class BookingFlow:
             live = await self.store.for_chat(chat_id)
             booking = next((b for b in live if b["state"] == bs.CONFIRMED and self._passing_on(b, now)), None)
             if booking is None:
-                asked = next((b for b in live if self._asked(b, now)), None)
+                # She asked him something: his answer goes to her, whatever
+                # became of the booking since (she may ask after it is over).
+                asked = next((b for b in await self.store.for_chat(chat_id, bs.STATES, include_past=True)
+                              if self._asked(b, now)), None)
                 if asked is None:
                     return None
                 if photo is not None and self._arriving(live) is not None:
@@ -1606,10 +1826,9 @@ class BookingFlow:
 
     def _asked(self, booking: dict[str, Any], now: datetime) -> bool:
         """The owner asked him something about this booking (booker_asked_at)
-        a short while ago, and the booking is still on: his answers go to her."""
+        less than ASKED_FOR ago: his answers go to her, until she acts on it."""
         at = booking.get("booker_asked_at")
-        return (at is not None and booking["state"] in bs.LIVE and now - at < ASKED_FOR
-                and booking["ends_at"] + OUTCALL_AFTER_END > now)
+        return at is not None and now - at < ASKED_FOR
 
     async def answer_to_her(self, booking: dict[str, Any], text: str, photo: Any = None) -> Optional[str]:
         """What he writes after the owner asked him something goes on to her
@@ -1666,12 +1885,15 @@ class BookingFlow:
                 return False
             header = (bookings.format_proof_header(booking, caption) if proof
                       else bookings.format_photo_header(booking, caption))
-            if await self.send_owner(header, reason=f"booking #{n}: his photo, to the owner") is None:
+            header_row = await self.send_owner(header, reason=f"booking #{n}: his photo, to the owner")
+            if header_row is None:
                 await rt.push_error(booking["chat_id"], f"Booking #{n}: could not pass his photo on to the owner.")
                 return False
+            self._remember(header_row, n)
             try:
-                await rt.send_photo_as_me(provider, path, text=f"[photo from booking #{n}]",
-                                          reason=f"booking #{n}: his photo, to the owner")
+                photo_row = await rt.send_photo_as_me(provider, path, text=f"[photo from booking #{n}]",
+                                                      reason=f"booking #{n}: his photo, to the owner")
+                self._remember(photo_row, n)
             except Exception as exc:
                 if not await rt.handle_send_failure(provider, exc):
                     await rt.push_error(booking["chat_id"], f"Booking #{n}: could not pass his photo on to the "
@@ -1789,6 +2011,18 @@ class BookingFlow:
         for booking in await self.store.between(now - timedelta(days=7), now, states=[bs.REQUESTED, bs.PENDING]):
             if booking["starts_at"] <= now:
                 await guarded(f"expiring #{booking['number']}", lambda b=booking: expire(b))
+
+        async def drop_stale_words(booking: dict[str, Any]) -> None:
+            stale = [item for item in booking["booker_news"] if not _news_fresh(item, booking, now)]
+            if not stale:
+                return
+            await self.store.clear_booker_news(booking["id"], [item["id"] for item in stale if item.get("id")])
+            if any(item.get("ask") for item in stale) and booking.get("booker_asked_at"):
+                await self.store.set_fields(booking["id"], booker_asked_at=None)
+            await self.tell_owner(booking, bookings.format_words_dropped(booking, stale))
+
+        for booking in await self.store.all_with_news():
+            await guarded(f"dropping old words on #{booking['number']}", lambda b=booking: drop_stale_words(b))
 
         async def remind(booking: dict[str, Any], reminder: dict[str, Any], skipped: list[int]) -> None:
             for minutes in skipped:
@@ -1956,6 +2190,30 @@ class BookingFlow:
 def _minutes(booking: dict[str, Any]) -> int:
     """A booking's length in real minutes (both ends are UTC from the database)."""
     return int((booking["ends_at"] - booking["starts_at"]).total_seconds() // 60)
+
+
+def _news_fresh(item: dict[str, Any], booking: dict[str, Any], now: datetime) -> bool:
+    """Her words still worth saying: younger than NEWS_FOR, and not about a
+    meeting that has ended since she gave them."""
+    try:
+        at = datetime.fromisoformat(str(item.get("at") or ""))
+    except ValueError:
+        return True
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    if now - at >= NEWS_FOR:
+        return False
+    over = booking["ends_at"] + OUTCALL_AFTER_END
+    return not (at < over <= now)
+
+
+def _same_words(waiting: dict[str, Any], item: dict[str, Any]) -> bool:
+    """The same words for him as some already waiting (any case, spacing)."""
+    def key(i: dict[str, Any]) -> tuple[Any, ...]:
+        fold = lambda text: " ".join(str(text or "").split()).casefold()  # noqa: E731
+        return (fold(i.get("tell")), fold(i.get("ask")), sorted(fold(x) for x in i.get("extras_ok") or ()),
+                sorted(fold(x) for x in i.get("extras_no") or ()))
+    return key(waiting) == key(item)
 
 
 def _without(text: str, gone: Sequence[str]) -> str:

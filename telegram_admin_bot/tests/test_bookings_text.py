@@ -3,6 +3,7 @@ of the model's extraction, and the lines the reply writer is given."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -543,9 +544,10 @@ def test_two_answers_about_one_booking_are_one_command():
     assert [c.kind for c in commands([{"action": "list"}, {"action": "list"}])] == ["list"]
 
 
-def test_an_outcall_step_while_the_taxi_steps_are_off_keeps_only_her_words():
+def test_an_outcall_step_while_the_taxi_steps_are_off_changes_nothing_but_she_is_answered():
     rows = [_row(7, bs.CONFIRMED, start="2026-10-20T13:30", notes="Outcall.")]
-    assert commands([{"action": "in_taxi", "number": 7}], rows=rows, outcall_taxi=False) == []
+    [cmd] = commands([{"action": "in_taxi", "number": 7}], rows=rows, outcall_taxi=False)
+    assert (cmd.kind, cmd.number, cmd.has_words) == ("none", 7, False)
     [cmd] = commands([{"action": "in_taxi", "number": 7, "tell_customer": "10 min"}], rows=rows, outcall_taxi=False)
     assert (cmd.kind, cmd.tell) == ("none", "10 min")
     # On: READY / IN with no number is left to the outcall steps to place.
@@ -556,8 +558,9 @@ def test_an_outcall_step_while_the_taxi_steps_are_off_keeps_only_her_words():
 def test_the_owner_command_for_one_answer_is_the_first_command():
     cmd = bookings.owner_command_from(_answer(action="yes", number=4), PAIR, now=NOW, tz_name="Europe/Riga")
     assert (cmd.kind, cmd.number) == ("yes", 4)
-    assert bookings.owner_command_from(_answer(action="ready", number=7), PAIR, now=NOW, tz_name="Europe/Riga",
-                                       outcall_taxi=False) is None
+    cmd = bookings.owner_command_from(_answer(action="ready", number=6), PAIR, now=NOW, tz_name="Europe/Riga",
+                                      outcall_taxi=False)
+    assert (cmd.kind, cmd.number) == ("none", 6)
 
 
 @pytest.mark.parametrize("text", ["vale", "claro que no", "cancela 7", "CONFIRMO 3", "dale"])
@@ -709,3 +712,134 @@ def test_the_reader_is_told_how_long_and_what_she_already_decided():
     assert "(2 hours)" in first and "extras they said yes to: domination" in first
     assert "extras they refused: anal" in first and "they asked him something" in first
     assert second.endswith("(1 hour); incall, he says he has arrived")
+
+
+# ----------------------------------------- round 2: nothing she writes lost
+
+
+@pytest.mark.parametrize("text, kind, number, loose", [
+    ("yes 2 hours", "yes", None, True), ("ok 30 min", "yes", None, True), ("no 1 hour", "no", None, True),
+    ("да 2 часа", "yes", None, True), ("jā 1 stundu", "yes", None, True), ("YES 2", "yes", 2, False),
+    ("yes 2 tell him cash", "yes", 2, True)])
+def test_a_length_after_yes_or_no_is_never_a_booking_number(text, kind, number, loose):
+    cmd = parse(text)
+    assert (cmd.kind, cmd.number, cmd.loose) == (kind, number, loose)
+
+
+@pytest.mark.parametrize("text, kind, doubt", [
+    ("yes at 9", "yes", True), ("ok 9pm", "yes", True), ("yes but at 21", "yes", True),
+    ("ok, half an hour later", "yes", True), ("да, через полчаса", "yes", True), ("jā, pusstundu vēlāk", "yes", True),
+    ("sí, a las 9", "yes", True), ("sí, media hora más tarde", "yes", True), ("yes, earlier if he can", "yes", True),
+    ("NO 3 sorry not today", "no", False), ("NO 3 tomorrow at 15 instead", "no", True),
+    ("CANCEL 3 tell him sorry", "cancel", False), ("CANCEL 3 move him to 18:00", "cancel", True),
+    ("yes see you", "yes", False), ("ok sure", "yes", False)])
+def test_what_may_turn_each_typed_command(text, kind, doubt):
+    assert bookings.loose_doubt(text, kind) is doubt
+
+
+@pytest.mark.parametrize("raw, action, extra", [
+    # Another word for "none" keeps what it carries ...
+    ('{"answers": [{"number": 3, "action": "tell", "duration_minutes": 120}]}', "none", {"duration_minutes": 120}),
+    ('{"answers": [{"number": null, "action": "extend", "duration_minutes": 120}]}', "none",
+     {"duration_minutes": 120}),
+    ('{"answers": [{"number": 6, "action": "relay", "start": "2026-10-20T13:30"}]}', "none",
+     {"start": "2026-10-20T13:30"}),
+    # ... and with only a question for her, or only the booking, she is asked.
+    ('{"answers": [{"number": 1, "action": "question", "question": "Today or tomorrow?"}]}', "unclear",
+     {"question": "Today or tomorrow?"}),
+    ('{"answers": [{"number": 1, "action": "ask"}]}', "unclear", {}),
+    # The real "none" with a time alone is kept for the time.
+    ('{"answers": [{"number": 6, "action": "none", "in_minutes": 10}]}', "none", {"in_minutes": 10}),
+])
+def test_an_answer_in_other_words_keeps_what_it_carries(raw, action, extra):
+    [answer] = bookings.parse_owner_answer(raw).answers
+    assert answer["action"] == action
+    assert all(answer[key] == value for key, value in extra.items())
+
+
+def test_a_yes_with_another_time_asks_her_rather_than_confirming_his():
+    [cmd] = commands([{"action": "yes", "number": 3, "start": "2026-10-20T23:00", "tell_customer": "cash"}])
+    assert (cmd.kind, cmd.number, cmd.tell) == ("unclear", 3, "cash")
+    assert bookings.format_question(cmd, PAIR[0]).startswith(
+        "#3 Khan asked for Tue 21:00: confirm that (YES 3), or offer him 23:00 (3 23:00)?")
+    # By his time: a yes.
+    [cmd] = commands([{"action": "yes", "number": 3, "start": "2026-10-20T21:00"}])
+    assert (cmd.kind, cmd.number) == ("yes", 3)
+    # Another day: the date is in the command she is offered.
+    [cmd] = commands([{"action": "yes", "number": 3, "start": "2026-10-21T14:00"}])
+    assert "(3 21.10 14:00)" in bookings.format_question(cmd, PAIR[0])
+
+
+def test_words_alone_with_a_time_ask_her_what_she_meant():
+    [cmd] = commands([{"action": "none", "number": 6, "start": "2026-10-20T13:30"}])
+    assert cmd.kind == "unclear"
+    assert bookings.format_question(cmd, PAIR[2]).startswith(
+        "#6 Juris: offer him 13:30 instead of Tue 13:00? Answer 6 13:30, or say what to tell him.")
+    # With words for him the words are what she meant: the time is in them.
+    [cmd] = commands([{"action": "none", "number": 6, "start": "2026-10-20T13:30", "tell_customer": "come 13:30"}])
+    assert (cmd.kind, cmd.tell) == ("none", "come 13:30")
+
+
+def test_ready_before_his_confirmed_time_keeps_her_time_for_her_line():
+    [cmd] = commands([{"action": "ready_at", "number": 6, "in_minutes": 10}])
+    assert (cmd.kind, cmd.at, cmd.has_words) == ("stays", time(12, 50), False)
+
+
+Y, N = bookings.OwnerCommand("yes", 3), bookings.OwnerCommand("no", 3)
+
+
+def test_a_strict_command_answering_her_question_goes_through_as_typed():
+    read = bookings.OwnerCommand("yes", 3, minutes=60, extras_no=("anal",))
+    # The reading agrees: her earlier length and refusal are added to it.
+    plan = bookings.plan_owner_answer(Y, [read])
+    assert plan.commands == (replace(Y, minutes=60, extras_no=("anal",)),) and not plan.earlier_lost
+    # She typed NO: the reading's yes never confirms; her earlier words fall away.
+    plan = bookings.plan_owner_answer(N, [read])
+    assert plan.commands == (N,) and plan.earlier_lost
+    # Nothing in the reading for her booking: as typed, never asked again.
+    plan = bookings.plan_owner_answer(Y, [], held_words=True)
+    assert plan.commands == (Y,) and plan.earlier_lost and plan.ask is None
+    plan = bookings.plan_owner_answer(Y, [])
+    assert plan.commands == (Y,) and not plan.earlier_lost
+    # A typed time keeps its own time.
+    typed = bookings.OwnerCommand("propose", 3, at=time(15, 30))
+    plan = bookings.plan_owner_answer(typed, [bookings.OwnerCommand("propose", 3, at=time(16, 0), tell="cash")])
+    assert plan.commands == (replace(typed, tell="cash"),)
+    # A plain YES without a number: the one booking the reading agrees on, else which.
+    plan = bookings.plan_owner_answer(bookings.OwnerCommand("yes"), [bookings.OwnerCommand("none", 4, tell="cash")])
+    assert plan.commands == (bookings.OwnerCommand("yes", 4, tell="cash"),)
+    assert bookings.plan_owner_answer(bookings.OwnerCommand("yes"), []).ask == 0
+
+
+def test_a_loose_command_is_the_readings_unless_it_misses_or_turns_her_booking():
+    loose = bookings.OwnerCommand("yes", 3, loose=True)
+    read = bookings.OwnerCommand("yes", 3, tell="cash")
+    assert bookings.plan_owner_answer(loose, [read]).commands == (read,)
+    assert bookings.plan_owner_answer(loose, [bookings.OwnerCommand("yes", 4)]).ask == 3
+    assert bookings.plan_owner_answer(loose, [bookings.OwnerCommand("no", 3)]).ask == 3
+    assert bookings.plan_owner_answer(replace(loose, kind="no"), [read]).ask == 3
+    # Her loose yes read as a new time is the reading's (a condition of hers).
+    proposal = bookings.OwnerCommand("propose", 3, at=time(15, 0))
+    assert bookings.plan_owner_answer(loose, [proposal]).commands == (proposal,)
+    # Read as about no booking: asked, never dropped in silence.
+    assert bookings.plan_owner_answer(bookings.OwnerCommand("no", loose=True), []).ask == 0
+    assert bookings.plan_owner_answer(bookings.OwnerCommand("no", loose=True), [], standing="cash only").commands == ()
+    # Not a command at all: every command of the reading.
+    assert bookings.plan_owner_answer(None, [read]).commands == (read,)
+
+
+def test_a_typed_yes_to_a_confirmed_booking_answering_a_question_keeps_her_words():
+    read = bookings.OwnerCommand("none", 6, tell="bring cash")
+    plan = bookings.plan_owner_answer(bookings.OwnerCommand("yes", 6), [read], settled={6})
+    assert plan.commands == (bookings.OwnerCommand("stays", 6, tell="bring cash"),)
+
+
+def test_she_is_told_when_the_reading_agrees_but_drops_what_she_said_before():
+    # "yes, tell him to bring cash" -> which one? -> "YES 3", read as a plain yes 3.
+    plain = bookings.OwnerCommand("yes", 3)
+    assert bookings.plan_owner_answer(Y, [plain], held_words=True).earlier_lost
+    assert not bookings.plan_owner_answer(Y, [replace(plain, tell="cash")], held_words=True).earlier_lost
+    assert not bookings.plan_owner_answer(Y, [plain]).earlier_lost
+    # The same for a plain YES without a number.
+    plan = bookings.plan_owner_answer(bookings.OwnerCommand("yes"), [plain], held_words=True)
+    assert plan.commands == (plain,) and plan.earlier_lost

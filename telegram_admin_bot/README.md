@@ -667,9 +667,15 @@ the opening hours, the calendar link and AI usage.
   Remarks about him (*he didn't show last time*) stay private. An instruction
   for every customer (*from now on cash only*) is saved as a proposed rule
   for the admin (Finetune → Rules). Which booking: the request she replies
-  to, the one she names, or the only one that fits; several fit → she is
-  asked which one; no usable time → she is asked for it. Her messages are
-  handled one at a time, in order. The answer says back what was understood
+  to — or any other message the bot sent her about a booking (his answer, his
+  photo): a quoted *ok* to his *yes 2 hours please* is about his booking,
+  never a yes to someone else's request — the one she names, or the only one
+  that fits; several fit → she is asked which one; no usable time → she is
+  asked for it; a yes with another time than his (*yes but at 15:00*) → she
+  is asked which. Her messages are handled one at a time, in order, each read
+  with her chat up to it. Words that can't reach him (his chat paused or
+  taken over) wait — she is told — and after a day, or once the meeting is
+  over, are dropped and she is told which. The answer says back what was understood
   (*#3 confirmed ✅ for Tue 20 Oct 2026, 21:00–22:00 (1 hour) — Khan will be
   told. I'll tell him: bring cash; no anal.*). Small talk (*hi*, *thanks*)
   gets no reply at all: her chat never gets a customer's reply. A strict

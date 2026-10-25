@@ -1,8 +1,11 @@
 """The checker for the booker's answers in her own words (owner_check.py):
 the cases load and build as the runtime would give them to the reader (her
-chat with its times), the expectations and checks pass what they should, and
-a reading is judged on the commands the runtime would make of it. The model
-itself is not called."""
+chat with its times, the bot's questions written by the real formatter), the
+expectations and checks pass what they should, and a case is judged on what
+the runtime would do with her message: the commands it makes of the reading,
+weighed against what she typed (bookings.plan_owner_answer), and a strict
+command that answers nothing carried out with no model call. The model itself
+is not called."""
 
 from __future__ import annotations
 
@@ -12,6 +15,7 @@ from datetime import timedelta, timezone
 import pytest
 
 import ai_responder
+import booking_flow
 import bookings
 import owner_check
 
@@ -36,7 +40,7 @@ def said(g):
 
 
 def test_every_case_builds_her_chat_with_the_requests_in_it(data):
-    assert len(data["cases"]) >= 93
+    assert len(data["cases"]) >= 156
     assert {c["id"].split("-")[0] for c in data["cases"]} == {"en", "ru", "lv", "es"}
     for c in data["cases"]:
         g = owner_check.build(data, c, TZ, "Pamella", True)
@@ -86,6 +90,7 @@ def test_her_chat_has_what_the_runtime_sent_her(data):
     assert "#3 Khan: confirmed" in khan["state_note"] and "#4 Marco: the customer asks" in khan["state_note"]
     which = given(data, "en-context-which-one")
     assert said(which)[-3:-1] == ["yes", bookings.format_which_one(which["rows"])]
+    assert which["asked"] == {"numbers": (3, 4), "held": False}
 
     waiting = given(data, "en-proof-did-he-send")
     assert waiting["proof"] and "is asked for a photo that shows he's at the place" in said(waiting)[2]
@@ -299,3 +304,323 @@ def test_the_report_shows_what_came_back_next_to_what_was_wanted(data):
            '  model   {"answers": [], "standing": ""}' in text
     assert "en-yes-confirm" not in text
     assert "PASS  en-yes-confirm: 'yes i confirm'" in owner_check.report([failed, passed], verbose=True)
+
+
+# ------------------------------------------- the bot's question, her answer
+
+
+def built(data, case_id, **over):
+    return owner_check.build(data, dict(case(data, case_id), **over), TZ, "Pamella", True)
+
+
+def test_the_bots_question_is_written_by_the_real_formatter(data):
+    g = given(data, "en-answer-which-yes-3")
+    held = bookings.OwnerCommand("unclear", tell="bring cash")
+    assert said(g)[-3:] == ["yes, tell him to bring cash", bookings.format_which_one(g["rows"], held), "YES 3"]
+    assert "With your answer: tell him bring cash" in said(g)[-2]
+    # What it asked about, and that it repeats her words: kept by the
+    # checker, never in her chat.
+    assert g["asked"] == {"numbers": (3, 4), "held": True}
+    assert all(set(m) == {"role", "content", "at"} for m in g["history"])
+    # About one booking: format_question, in its three shapes.
+    g = built(data, "en-yes-confirm", chat=[{"them": "ok 2 hours"}, {"me_ask": 8, "held": {"minutes": 120}}])
+    b = g["rows"][0]
+    assert said(g)[-2] == bookings.format_question(bookings.OwnerCommand("unclear", 8, minutes=120), b)
+    assert g["asked"] == {"numbers": (8,), "held": True}
+    g = built(data, "en-yes-confirm", chat=[{"me_ask": 8, "missing": "time"}])
+    assert said(g)[-2] == bookings.format_question(bookings.OwnerCommand("unclear", 8, missing="time"), b)
+    assert g["asked"] == {"numbers": (8,), "held": False}
+    g = built(data, "en-yes-confirm", chat=[{"me_ask": 8, "question": "Is that a yes for Khan?"}])
+    assert said(g)[-2] == "#8: Is that a yes for Khan?"
+
+
+def test_a_question_written_out_is_known_by_the_formatters_words(data):
+    rows = given(data, "en-pair-yes3-no4")["rows"]
+    for text, asked in [
+        (bookings.format_which_one(rows), {"numbers": (3, 4), "held": False}),
+        (bookings.format_which_one(rows, bookings.OwnerCommand("unclear", minutes=120)),
+         {"numbers": (3, 4), "held": True}),
+        (bookings.format_which_one(rows[1:]), {"numbers": (4,), "held": False}),
+        (bookings.format_question(bookings.OwnerCommand("unclear", 4), rows[1]), {"numbers": (4,), "held": False}),
+        (bookings.format_question(bookings.OwnerCommand("unclear", 3, missing="time"), rows[0]),
+         {"numbers": (3,), "held": False}),
+        # Lines of the bot's that ask her nothing.
+        (bookings.format_acknowledgement(rows[0], "confirm"), None),
+        (bookings.format_passed_on(rows[0], "yes or no?"), None),
+        (bookings.format_words_ack(rows[0], bookings.OwnerCommand("none", 3, ask="2 hours?")), None),
+    ]:
+        assert built(data, "en-pair-yes3-no4", chat=[{"them": "yes"}, {"me": text}])["asked"] == asked, text
+
+
+WHICH = [{"them": "yes, tell him to bring cash"}, {"me_which": [3, 4], "held": {"tell": "bring cash"}}]
+
+
+@pytest.mark.parametrize("chat, latest, over, answers", [
+    # The question is about #3 and #4: YES 3 / NO 4 answers it, and so does
+    # a YES / NO without a number.
+    (WHICH, "YES 3", {}, True),
+    (WHICH, "NO 4", {}, True),
+    (WHICH, "ok", {}, True),
+    # Another booking, not a YES / NO, or not a command at all.
+    (WHICH, "YES 8", {}, False),
+    (WHICH, "LIST", {}, False),
+    (WHICH, "3", {}, False),
+    # She wrote after it: that was her answer.
+    (WHICH + [{"them": "hmm"}], "YES 3", {}, False),
+    # His words passed on to her since: still open ...
+    (WHICH + [{"me": "💬 #3 Khan:\nhello?"}], "YES 3", {}, True),
+    # ... for half an hour.
+    (WHICH + [{"me": f"line {i}"} for i in range(31)], "YES 3", {}, False),
+    # The bot asked her nothing.
+    ([{"them": "yes 3"}], "NO 4", {}, False),
+    # The case says it outright.
+    ([], "NO 4", {"answering": True}, True),
+    (WHICH, "NO 4", {"answering": False}, False),
+])
+def test_a_strict_command_answers_the_bots_question_as_the_runtime_counts_it(data, chat, latest, over, answers):
+    c = dict(case(data, "en-pair-yes3-no4"), chat=chat, latest=latest, **over)
+    g = owner_check.build(data, c, TZ, "Pamella", True)
+    assert owner_check.answering(c, g["asked"], owner_check.typed_command(c, g, True)) is answers
+
+
+def test_the_question_stays_open_as_long_as_in_the_runtime():
+    assert owner_check.ANSWER_WINDOW == booking_flow.ANSWER_WINDOW
+
+
+async def run(data, monkeypatch, c, found, *, outcall_taxi=True):
+    calls = []
+
+    async def reader(**kw):
+        calls.append(kw)
+        return found
+
+    monkeypatch.setattr(ai_responder, "read_owner_answer", reader)
+    result = await owner_check.run_case(data, c, key="k", tz=TZ, girl="Pamella", outcall_taxi=outcall_taxi,
+                                        ai_config={}, http=None)
+    return result, calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case_id, latest, got", [
+    ("en-yes-confirm", "YES 8", "yes 8"),
+    ("en-yes-confirm", "8 15:30", "propose 8 15:30"),
+    # No number: the only request waiting, the one she quotes, the only
+    # outcall at that step; else she is asked which.
+    ("en-yes-confirm", "NO", "no 8"),
+    ("en-two-reply-to", "YES", "yes 10"),
+    ("en-pair-yes3-no4", "YES", "yes -"),
+    ("en-outcall-ready", "READY", "ready 7"),
+    ("en-list", "LIST", "list"),
+    # A question long answered (she wrote after it) is no reason to read.
+    ("en-answer-which-yes-3", "YES 4", "yes 4"),
+])
+async def test_a_strict_command_that_answers_nothing_costs_no_model_call(data, monkeypatch, case_id, latest, got):
+    c = dict(case(data, case_id), latest=latest)
+    if case_id == "en-answer-which-yes-3":
+        c["chat"] = [*c["chat"], {"them": "hmm"}]
+    result, calls = await run(data, monkeypatch, c, None)
+    assert (result.got, result.raw, calls) == (got + "; strict, no model call", None, [])
+
+
+@pytest.mark.asyncio
+async def test_ready_while_the_taxi_steps_are_off_is_read(data, monkeypatch):
+    c = dict(case(data, "en-outcall-ready"), latest="READY 7")
+    result, calls = await run(data, monkeypatch, c, reading({"action": "none", "number": 7, "tell_customer": "ready"}),
+                              outcall_taxi=False)
+    assert len(calls) == 1 and result.got == 'none 7 (tell "ready")'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case_id, found, got, ok", [
+    # A strict YES 3 answering "which one?": read with her message before
+    # it, and her words go with it when the reading agrees.
+    ("en-answer-which-yes-3", reading({"action": "yes", "number": 3, "tell_customer": "bring cash"}),
+     'yes 3 (tell "bring cash")', True),
+    # Nothing that agrees: as she typed it, and she is told her words were lost.
+    ("en-answer-which-yes-3", reading({"action": "yes", "number": 4, "tell_customer": "bring cash"}),
+     'yes 3; her earlier words lost; read as yes 4 (tell "bring cash")', False),
+    ("en-answer-which-yes-3", reading(), "yes 3; her earlier words lost; read as none", False),
+    # NO 4 never turns into a yes for #3: nothing is confirmed.
+    ("en-answer-which-no-4", reading({"action": "yes", "number": 3, "tell_customer": "bring cash"}),
+     'no 4; her earlier words lost; read as yes 3 (tell "bring cash")', True),
+    ("en-answer-which-no-4", reading({"action": "no", "number": 4, "tell_customer": "bring cash"}),
+     'no 4 (tell "bring cash")', False),
+    # Not a command: every command of the reading.
+    ("en-answer-which-3", reading({"action": "yes", "number": 3, "tell_customer": "bring cash"}),
+     'yes 3 (tell "bring cash")', True),
+    # A loose YES 8 the reading turns into a no, or has nothing for: she is
+    # asked instead.
+    ("en-yes-8-2-hours", reading({"action": "yes", "number": 8, "duration_minutes": 120}), "yes 8 (120 min)", True),
+    ("en-yes-8-2-hours", reading({"action": "no", "number": 8}), "unclear 8; she is asked instead; read as no 8",
+     False),
+    ("en-yes-8-2-hours", reading(), "unclear 8; she is asked instead; read as none", False),
+    ("en-pair-yes3-no4", reading({"action": "no", "number": 4}), "unclear 3; she is asked instead; read as no 4",
+     False),
+    # Asked instead: nothing is carried out but an instruction for everyone.
+    ("en-yes-8-2-hours", reading(standing="cash only"),
+     'unclear 8; standing "cash only"; she is asked instead; read as none; standing "cash only"', False),
+    # A booking that is not open and that she did not name is the model's
+    # guess: she is asked which.
+    ("en-yes-confirm", reading({"action": "yes", "number": 12}), "unclear - (which: #8)", False),
+    # A loose yes read as about no booking: asked about the one waiting, or
+    # which one; no answer at all when none is waiting.
+    ("en-yes-confirm", reading(), "unclear 8; she is asked instead; read as none", False),
+    ("en-two-no-telling", reading(), "unclear - (which: #8, #10); she is asked instead; read as none", True),
+    ("en-proof-ok-fine", reading(), "none", True),
+])
+async def test_the_reading_is_weighed_against_what_she_typed(data, monkeypatch, case_id, found, got, ok):
+    result, calls = await run(data, monkeypatch, case(data, case_id), found)
+    assert (result.got, result.ok) == (got, ok)
+    assert len(calls) == 1 and result.raw == {"answers": [dict(a) for a in found.answers], "standing": found.standing}
+
+
+@pytest.mark.asyncio
+async def test_a_plain_yes_to_a_booking_already_his_changes_nothing(data, monkeypatch):
+    # Asked about #6, already confirmed: her plain YES is read as words for him.
+    c = dict(case(data, "en-soon-10-late"), chat=[{"me_ask": 6}], latest="YES")
+    result, _ = await run(data, monkeypatch, c, reading({"action": "none", "number": 6, "tell_customer": "bring cash"}))
+    assert result.got == 'stays 6 (tell "bring cash"); read as none 6 (tell "bring cash")'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case_id, found, ok", [
+    # Thanks gets no answer at all (decision c), never a question to her.
+    ("en-chat-thanks", reading(), True),
+    ("en-chat-thanks", reading({"action": "unclear", "number": 8}), False),
+    # Who is he? Answered to her if at all, never put to him.
+    ("en-question-who", reading(), True),
+    ("en-question-who", reading({"action": "none", "number": 8, "for_me": True}), True),
+    ("en-question-who", reading({"action": "none", "number": 8, "ask_customer": "are you nice?"}), False),
+    ("en-question-who", reading({"action": "none", "number": 8, "tell_customer": "she asks if you're nice"}), False),
+    # Her words on the customer she named, never on the other.
+    ("en-pair-both-words-for-marco", reading({"action": "yes", "number": 3},
+                                             {"action": "yes", "number": 4, "tell_customer": "bring cash"}), True),
+    ("en-pair-both-words-for-marco", reading({"action": "yes", "number": 3, "tell_customer": "bring cash"},
+                                             {"action": "yes", "number": 4}), False),
+    ("es-pair-both-words-for-4", reading({"action": "yes", "number": 3, "tell_customer": "que traiga efectivo"},
+                                         {"action": "yes", "number": 4, "tell_customer": "que traiga efectivo"}),
+     False),
+    # "Tell the other one": never the one she quotes.
+    ("en-pair-quoted-tell-the-other", reading({"action": "yes", "number": 3},
+                                              {"action": "none", "tell_customer": "I'm 10 min late"}), True),
+    ("en-pair-quoted-tell-the-other", reading({"action": "yes", "number": 3},
+                                              {"action": "none", "number": 4, "tell_customer": "I'm 10 min late"}),
+     True),
+    ("en-pair-quoted-tell-the-other", reading({"action": "yes", "number": 3, "tell_customer": "I'm 10 min late"}),
+     False),
+    # A yes with another time is never a plain yes.
+    ("en-yes-but-at-15", reading({"action": "yes", "number": 8, "start": "2026-10-20T15:00"}), True),
+    ("en-yes-but-at-15", reading({"action": "time", "number": 8, "start": "2026-10-20T15:00"}), True),
+    ("en-yes-but-at-15", reading({"action": "yes", "number": 8}), False),
+    # The length after a YES is not a booking number.
+    ("en-yes-2-hours", reading({"action": "yes", "number": 8, "duration_minutes": 120}), True),
+    ("en-yes-2-hours", reading({"action": "yes", "number": 2}), False),
+    # Ready in 10 on his confirmed booking: he is told, not only her.
+    ("en-soon-ready-in-10", reading({"action": "ready_at", "number": 6, "in_minutes": 10,
+                                     "tell_customer": "I'll be ready in 10 min"}), True),
+    ("en-soon-ready-in-10", reading({"action": "ready_at", "number": 6, "in_minutes": 10}), False),
+])
+async def test_the_cases_want_what_the_user_decided(data, monkeypatch, case_id, found, ok):
+    result, _ = await run(data, monkeypatch, case(data, case_id), found)
+    assert result.ok is ok, (result.got, result.wrong)
+
+
+# --------------------------------------------- checks on one booking each
+
+
+@pytest.mark.parametrize("checks, cmds, ok", [
+    ({"tell": {"4": ["cash"], "3": False}}, [cmd("yes", 3), cmd("yes", 4, tell="bring cash")], True),
+    ({"tell": {"4": ["cash"], "3": False}}, [cmd("yes", 3, tell="bring cash"), cmd("yes", 4)], False),
+    ({"tell": {"4": ["cash"], "3": False}}, [cmd("yes", 3, tell="cash"), cmd("yes", 4, tell="cash")], False),
+    # A booking with no command fails every check but false.
+    ({"tell": {"4": ["cash"]}}, [cmd("yes", 3, tell="bring cash")], False),
+    ({"tell": {"4": True}}, [cmd("yes", 3, tell="bring cash")], False),
+    ({"tell": {"4": False}}, [cmd("yes", 3, tell="bring cash")], True),
+    ({"words": {"3": False}}, [cmd("yes", 3), cmd("unclear", None, tell="I'm 10 min late")], True),
+    ({"words": {"3": False}}, [cmd("yes", 3, ask="10 min?")], False),
+    ({"ask": {"8": [["photo", "pic"]]}}, [cmd("none", 8, ask="send a pic?")], True),
+    ({"minutes": {"8": 120}}, [cmd(minutes=120)], True),
+    ({"minutes": {"8": 120}}, [cmd(), cmd("yes", 3, minutes=120)], False),
+    ({"minutes": {"8": False}}, [cmd(), cmd("yes", 3, minutes=120)], True),
+    ({"minutes": {"8": False}}, [cmd(minutes=60)], False),
+    ({"for_me": {"8": True}}, [cmd("none", 8, for_me=True)], True),
+    ({"for_me": {"8": True}}, [cmd("none", 3, for_me=True), cmd("none", 8, tell="x")], False),
+    ({"for_me": {"3": False}}, [cmd("none", 8, for_me=True)], True),
+    ({"extras_no": {"8": ["anal"]}}, [cmd(extras_no=("anal",))], True),
+    ({"extras_no": {"8": ["anal"]}}, [cmd("yes", 3, extras_no=("anal",)), cmd()], False),
+    ({"extras_ok": {"8": False}}, [cmd("yes", 3, extras_ok=("anal",)), cmd()], True),
+    # Both ways in one case: the words somewhere, and none on #3.
+    ({"tell": ["10"], "words": {"3": False}}, [cmd("yes", 3), cmd("none", 4, tell="10 min late")], True),
+    ({"tell": ["10"], "words": {"3": False}}, [cmd("yes", 3, tell="10 min late")], False),
+])
+def test_checks_per_booking(checks, cmds, ok):
+    assert (owner_check.problems(checks, cmds, bookings.OwnerReading()) == []) is ok
+
+
+def test_a_check_per_booking_says_which_booking():
+    wrong = owner_check.problems({"tell": {"4": ["cash"], "3": False}, "minutes": {"5": 60}},
+                                 [cmd("yes", 3, tell="bring cash"), cmd("yes", 4)], bookings.OwnerReading())
+    assert wrong == ['tell #4: no cash in ""', 'tell #3: wanted nothing, got "bring cash"',
+                     "minutes #5: no command for #5"]
+
+
+@pytest.mark.parametrize("want, lost, wrong", [
+    (True, True, []), (False, False, []),
+    (True, False, ["earlier_lost: she is not told her earlier words were lost"]),
+    (False, True, ["earlier_lost: she is told her earlier words were lost"]),
+])
+def test_earlier_lost_is_checked(want, lost, wrong):
+    assert owner_check.problems({"earlier_lost": want}, [], bookings.OwnerReading(), earlier_lost=lost) == wrong
+
+
+def test_a_typed_time_is_on_the_day_of_the_booking(data):
+    g = given(data, "en-yes-confirm")
+    tomorrow = dict(g["rows"][0], starts_at=g["rows"][0]["starts_at"] + timedelta(days=1))
+    typed = bookings.parse_owner_reply("8 15:30", today=g["now"].date())
+    assert owner_check.outcome(typed, g["now"], TZ, [tomorrow]) == ("propose", 8, "2026-10-21 15:30")
+    assert owner_check.outcome(typed, g["now"], TZ, g["rows"]) == ("propose", 8, "15:30")
+
+
+def test_the_new_shapes_are_checked_when_the_file_loads(tmp_path):
+    path = tmp_path / "x.json"
+    pair = [{"number": 3, "customer": "Khan", "state": "pending", "start": "2026-10-20T21:00"},
+            {"number": 4, "customer": "Marco", "state": "pending", "start": "2026-10-20T22:00"}]
+    path.write_text(json.dumps({"now": "2026-10-20T12:40", "bookings": {"pair": pair}, "cases": [
+        {"id": "a", "bookings": "pair", "latest": "YES 3", "expect": "yes 3",
+         "tell": {"x": ["cash"], "9": True, "4": "cash"}, "minutes": {"3": "60"}, "for_me": {"3": "yes"},
+         "standing": {"3": True}, "private": {"3": ["x"]}, "earlier_lost": "yes", "answering": 1, "words": {}},
+        {"id": "b", "bookings": "pair", "latest": "3", "expect": "yes 3", "before": [{"me_which": [3, 4]}],
+         "chat": [{"me_which": [3, 9]}, {"me_which": []}, {"me_ask": 3, "missing": "which"},
+                  {"me_ask": 3, "held": {"colour": "red"}}, {"me_which": [3, 4], "question": "x"},
+                  {"me_ask": 4, "question": ""}]},
+        {"id": "c", "bookings": "pair", "latest": "3", "expect": "yes 3",
+         "chat": [{"me_which": [3, 4], "held": {"tell": "bring cash", "extras_no": ["anal"], "minutes": 120}},
+                  {"me_ask": 4, "missing": "time", "question": "what time?"}],
+         "tell": {"3": [["cash", "efectivo"]], "4": False}, "minutes": {"3": 120}, "earlier_lost": False,
+         "answering": True},
+    ]}), encoding="utf-8")
+    with pytest.raises(ValueError) as err:
+        owner_check.load(path)
+    found = str(err.value).split("; ")
+    for problem in ("a: tell: 'x' is not a booking number", "a: tell: #9 is not in the case's bookings",
+                    "a: tell #4 is true, false or a list of groups", "a: minutes #3 is a length in minutes",
+                    "a: for_me #3 is true or false", "a: standing is true, false or a list of groups",
+                    "a: private is a list of words", "a: earlier_lost is true or false",
+                    "a: answering is true or false", "a: words names no booking", "b: before is a list of",
+                    "b: chat: #9 is not in the case's bookings", "b: chat: me_which is a list of booking numbers",
+                    'b: chat: missing is "time"', "b: chat: held is", "b: chat: unknown key in",
+                    "b: chat: question is a text"):
+        assert any(p.startswith(problem) for p in found), problem
+    assert not [p for p in found if p.startswith("c: ")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("found, ok", [
+    (reading(), False),  # only the plan's question: the reader had nothing
+    (reading({"action": "time", "number": 8, "start": "2026-10-20T15:00"}), True),
+])
+async def test_from_reading_needs_the_reading_itself(data, monkeypatch, found, ok):
+    result, _ = await run(data, monkeypatch, case(data, "en-yes-but-at-15"), found)
+    assert result.ok is ok
+    if not ok:
+        assert any("from_reading" in problem for problem in result.wrong)
