@@ -143,13 +143,18 @@ class BookingStore:
         )
         return [_booking(r) for r in rows]
 
-    async def clear_notice(self, booking_id: int, notice: str) -> None:
-        """The customer was told `notice`: cleared only while it is still
-        that one, so a newer notice set while the reply went out stays."""
+    async def clear_notice(self, booking_id: int, told: dict[str, Any]) -> None:
+        """The customer was told the notice in `told` (customer_notice and
+        the times it was about, as the reply read them): cleared only while
+        the booking still says exactly that, so a newer notice set while the
+        reply went out — the same kind of notice with new times too ("make
+        it 2 hours" during "it's booked") — stays for the next reply."""
         await self.pool.execute(
             "UPDATE bookings SET updated_at = now(), customer_notice = NULL "
-            "WHERE tenant_id = $1 AND id = $2 AND customer_notice = $3",
-            self.tenant_id, booking_id, notice,
+            "WHERE tenant_id = $1 AND id = $2 AND customer_notice = $3 AND starts_at = $4 AND ends_at = $5 "
+            "AND proposed_starts_at IS NOT DISTINCT FROM $6 AND proposed_ends_at IS NOT DISTINCT FROM $7",
+            self.tenant_id, booking_id, told["customer_notice"], told["starts_at"], told["ends_at"],
+            told.get("proposed_starts_at"), told.get("proposed_ends_at"),
         )
 
     async def refused_extras(self, chat_id: int) -> list[str]:

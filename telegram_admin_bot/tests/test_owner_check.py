@@ -90,7 +90,7 @@ def test_her_chat_has_what_the_runtime_sent_her(data):
     assert "#3 Khan: confirmed" in khan["state_note"] and "#4 Marco: the customer asks" in khan["state_note"]
     which = given(data, "en-context-which-one")
     assert said(which)[-3:-1] == ["yes", bookings.format_which_one(which["rows"])]
-    assert which["asked"] == {"numbers": (3, 4), "held": False}
+    assert which["asked"] == {3: False, 4: False}
 
     waiting = given(data, "en-proof-did-he-send")
     assert waiting["proof"] and "is asked for a photo that shows he's at the place" in said(waiting)[2]
@@ -320,16 +320,16 @@ def test_the_bots_question_is_written_by_the_real_formatter(data):
     assert "With your answer: tell him bring cash" in said(g)[-2]
     # What it asked about, and that it repeats her words: kept by the
     # checker, never in her chat.
-    assert g["asked"] == {"numbers": (3, 4), "held": True}
+    assert g["asked"] == {3: True, 4: True}
     assert all(set(m) == {"role", "content", "at"} for m in g["history"])
     # About one booking: format_question, in its three shapes.
     g = built(data, "en-yes-confirm", chat=[{"them": "ok 2 hours"}, {"me_ask": 8, "held": {"minutes": 120}}])
     b = g["rows"][0]
     assert said(g)[-2] == bookings.format_question(bookings.OwnerCommand("unclear", 8, minutes=120), b)
-    assert g["asked"] == {"numbers": (8,), "held": True}
+    assert g["asked"] == {8: True}
     g = built(data, "en-yes-confirm", chat=[{"me_ask": 8, "missing": "time"}])
     assert said(g)[-2] == bookings.format_question(bookings.OwnerCommand("unclear", 8, missing="time"), b)
-    assert g["asked"] == {"numbers": (8,), "held": False}
+    assert g["asked"] == {8: False}
     g = built(data, "en-yes-confirm", chat=[{"me_ask": 8, "question": "Is that a yes for Khan?"}])
     assert said(g)[-2] == "#8: Is that a yes for Khan?"
 
@@ -337,17 +337,17 @@ def test_the_bots_question_is_written_by_the_real_formatter(data):
 def test_a_question_written_out_is_known_by_the_formatters_words(data):
     rows = given(data, "en-pair-yes3-no4")["rows"]
     for text, asked in [
-        (bookings.format_which_one(rows), {"numbers": (3, 4), "held": False}),
+        (bookings.format_which_one(rows), {3: False, 4: False}),
         (bookings.format_which_one(rows, bookings.OwnerCommand("unclear", minutes=120)),
-         {"numbers": (3, 4), "held": True}),
-        (bookings.format_which_one(rows[1:]), {"numbers": (4,), "held": False}),
-        (bookings.format_question(bookings.OwnerCommand("unclear", 4), rows[1]), {"numbers": (4,), "held": False}),
+         {3: True, 4: True}),
+        (bookings.format_which_one(rows[1:]), {4: False}),
+        (bookings.format_question(bookings.OwnerCommand("unclear", 4), rows[1]), {4: False}),
         (bookings.format_question(bookings.OwnerCommand("unclear", 3, missing="time"), rows[0]),
-         {"numbers": (3,), "held": False}),
+         {3: False}),
         # Lines of the bot's that ask her nothing.
-        (bookings.format_acknowledgement(rows[0], "confirm"), None),
-        (bookings.format_passed_on(rows[0], "yes or no?"), None),
-        (bookings.format_words_ack(rows[0], bookings.OwnerCommand("none", 3, ask="2 hours?")), None),
+        (bookings.format_acknowledgement(rows[0], "confirm"), {}),
+        (bookings.format_passed_on(rows[0], "yes or no?"), {}),
+        (bookings.format_words_ack(rows[0], bookings.OwnerCommand("none", 3, ask="2 hours?")), {}),
     ]:
         assert built(data, "en-pair-yes3-no4", chat=[{"them": "yes"}, {"me": text}])["asked"] == asked, text
 
@@ -365,8 +365,10 @@ WHICH = [{"them": "yes, tell him to bring cash"}, {"me_which": [3, 4], "held": {
     (WHICH, "YES 8", {}, False),
     (WHICH, "LIST", {}, False),
     (WHICH, "3", {}, False),
-    # She wrote after it: that was her answer.
-    (WHICH + [{"them": "hmm"}], "YES 3", {}, False),
+    # Small talk after it keeps it open, as in the runtime ...
+    (WHICH + [{"them": "hmm"}], "YES 3", {}, True),
+    # ... a command of hers on one of its bookings closes it, all of it.
+    (WHICH + [{"them": "YES 4"}], "YES 3", {}, False),
     # His words passed on to her since: still open ...
     (WHICH + [{"me": "💬 #3 Khan:\nhello?"}], "YES 3", {}, True),
     # ... for half an hour.
@@ -411,13 +413,13 @@ async def run(data, monkeypatch, c, found, *, outcall_taxi=True):
     ("en-pair-yes3-no4", "YES", "yes -"),
     ("en-outcall-ready", "READY", "ready 7"),
     ("en-list", "LIST", "list"),
-    # A question long answered (she wrote after it) is no reason to read.
+    # A question already answered (her YES 3 closed it) is no reason to read.
     ("en-answer-which-yes-3", "YES 4", "yes 4"),
 ])
 async def test_a_strict_command_that_answers_nothing_costs_no_model_call(data, monkeypatch, case_id, latest, got):
     c = dict(case(data, case_id), latest=latest)
     if case_id == "en-answer-which-yes-3":
-        c["chat"] = [*c["chat"], {"them": "hmm"}]
+        c["chat"] = [*c["chat"], {"them": "YES 3"}]
     result, calls = await run(data, monkeypatch, c, None)
     assert (result.got, result.raw, calls) == (got + "; strict, no model call", None, [])
 
@@ -454,7 +456,8 @@ async def test_ready_while_the_taxi_steps_are_off_is_read(data, monkeypatch):
     ("en-yes-8-2-hours", reading({"action": "no", "number": 8}), "unclear 8; she is asked instead; read as no 8",
      False),
     ("en-yes-8-2-hours", reading(), "unclear 8; she is asked instead; read as none", False),
-    ("en-pair-yes3-no4", reading({"action": "no", "number": 4}), "unclear 3; she is asked instead; read as no 4",
+    # ... her "no 4", which she named, still goes.
+    ("en-pair-yes3-no4", reading({"action": "no", "number": 4}), "no 4 + unclear 3; she is asked instead; read as no 4",
      False),
     # Asked instead: nothing is carried out but an instruction for everyone.
     ("en-yes-8-2-hours", reading(standing="cash only"),
@@ -624,3 +627,27 @@ async def test_from_reading_needs_the_reading_itself(data, monkeypatch, found, o
     assert result.ok is ok
     if not ok:
         assert any("from_reading" in problem for problem in result.wrong)
+
+
+@pytest.mark.asyncio
+async def test_a_bare_yes_after_the_ack_of_another_booking_is_read_as_in_the_runtime(data, monkeypatch):
+    # pair_khan_yes: her chat ends with the ack of #3; #4 waits. "YES" is
+    # read (its booking is in doubt); read as nothing, she is asked about #4.
+    c = dict(case(data, "en-context-tell-him-cash"), latest="YES")
+    result, calls = await run(data, monkeypatch, c, reading())
+    assert len(calls) == 1 and result.got.startswith("unclear 4")
+
+
+@pytest.mark.asyncio
+async def test_a_quoted_ok_to_his_answer_is_read_on_his_booking(data, monkeypatch):
+    c = dict(case(data, "en-context-tell-him-cash"), latest="ok", quotes=3)
+    result, calls = await run(data, monkeypatch, c,
+                              reading({"action": "none", "number": 3, "duration_minutes": 120}))
+    assert len(calls) == 1 and result.got.startswith("stays 3 (120 min)")
+
+
+@pytest.mark.asyncio
+async def test_ready_is_never_read_even_after_a_question(data, monkeypatch):
+    c = dict(case(data, "en-outcall-ready"), latest="READY 7", chat=[{"me_ask": 7}])
+    result, calls = await run(data, monkeypatch, c, None)
+    assert calls == [] and result.got == "ready 7; strict, no model call"

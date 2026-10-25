@@ -9,9 +9,12 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Sequence
 
 import httpx
+
+if TYPE_CHECKING:  # pragma: no cover
+    import bookings
 
 log = logging.getLogger(__name__)
 

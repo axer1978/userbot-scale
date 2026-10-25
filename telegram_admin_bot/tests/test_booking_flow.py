@@ -2012,11 +2012,15 @@ async def test_his_entrance_photo_while_arriving_goes_to_the_arrival_check_not_t
     await w.store.set_fields(booking_id, booker_asked_at=w.clock["now"])
     assert await w.app.flow.pass_on(CUSTOMER, "me", photo=object()) == "[photo]"
     assert to_her == [1]
-    # At the door: it is the entrance photo for the way in, not for her.
+    # At the door with no photo check set up: still his answer to her.
     w.clock["now"] = datetime(2030, 3, 5, 14, 55, tzinfo=RIGA)
     await w.store.set_fields(booking_id, booker_asked_at=w.clock["now"])
+    assert await w.app.flow.pass_on(CUSTOMER, "", photo=object()) == "[photo]"
+    assert to_her == [1, 1]
+    # With the check set up, it is the entrance photo for the way in.
+    monkeypatch.setattr(w.app.flow, "photo_check_ready", lambda: True)
     assert await w.app.flow.pass_on(CUSTOMER, "", photo=object()) is None
-    assert to_her == [1]
+    assert to_her == [1, 1]
 
 
 async def test_a_photo_that_did_not_reach_her_is_not_stored_as_passed_on(world, monkeypatch):
@@ -2309,9 +2313,17 @@ async def test_a_notice_set_while_his_reply_went_out_is_not_cleared_by_it(world)
     await customer(w, "tomorrow at 15?", book())
     b = await only_booking(w)
     await w.store.set_fields(b["id"], customer_notice=bs.NOTICE_CONFIRMED)
-    await w.store.clear_notice(b["id"], bs.NOTICE_REQUESTED)
+    told = {key: b.get(key) for key in ("starts_at", "ends_at", "proposed_starts_at", "proposed_ends_at")}
+    await w.store.clear_notice(b["id"], {**told, "customer_notice": bs.NOTICE_REQUESTED})
     assert (await only_booking(w))["customer_notice"] == bs.NOTICE_CONFIRMED
-    await w.store.clear_notice(b["id"], bs.NOTICE_CONFIRMED)
+    # The same notice, but about other times than the reply told ("make it
+    # 2 hours" while "it's booked" went out): kept for the next reply.
+    await w.store.set_fields(b["id"], ends_at=b["ends_at"] + timedelta(hours=1),
+                             blocked_until=b["blocked_until"] + timedelta(hours=1))
+    await w.store.clear_notice(b["id"], {**told, "customer_notice": bs.NOTICE_CONFIRMED})
+    assert (await only_booking(w))["customer_notice"] == bs.NOTICE_CONFIRMED
+    await w.store.clear_notice(b["id"], {**told, "customer_notice": bs.NOTICE_CONFIRMED,
+                                         "ends_at": b["ends_at"] + timedelta(hours=1)})
     assert (await only_booking(w))["customer_notice"] is None
 
 
@@ -2334,3 +2346,266 @@ async def test_ready_with_a_length_does_both(world):
     await owner(w, "ready, and make it 2 hours")
     b = await only_booking(w)
     assert b["ready_at"] is not None and b["ends_at"] - b["starts_at"] == timedelta(hours=2)
+
+
+# ------------------------------------------- round 3: the second review
+
+
+async def _two_waiting(w):
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 18?", book("2030-03-05T18:00"), chat=43)
+
+
+async def test_ok_after_a_panel_notice_never_confirms_the_waiting_request(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 18?", book("2030-03-05T18:00"), chat=43)
+    await w.app.flow.admin_action((await w.store.by_number(1))["id"], "confirm", {})
+    assert "(from the panel)" in w.sent[OWNER][-1] or "confirmed" in w.sent[OWNER][-1]
+    calls = len(w.script["owner_calls"])
+    w.script["owner_answer"] = reading()
+    await owner(w, "ok")
+    # Read (the last message was not #2's request), about nothing: asked.
+    assert len(w.script["owner_calls"]) == calls + 1
+    assert (await w.store.by_number(2))["state"] == bs.PENDING
+    assert w.sent[OWNER][-1] == "#2 Anna, Tue 18:00: yes or no? Or give another time."
+
+
+async def test_after_a_restart_a_bare_ok_after_his_answer_is_read_not_guessed(world):
+    w = world
+    await _asked_about_length(w)
+
+    async def owner_chat():
+        return OWNER
+
+    w.app.flow = booking_flow.BookingFlow(w.app)
+    w.app.flow.provider_chat_id = owner_chat
+    w.app.flow.calendar_client = lambda: None
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "ok")
+    # Model down and its booking in doubt: nothing is put on #2.
+    assert (await w.store.by_number(2))["state"] == bs.PENDING
+    assert w.sent[OWNER][-1] == bookings.read_failed([2])
+
+
+async def test_the_yes_n_the_bot_offers_after_a_held_question_is_not_read_again(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 16?", book("2030-03-05T16:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(None, "yes", duration_minutes=120))
+    await owner(w, "yes, 2 hours")
+    assert w.sent[OWNER][-1].startswith("Which one:")
+    w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=120))
+    await owner(w, "YES 1")
+    assert "Nothing confirmed; YES 1 takes it as he asked" in w.sent[OWNER][-1]
+    calls = len(w.script["owner_calls"])
+    await owner(w, "YES 1")
+    assert len(w.script["owner_calls"]) == calls
+    first = await w.store.by_number(1)
+    assert first["state"] == bs.CONFIRMED and first["ends_at"] - first["starts_at"] == timedelta(hours=1)
+
+
+async def test_two_questions_in_one_answer_close_one_by_one(world):
+    w = world
+    flow = w.app.flow
+    flow._held = {1: booking_flow._Held(NOW, 9, (1,)), 2: booking_flow._Held(NOW, 9, (2,))}
+    flow._close_held(1)
+    assert set(flow._held) == {2}
+    flow._held = {1: booking_flow._Held(NOW, 9, (1, 2)), 2: booking_flow._Held(NOW, 9, (1, 2))}
+    flow._close_held(1)
+    assert flow._held == {}
+
+
+async def test_ok_thanks_to_the_bots_confirmation_gets_no_reply(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    ack = next(m for m in reversed(await w.db.get_messages(OWNER)) if m["direction"] == "out")
+    sent = len(w.sent[OWNER])
+    w.script["owner_answer"] = reading()
+    await owner(w, "ok thanks", reply_to=ack["telegram_id"])
+    assert len(w.sent[OWNER]) == sent
+
+
+async def test_with_commands_only_a_quote_changes_nothing_of_the_old_behaviour(world):
+    w = world
+    w.app.config["booking"]["owner_free_text"] = False
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    ack = next(m for m in reversed(await w.db.get_messages(OWNER)) if m["direction"] == "out")
+    await owner(w, "CANCEL", reply_to=ack["telegram_id"])
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1].startswith("Which booking?")
+
+
+async def test_her_words_held_by_a_question_she_answers_too_late_are_flagged(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 18?", book("2030-03-05T18:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(None, "yes", tell_customer="bring cash"))
+    await owner(w, "yes, tell him to bring cash")
+    w.clock["now"] = NOW + timedelta(minutes=31)
+    await owner(w, "YES 1")
+    assert (await w.store.by_number(1))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1].split("\n")[-1] == bookings.format_held_lost(
+        1, bookings.OwnerCommand("yes", tell="bring cash"))
+
+
+async def test_asked_again_her_held_words_are_repeated_and_kept(world):
+    w = world
+    await customer(w, "tomorrow at 15 for 2 hours, with anal?", book(duration_minutes=120, extras="anal"))
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=60, extras_no=["anal"]))
+    await owner(w, "max 1 hour and no anal")
+    w.script["owner_answer"] = reading()
+    await owner(w, "YES")
+    assert w.sent[OWNER][-1] == ("#1 Anna, Tue 15:00: yes or no? Or give another time. With your answer: "
+                                 "for 1 hour; no anal.")
+
+
+async def test_a_length_change_while_his_taxi_step_is_untold_also_tells_the_new_end(world):
+    w = world
+    await confirmed_outcall(w)
+    await w.db.set_paused(CUSTOMER, True)
+    await owner(w, "READY 1")
+    assert (await only_booking(w))["customer_notice"] == bs.NOTICE_READY
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=120))
+    await owner(w, "make it 2 hours")
+    b = await only_booking(w)
+    assert b["customer_notice"] == bs.NOTICE_READY
+    assert b["booker_news"][-1]["tell"].startswith("it is now Mon 04 Mar 2030, 13:00–15:00 (2 hours)")
+
+
+async def test_old_words_are_never_dropped_while_sending_is_off(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    await w.db.set_paused(CUSTOMER, True)
+    w.script["owner_answer"] = reading(answer(1, "none", tell_customer="bring cash"))
+    await owner(w, "tell him to bring cash")
+    w.clock["now"] = NOW + timedelta(hours=25)
+    monkeypatch.setattr(w.app, "paused", lambda: True)
+    await w.app.flow.tick()
+    assert len((await only_booking(w))["booker_news"]) == 1
+    monkeypatch.setattr(w.app, "paused", lambda: False)
+    await w.app.flow.tick()
+    assert (await only_booking(w))["booker_news"] == []
+    assert "did not reach him in time" in w.sent[OWNER][-1]
+
+
+async def test_telling_her_old_words_are_dropped_is_retried_not_repeated_every_tick(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    await w.db.set_paused(CUSTOMER, True)
+    w.script["owner_answer"] = reading(answer(1, "none", tell_customer="bring cash"))
+    await owner(w, "tell him to bring cash")
+    errors = []
+
+    async def push_error(chat_id, text):
+        errors.append(text)
+
+    async def unreachable(text, *, reason):
+        return None
+
+    reachable = w.app.flow.send_owner
+    monkeypatch.setattr(w.app, "push_error", push_error)
+    monkeypatch.setattr(w.app.flow, "send_owner", unreachable)
+    w.clock["now"] = NOW + timedelta(hours=25)
+    await w.app.flow.tick()
+    w.clock["now"] = NOW + timedelta(hours=25, minutes=1)
+    await w.app.flow.tick()
+    # Her chat out of reach: kept, and the admin told once.
+    assert len((await only_booking(w))["booker_news"]) == 1
+    assert len(errors) == 1 and "could not reach the owner" in errors[0]
+    w.clock["now"] = NOW + timedelta(hours=25, minutes=31)
+    await w.app.flow.tick()
+    assert len((await only_booking(w))["booker_news"]) == 1 and len(errors) == 1
+    monkeypatch.setattr(w.app.flow, "send_owner", reachable)
+    w.clock["now"] = NOW + timedelta(hours=26, minutes=2)
+    await w.app.flow.tick()
+    # Reachable again: told, then dropped.
+    assert (await only_booking(w))["booker_news"] == []
+    assert "did not reach him in time" in w.sent[OWNER][-1]
+
+
+async def test_old_words_she_cant_be_told_about_for_a_day_are_dropped_anyway(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    await w.db.set_paused(CUSTOMER, True)
+    w.script["owner_answer"] = reading(answer(1, "none", tell_customer="bring cash"))
+    await owner(w, "tell him to bring cash")
+
+    async def unreachable(text, *, reason):
+        return None
+
+    monkeypatch.setattr(w.app.flow, "send_owner", unreachable)
+    w.clock["now"] = NOW + timedelta(hours=25)
+    await w.app.flow.tick()
+    assert len((await only_booking(w))["booker_news"]) == 1
+    w.clock["now"] = NOW + timedelta(hours=49, minutes=1)
+    await w.app.flow.tick()
+    assert (await only_booking(w))["booker_news"] == []
+    assert w.app.flow._drop_failed == {}
+
+
+async def test_her_words_during_quiet_hours_say_when_they_go(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    monkeypatch.setattr(w.app, "quiet_seconds_left", lambda *a, **k: 3600)
+    w.script["owner_answer"] = reading(answer(1, "none", tell_customer="bring cash"))
+    await owner(w, "tell him to bring cash")
+    assert w.sent[OWNER][-1].endswith("His replies wait for the quiet hours to end (about 13:00), so this goes to "
+                                      "him then.")
+
+
+async def test_words_with_a_decline_are_kept_past_the_time_he_had_asked_for(world):
+    w = world
+    await customer(w, "today at 13?", book("2030-03-04T13:00"))
+    await w.db.set_paused(CUSTOMER, True)
+    w.script["owner_answer"] = reading(answer(1, "no", tell_customer="I'm away this week, next week is fine"))
+    await owner(w, "no, tell him I'm away this week, next week is fine")
+    assert (await only_booking(w))["state"] == bs.CANCELLED
+    w.clock["now"] = datetime(2030, 3, 4, 15, 0, tzinfo=RIGA)  # past 13:00-14:00 + 30 min
+    await w.app.flow.tick()
+    assert len((await only_booking(w))["booker_news"]) == 1
+
+
+async def test_a_stale_question_dropped_keeps_her_newer_one_open(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book("2030-03-06T15:00"))
+    await owner(w, "YES 1")
+    await w.db.set_paused(CUSTOMER, True)
+    w.script["owner_answer"] = reading(answer(1, "none", ask_customer="does he want 2 hours"))
+    await owner(w, "ask him if he wants 2 hours")
+    w.clock["now"] = NOW + timedelta(hours=23)
+    w.script["owner_answer"] = reading(answer(1, "none", ask_customer="is he coming by car"))
+    await owner(w, "ask him if he comes by car")
+    w.clock["now"] = NOW + timedelta(hours=24, minutes=1)
+    await w.app.flow.tick()
+    b = await only_booking(w)
+    assert [i["ask"] for i in b["booker_news"]] == ["is he coming by car"]
+    assert b["booker_asked_at"] == NOW + timedelta(hours=23)
+
+
+async def test_a_draft_only_waiting_for_a_send_is_replaced_not_doubled(world):
+    w = world
+    w.app.begin_sending(CUSTOMER)
+    await w.app.on_incoming(FakeEvent(CUSTOMER, "hi"))
+    first = w.app.draft_tasks[CUSTOMER]
+    await w.app.on_incoming(FakeEvent(CUSTOMER, "you there?"))
+    await asyncio.wait([first], timeout=0.5)
+    assert first.cancelled()
+    w.app.end_sending(CUSTOMER)
+    await settle(w.app)
+    assert w.sent[CUSTOMER] == ["ok"]
+
+
+async def test_model_down_with_only_finished_bookings_she_is_told_nothing_was_done(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "NO 1")
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "tell him sorry")
+    assert w.sent[OWNER][-1] == bookings.READ_NOTHING_FAILED

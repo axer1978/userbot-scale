@@ -128,13 +128,90 @@ async def test_a_new_message_cancels_a_pending_draft(app):
 @pytest.mark.asyncio
 async def test_a_draft_that_is_already_sending_is_not_cancelled(app):
     """Tearing down mid-send leaves a message on Telegram with no local row."""
+    started = asyncio.Event()
+
     async def sending():
-        await asyncio.sleep(0.2)
-        return "sent"
+        app.begin_sending(1)
+        try:
+            started.set()
+            await asyncio.sleep(0.2)
+            return "sent"
+        finally:
+            app.end_sending(1)
 
     task = asyncio.create_task(sending())
     app.draft_tasks[1] = task
-    app.sending_chats.add(1)
+    await started.wait()
 
     app.cancel_draft(1)
     assert await task == "sent", "an in-flight send was cancelled"
+    assert 1 not in app.sending_chats
+
+
+@pytest.mark.asyncio
+async def test_a_draft_sending_while_another_send_to_the_chat_runs_is_not_cancelled(app):
+    """Another send to the chat (the way in, from the task handling his
+    photo) started first: the draft's own send is still never cut short —
+    and the chat counts as sending until both are done."""
+    other_in, draft_in, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def way_in():
+        app.begin_sending(1)
+        try:
+            other_in.set()
+            await release.wait()
+        finally:
+            app.end_sending(1)
+
+    async def draft():
+        await other_in.wait()
+        app.begin_sending(1)
+        try:
+            draft_in.set()
+            await asyncio.sleep(0.2)
+            return "sent"
+        finally:
+            app.end_sending(1)
+
+    other = asyncio.create_task(way_in())
+    task = asyncio.create_task(draft())
+    app.draft_tasks[1] = task
+    await draft_in.wait()
+
+    app.cancel_draft(1)
+    assert await task == "sent", "an in-flight send was cancelled"
+    assert 1 in app.sending_chats
+    release.set()
+    await other
+    assert 1 not in app.sending_chats
+
+
+@pytest.mark.asyncio
+async def test_a_draft_only_waiting_for_another_send_is_cancelled(app):
+    """A draft waiting for a send to end (wait_while_sending) is not
+    sending itself: a newer message replaces it."""
+    other_in, release = asyncio.Event(), asyncio.Event()
+
+    async def way_in():
+        app.begin_sending(1)
+        try:
+            other_in.set()
+            await release.wait()
+        finally:
+            app.end_sending(1)
+
+    async def draft():
+        await app.wait_while_sending(1)
+        return "sent"
+
+    other = asyncio.create_task(way_in())
+    await other_in.wait()
+    task = asyncio.create_task(draft())
+    app.draft_tasks[1] = task
+    await asyncio.sleep(0)
+
+    app.cancel_draft(1)
+    await asyncio.sleep(0)
+    assert task.cancelled() or task.cancelling()
+    release.set()
+    await other

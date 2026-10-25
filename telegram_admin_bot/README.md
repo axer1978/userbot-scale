@@ -672,10 +672,17 @@ the opening hours, the calendar link and AI usage.
   never a yes to someone else's request — the one she names, or the only one
   that fits; several fit → she is asked which one; no usable time → she is
   asked for it; a yes with another time than his (*yes but at 15:00*) → she
-  is asked which. Her messages are handled one at a time, in order, each read
-  with her chat up to it. Words that can't reach him (his chat paused or
-  taken over) wait — she is told — and after a day, or once the meeting is
-  over, are dropped and she is told which. The answer says back what was understood
+  is asked which. A bare *ok* / *no* is read by the model (not taken for the
+  one request waiting) when the last thing the bot told her was about
+  something else — his answer, a panel notice, anything it can't place, also
+  after a restart — or when nothing waits; with several requests waiting and
+  no question open she is asked which. Her messages are handled one at a
+  time, in order, each read with her chat up to it. Words that can't reach
+  him (his chat paused or taken over, quiet hours) wait — she is told, with
+  when — and after a day, or once the meeting is over, are dropped and she is
+  told which (never while sending is off; if her chat can't be reached then,
+  that is tried every 30 minutes, the admin is told once, and after another day
+  they are dropped anyway). The answer says back what was understood
   (*#3 confirmed ✅ for Tue 20 Oct 2026, 21:00–22:00 (1 hour) — Khan will be
   told. I'll tell him: bring cash; no anal.*). Small talk (*hi*, *thanks*)
   gets no reply at all: her chat never gets a customer's reply. A strict

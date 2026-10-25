@@ -608,13 +608,20 @@ def test_her_questions_repeat_what_waits_on_her_answer():
         "Answer with the number. With your answer: ask him does he want 2 hours?.")
 
 
+def _typed_number(text):
+    """The booking number she typed, as the runtime has it (None: none, or no command)."""
+    cmd = parse(text)
+    return cmd.number if cmd is not None else None
+
+
 @pytest.mark.parametrize("text, doubt", [
     ("ok see you", False), ("yes babe", False), ("YES 3 tell him cash", False), ("ok sure let him come", False),
     ("ok, not today", True), ("yes 3 hours", True), ("yes but in 40 min", True), ("ok in 5", True),
     ("yes after 3", True), ("jā, bet tikai stundu", True), ("да, но не сегодня", True), ("yes tomorrow", True),
     ("ok 18:00", True)])
 def test_words_that_may_turn_a_yes_into_something_else(text, doubt):
-    assert bookings.loose_doubt(text) is doubt
+    # As the runtime asks: with the booking number she typed, if any.
+    assert bookings.loose_doubt(text, "yes", _typed_number(text)) is doubt
 
 
 def test_her_last_word_on_an_extra_wins():
@@ -734,7 +741,7 @@ def test_a_length_after_yes_or_no_is_never_a_booking_number(text, kind, number, 
     ("CANCEL 3 tell him sorry", "cancel", False), ("CANCEL 3 move him to 18:00", "cancel", True),
     ("yes see you", "yes", False), ("ok sure", "yes", False)])
 def test_what_may_turn_each_typed_command(text, kind, doubt):
-    assert bookings.loose_doubt(text, kind) is doubt
+    assert bookings.loose_doubt(text, kind, _typed_number(text)) is doubt
 
 
 @pytest.mark.parametrize("raw, action, extra", [
@@ -774,7 +781,7 @@ def test_words_alone_with_a_time_ask_her_what_she_meant():
     [cmd] = commands([{"action": "none", "number": 6, "start": "2026-10-20T13:30"}])
     assert cmd.kind == "unclear"
     assert bookings.format_question(cmd, PAIR[2]).startswith(
-        "#6 Juris: offer him 13:30 instead of Tue 13:00? Answer 6 13:30, or say what to tell him.")
+        "#6 Juris is booked for Tue 13:00: offer him 13:30 instead (6 13:30), or say what to tell him.")
     # With words for him the words are what she meant: the time is in them.
     [cmd] = commands([{"action": "none", "number": 6, "start": "2026-10-20T13:30", "tell_customer": "come 13:30"}])
     assert (cmd.kind, cmd.tell) == ("none", "come 13:30")
@@ -875,3 +882,114 @@ def test_a_remark_about_one_customer_is_no_rule_for_all():
     assert bookings.standing_for_all("after today don't take Juris again", rows) == ""
     assert bookings.standing_for_all("from now on cash only", rows) == "from now on cash only"
     assert bookings.standing_for_all("", rows) == ""
+
+
+# --------------------------------------------- round 3: the second review
+
+
+@pytest.mark.parametrize("text, number", [
+    ("jā 2 st.", None), ("sí 2 hs", None), ("yes 2 hours.", None), ("yes 9 pm", None), ("да 2 ч.", None),
+    ("ok 30 min.", None), ("да 9 вечера", None),
+    # "минет" is no unit: the number stays hers.
+    ("да 1, минет можно", 1), ("YES 2 tell him cash", 2),
+])
+def test_a_length_or_time_of_day_after_yes_is_no_booking_number(text, number):
+    assert parse(text).number == number
+
+
+def test_with_commands_only_a_number_is_a_booking_number_as_always():
+    cmd = bookings.parse_owner_reply("yes 2 hours", today=TODAY, lengths=False)
+    assert (cmd.kind, cmd.number) == ("yes", 2)
+    cmd = bookings.parse_owner_reply("no 2 hours", today=TODAY, lengths=False)
+    assert (cmd.kind, cmd.number) == ("no", 2)
+
+
+@pytest.mark.parametrize("text, kind, doubt", [
+    ("si, manana", "yes", True), ("ja, rit", "yes", True), ("ja, bet velak", "yes", True),
+    ("ok, around 9", "yes", True), ("да, к 9", "yes", True), ("si 2hs", "yes", True), ("yes tonight", "yes", True),
+    ("ok friday", "yes", True), ("да, на 9", "yes", True), ("jā, uz 9", "yes", True), ("sí, para las 9", "yes", True),
+    ("sí, en 10", "yes", True), ("да 9 вечера", "yes", True), ("yes 1, 2 hours", "yes", True),
+    ("nē 1, rit", "no", True), ("cancel 6 move to friday", "cancel", True),
+    ("ok no problem", "yes", False), ("sí, no hay problema", "yes", False), ("да, не вопрос", "yes", False),
+    ("ok don't worry", "yes", False), ("ok sure", "yes", False), ("NO 3 sorry not today", "no", False),
+])
+def test_the_doubt_check_in_all_four_languages(text, kind, doubt):
+    assert bookings.loose_doubt(text, kind, _typed_number(text)) is doubt
+
+
+@pytest.mark.parametrize("raw, action", [
+    ('{"answers": [{"number": 4, "action": "no-show"}]}', "noshow"),
+    ('{"answers": [{"number": 4, "action": "cancelled"}]}', "cancel"),
+    ('{"answers": [{"number": 4, "action": "none", "question": "today or tomorrow?"}]}', "unclear"),
+])
+def test_odd_answers_in_round_three(raw, action):
+    assert bookings.parse_owner_answer(raw).answers[0]["action"] == action
+
+
+def test_a_no_or_cancel_with_another_time_offers_that_time():
+    [cmd] = commands([{"action": "no", "number": 3, "start": "2026-10-21T15:00"}])
+    assert (cmd.kind, cmd.at, cmd.day) == ("propose", time(15, 0), date(2026, 10, 21))
+    [cmd] = commands([{"action": "cancel", "number": 6, "start": "2026-10-20T17:00"}])
+    assert (cmd.kind, cmd.at) == ("propose", time(17, 0))
+
+
+def test_a_yes_at_an_earlier_clock_time_is_asked_not_his_time_confirmed():
+    [cmd] = commands([{"action": "yes", "number": 3, "start": "2026-10-20T20:00"}])
+    assert cmd.kind == "unclear" and "(3 20:00)" in bookings.format_question(cmd, PAIR[0])
+    # Ready a little before his time by a delay: a yes.
+    [cmd] = commands([{"action": "yes", "number": 3, "in_minutes": 5}],
+                     rows=[_row(3, start="2026-10-20T12:50", customer_name="Khan")])
+    assert cmd.kind == "yes"
+
+
+def test_the_question_about_a_move_he_asked_names_the_time_he_asked_for():
+    moved = _row(5, bs.CONFIRMED, start="2026-10-20T16:00", customer_name="Toms", proposed_by=bs.CUSTOMER,
+                 proposed_starts_at=bookings.parse_local("2026-10-20T17:00", "Europe/Riga"),
+                 proposed_ends_at=bookings.parse_local("2026-10-20T18:00", "Europe/Riga"))
+    [cmd] = commands([{"action": "yes", "number": 5, "start": "2026-10-20T18:00"}], rows=[moved])
+    assert bookings.format_question(cmd, moved).startswith(
+        "#5 Toms asked for Tue 17:00: confirm that (YES 5), or offer him 18:00 (5 18:00)?")
+
+
+def test_a_finished_booking_is_told_as_finished_and_comes_after_live_ones():
+    done = _row(4, bs.COMPLETED, start="2026-10-20T11:00", customer_name="Peter", proposed_by=bs.OWNER,
+                proposed_starts_at=NOW, proposed_ends_at=NOW + timedelta(hours=1))
+    assert bookings.owner_state_note([done]).startswith("#4 Peter: done (it was for")
+    cancelled = _row(9, bs.CANCELLED, start="2026-10-21T15:00", customer_name="Ivo")
+    [cmd] = commands([{"action": "none", "tell_customer": "I'm 10 min late"}], rows=[PAIR[2], cancelled])
+    assert (cmd.kind, cmd.number) == ("none", 6)
+
+
+W = {3, 4}
+
+
+def test_a_plain_strict_yes_with_two_waiting_and_no_open_question_is_asked_which():
+    plan = bookings.plan_owner_answer(bookings.OwnerCommand("yes"), [bookings.OwnerCommand("yes", 3)], waiting=W)
+    assert plan.ask == 0 and plan.commands == ()
+    # With a question open about #4 only the answer for #4 counts.
+    plan = bookings.plan_owner_answer(bookings.OwnerCommand("no"), [bookings.OwnerCommand("none", 3, tell="late"),
+                                                                    bookings.OwnerCommand("no", 4)],
+                                      waiting=W, focus={4})
+    assert plan.commands == (bookings.OwnerCommand("no", 4),)
+
+
+def test_a_typed_no_to_his_question_on_a_confirmed_booking_is_her_words_not_a_decline():
+    plan = bookings.plan_owner_answer(bookings.OwnerCommand("no"),
+                                      [bookings.OwnerCommand("none", 6, tell="no friends, alone only")],
+                                      waiting={4}, settled={6}, focus={6})
+    assert plan.commands == (bookings.OwnerCommand("none", 6, tell="no friends, alone only"),)
+
+
+def test_a_loose_cancel_read_as_words_only_still_cancels():
+    typed = bookings.OwnerCommand("cancel", 6, loose=True)
+    plan = bookings.plan_owner_answer(typed, [bookings.OwnerCommand("none", 6, tell="sorry, I'm sick")],
+                                      waiting=set(), settled={6})
+    assert plan.commands == (bookings.OwnerCommand("cancel", 6, tell="sorry, I'm sick"),)
+
+
+def test_asking_about_one_booking_still_carries_out_the_others():
+    typed = bookings.OwnerCommand("yes", 4, loose=True)
+    late = bookings.OwnerCommand("none", 6, tell="I'm 10 min late")
+    plan = bookings.plan_owner_answer(typed, [bookings.OwnerCommand("no", 4, minutes=120), late], waiting=W)
+    assert (plan.ask, plan.commands) == (4, (late,))
+    assert plan.ask_with == bookings.OwnerCommand("no", 4, minutes=120)

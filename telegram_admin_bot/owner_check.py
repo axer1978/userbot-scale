@@ -146,8 +146,8 @@ TEXT_CHECKS = ("tell", "ask", "words", "standing")
 CHECKS = (*TEXT_CHECKS, "extras_ok", "extras_no", "minutes", "for_me", "private", "earlier_lost")
 # The checks that may be made on each booking's own command instead.
 PER_BOOKING = ("tell", "ask", "words", "extras_ok", "extras_no", "minutes", "for_me")
-CASE_KEYS = {"id", "bookings", "latest", "reply_to", "before", "chat", "now", "answering", "from_reading", "expect",
-             *CHECKS}
+CASE_KEYS = {"id", "bookings", "latest", "reply_to", "quotes", "before", "chat", "now", "answering", "from_reading",
+             "expect", *CHECKS}
 # What a question of the bot's in a case's chat may repeat of hers.
 HELD_KEYS = {"tell", "ask", "minutes", "extras_ok", "extras_no"}
 
@@ -213,15 +213,22 @@ def her_chat(rows: Sequence[dict[str, Any]], girl: str, *, outcall_taxi: bool, p
     specs = specs or {}
     chat: list[dict[str, Any]] = []
 
+    about: dict[str, Optional[int]] = {"n": None}
+
     def say(role: str, text: str, booking: Optional[dict[str, Any]] = None, *columns: str) -> None:
-        chat.append({"role": role, "content": text, "steps": [(booking, column) for column in columns]})
+        # A bot line is about the booking it is sent for (as the runtime
+        # remembers it: BookingFlow._remember).
+        chat.append({"role": role, "content": text, "steps": [(booking, column) for column in columns],
+                     **({"about": about["n"]} if role == "assistant" else {})})
 
     for b in rows:
+        about["n"] = b["number"]
         if b.get("proposed_by") == bs.CUSTOMER:
             say("assistant", bookings.format_move_request(b, name=girl))
         else:
             say("assistant", bookings.format_request(b, name=girl), b, "created_at")
     for b in rows:
+        about["n"] = b["number"]
         if b["state"] != bs.CONFIRMED or b.get("proposed_by") == bs.CUSTOMER:
             continue
         n, spec = b["number"], specs.get(b["number"], {})
@@ -265,7 +272,11 @@ def _message(line: Mapping[str, Any], rows: Sequence[dict[str, Any]] = ()) -> di
     if "them" in line:
         return {"role": "user", "content": line["them"]}
     if "me" in line:
-        return {"role": "assistant", "content": line["me"]}
+        # One the bot can place only when it is one of its questions about
+        # one booking; any other line of the bot's is about no booking known.
+        ask = _question(line["me"], rows) if rows else None
+        known = ask["numbers"][0] if ask is not None and len(ask["numbers"]) == 1 else 0
+        return {"role": "assistant", "content": line["me"], "about": known}
     held = held_command(line.get("held", {}))
     by_number = {b["number"]: b for b in rows}
     if "me_which" in line:
@@ -275,7 +286,7 @@ def _message(line: Mapping[str, Any], rows: Sequence[dict[str, Any]] = ()) -> di
         numbers = (line["me_ask"],)
         cmd = replace(held, number=line["me_ask"], missing=line.get("missing", ""), question=line.get("question", ""))
         text = bookings.format_question(cmd, by_number[line["me_ask"]])
-    return {"role": "assistant", "content": text,
+    return {"role": "assistant", "content": text, "about": numbers[0] if len(numbers) == 1 else 0,
             "asks": {"numbers": numbers, "held": held.has_words or held.minutes is not None}}
 
 
@@ -304,20 +315,44 @@ def _question(text: str, rows: Sequence[dict[str, Any]]) -> Optional[dict[str, A
     return None
 
 
-def asked_before(history: list[dict[str, Any]], rows: Sequence[dict[str, Any]], now: datetime) -> Optional[dict]:
-    """The bot's question that her next message may answer, as the runtime
-    keeps it (BookingFlow): the last one among its lines after her last
-    message, if it is under ANSWER_WINDOW old — {"numbers": the bookings it
-    is about, "held": it repeats words of hers}; else None. Takes "asks" off
-    the messages."""
-    asks = [message.pop("asks", None) for message in history]
-    for message, ask in zip(reversed(history), reversed(asks)):
-        if message["role"] == "user":
-            break
-        ask = ask or _question(message["content"], rows)
-        if ask is not None:
-            return ask if now - message["at"] < ANSWER_WINDOW else None
-    return None
+def asked_before(history: list[dict[str, Any]], rows: Sequence[dict[str, Any]], now: datetime) -> dict[int, bool]:
+    """The bot's questions her next message may answer, as the runtime keeps
+    them (BookingFlow._held): every question of the bot's in her chat under
+    ANSWER_WINDOW old, by booking it is about — with whether it repeats
+    words of hers — open until a command of hers is about one of its
+    bookings (small talk in between keeps it open; a "which one?" closes as
+    a whole). Takes "asks" off the messages."""
+    open_: dict[int, tuple[tuple[int, ...], bool]] = {}
+    for message in history:
+        ask = message.pop("asks", None)
+        if message["role"] == "assistant":
+            ask = ask or _question(message["content"], rows)
+            if ask is not None and now - message["at"] < ANSWER_WINDOW:
+                for n in ask["numbers"]:
+                    old = open_.get(n)
+                    open_[n] = (tuple(ask["numbers"]), ask["held"] or bool(old and old[1]))
+            continue
+        typed = bookings.parse_owner_reply(message["content"], today=now.date())
+        if typed is None or typed.kind == "list":
+            continue
+        answered = [typed.number] if typed.number is not None else (
+            list(open_) if typed.kind in ("yes", "no") else [])
+        for n in answered:
+            group = open_.get(n, ((n,), False))[0]
+            for m in (n, *group):
+                open_.pop(m, None)
+    return {n: held for n, (_group, held) in open_.items()}
+
+
+def last_about(history: list[dict[str, Any]]) -> Optional[int]:
+    """The booking the last line the bot sent her is about (0: none it can
+    place); None when it sent her nothing. Takes "about" off the messages."""
+    found: Optional[int] = None
+    for message in history:
+        about = message.pop("about", None)
+        if message["role"] == "assistant":
+            found = about or 0
+    return found
 
 
 def build(data: dict[str, Any], case: dict[str, Any], tz: str, girl: str, outcall_taxi: bool) -> dict[str, Any]:
@@ -344,10 +379,11 @@ def build(data: dict[str, Any], case: dict[str, Any], tz: str, girl: str, outcal
             booking[column] = message["at"]
     history = [*before, *chat]
     asked = asked_before(history, rows, now)
+    about = last_about(history)
     history.append({"role": "user", "content": case["latest"], "at": now})
     replied = next((b for b in rows if b["number"] == case.get("reply_to")), None)
     return {"now": now, "rows": rows, "history": history, "replied": replied, "proof": proof, "asked": asked,
-            "state_note": bookings.owner_state_note(rows, outcall_taxi=outcall_taxi, proof=proof)}
+            "about": about, "state_note": bookings.owner_state_note(rows, outcall_taxi=outcall_taxi, proof=proof)}
 
 
 # ------------------------------------------------- what the runtime does
@@ -363,17 +399,47 @@ def typed_command(case: Mapping[str, Any], given: Mapping[str, Any], outcall_tax
     return typed
 
 
-def answering(case: Mapping[str, Any], asked: Optional[Mapping[str, Any]],
-              typed: Optional[bookings.OwnerCommand]) -> bool:
-    """Her command answers the bot's question about her message before it
-    (`asked`, build's), so the runtime reads it together with that one: a
-    question about the booking she typed, or any for a YES / NO without a
+def answering(case: Mapping[str, Any], asked: Mapping[int, bool], typed: Optional[bookings.OwnerCommand]) -> bool:
+    """Her command answers one of the bot's open questions (`asked`,
+    build's), so the runtime reads it together with what that question was
+    about: one about the booking she typed, or any for a YES / NO without a
     number — or as the case says ("answering")."""
     if "answering" in case:
         return case["answering"]
-    if typed is None or asked is None:
+    if typed is None or not asked:
         return False
-    return typed.number in asked["numbers"] if typed.number is not None else typed.kind in ("yes", "no")
+    return typed.number in asked if typed.number is not None else typed.kind in ("yes", "no")
+
+
+def strict_read(case: Mapping[str, Any], given: Mapping[str, Any], typed: bookings.OwnerCommand
+                ) -> tuple[bookings.OwnerCommand, bool, bool, bool, Optional[int]]:
+    """Whether the runtime reads her strict command with the model after all
+    (BookingFlow._strict): (the command — a quote of hers puts its booking
+    on it —, read, answering, in doubt, the booking the last bot line is
+    about). Read when it answers an open question; when she quotes a message
+    about a booking that does not wait for her ("quotes"), or one that can't
+    be placed; and a bare YES / NO when nothing waits, or when the one
+    request waiting is not what the last bot line was about. LIST, READY
+    and IN never."""
+    if typed.kind in ("list", "ready", "in_taxi"):
+        return typed, False, False, False, None
+    waiting = [b["number"] for b in given["rows"] if bookings.awaits_owner(b)]
+    reply_to, quotes = case.get("reply_to"), case.get("quotes")
+    if typed.number is None and (reply_to is not None or quotes is not None):
+        if reply_to is not None and reply_to in waiting:
+            pass  # her quote of the request itself
+        elif quotes is not None and quotes in waiting:
+            typed = replace(typed, number=quotes)
+        else:
+            return typed, True, answering(case, given["asked"], typed), True, quotes
+    if answering(case, given["asked"], typed):
+        return typed, True, True, False, None
+    if typed.number is None and reply_to is None and quotes is None and typed.kind in ("yes", "no"):
+        if not waiting:
+            return typed, True, False, False, None
+        if len(waiting) == 1 and given["about"] is not None and given["about"] != waiting[0]:
+            return typed, True, False, True, given["about"]
+    return typed, False, False, False, None
 
 
 def typed_target(cmd: bookings.OwnerCommand, rows: Sequence[dict[str, Any]],
@@ -791,9 +857,12 @@ async def run_case(data: dict[str, Any], case: dict[str, Any], *, key: str, tz: 
     # The runtime's clock (BookingFlow.now) is in UTC.
     now = given["now"].astimezone(timezone.utc)
     typed = typed_command(case, given, outcall_taxi)
-    if typed is not None and not typed.loose and not answering(case, asked, typed):
-        # A strict command that answers no question of the bot's costs no
-        # model call: carried out as she typed it.
+    replying, doubt, about, read_it = False, False, None, True
+    if typed is not None and not typed.loose:
+        typed, read_it, replying, doubt, about = strict_read(case, given, typed)
+    if typed is not None and not typed.loose and not read_it:
+        # A strict command that answers no question of the bot's, on a
+        # booking in no doubt, costs no model call: carried out as typed.
         cmds = [typed_target(typed, rows, replied)]
         nothing = bookings.OwnerReading()
         wrong = judge(case, cmds, nothing, now=now, tz=tz, rows=rows)
@@ -808,17 +877,21 @@ async def run_case(data: dict[str, Any], case: dict[str, Any], *, key: str, tz: 
                                             outcall_taxi=outcall_taxi, typed=case["latest"])
     # As the runtime: a remark about one customer is no rule for all of them.
     heard, reading = reading, replace(reading, standing=bookings.standing_for_all(reading.standing, rows))
+    waiting = {b["number"] for b in rows if bookings.awaits_owner(b)}
+    focus = set(asked) | {n for n in (case.get("quotes"), about) if n}
+    numbers = {typed.number} if typed is not None and typed.number is not None else focus
     plan = bookings.plan_owner_answer(typed, commands, standing=reading.standing,
-                                      held_words=bool(asked and asked["held"]),
-                                      settled={b["number"] for b in rows if bookings.is_settled(b)})
+                                      held_words=replying and any(asked.get(n) for n in numbers),
+                                      settled={b["number"] for b in rows if bookings.is_settled(b)},
+                                      waiting=waiting, focus=focus, named=bookings.named_in(case["latest"], rows))
     notes = []
+    cmds, done = list(plan.commands), reading
     if plan.ask is not None:
-        # Asked instead: nothing of her message is carried out but an
-        # instruction for every customer, which is still saved.
-        cmds, done = asked_instead(plan.ask, rows), bookings.OwnerReading(standing=reading.standing)
-        notes += ["she is asked instead"] if cmds else []
-    else:
-        cmds, done = list(plan.commands), reading
+        # Asked: her other bookings' parts still go, then the question.
+        target = plan.ask or (case.get("quotes") if case.get("quotes") in waiting else 0)
+        asked_cmds = asked_instead(target, rows)
+        cmds += asked_cmds
+        notes += ["she is asked instead"] if asked_cmds else []
     if plan.earlier_lost:
         notes.append("her earlier words lost")
     got = describe(cmds, done, now, tz, rows)

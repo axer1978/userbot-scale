@@ -753,6 +753,16 @@ class Database:
                 message["at"] = r["created_at"]
         return history
 
+    async def last_outgoing(self, chat_id: int) -> Optional[dict[str, Any]]:
+        """The last message that went out in this chat (sent, not a draft)."""
+        tid = await self.tenant_id()
+        async with self._pool.acquire() as con:
+            row = await con.fetchrow(
+                "SELECT * FROM messages WHERE tenant_id = $1 AND chat_id = $2 AND direction = $3 AND status = $4 "
+                "ORDER BY id DESC LIMIT 1", tid, chat_id, DIR_OUT, STATUS_SENT,
+            )
+        return dict(row) if row is not None else None
+
     async def update_message(
         self,
         message_id: int,

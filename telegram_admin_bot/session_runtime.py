@@ -257,9 +257,11 @@ class SessionRuntime:
         self.offline_timer: Optional[asyncio.Task] = None
         self.active_chats: set[int] = set()
         self.sending_chats: set[int] = set()
-        # chat -> how many sends to it are under way (begin_sending), and
-        # the signal a newer draft waits on until they are done.
-        self._sending_count: dict[int, int] = {}
+        # chat -> the tasks sending to it now (begin_sending), each with how
+        # many of its sends are under way (sends inside sends): those a newer
+        # draft never cuts short — a draft only waiting can be cancelled.
+        # And the signal a newer draft waits on until they are all done.
+        self._sending: dict[int, dict[Optional[asyncio.Task], int]] = {}
         self._send_idle: dict[int, asyncio.Event] = {}
 
         self.flow = booking_flow.BookingFlow(self)
@@ -730,7 +732,9 @@ class SessionRuntime:
             dropped: set[int] = set()
             for chat_id, task in list(self.draft_tasks.items()):
                 if task is not current:
-                    if not task.done() and chat_id not in self.sending_chats:
+                    # Every draft but the one sending (waiting ones too) is
+                    # cut short, and its customer queued as unanswered.
+                    if not task.done() and not self.is_sending(chat_id, task):
                         dropped.add(chat_id)
                     self.cancel_draft(chat_id)
             dropped.update(await scheduler.clear_all_deferred(self.pool, self.tenant_id))
@@ -1613,19 +1617,33 @@ class SessionRuntime:
         told, the address, the way in): a newer draft does not cut it short
         (cancel_draft), and waits for it before it reads the chat
         (wait_while_sending), so news it carries is never said twice. Sends
-        inside sends are counted."""
-        self._sending_count[chat_id] = self._sending_count.get(chat_id, 0) + 1
+        inside sends are counted, and sends from several tasks at once (a
+        reply, and the way in sent when his photo comes): each one sending
+        is safe, whichever started first. Ended by end_sending in the same
+        task."""
+        task = asyncio.current_task()
+        senders = self._sending.setdefault(chat_id, {})
+        senders[task] = senders.get(task, 0) + 1
         self.sending_chats.add(chat_id)
         self._send_idle.setdefault(chat_id, asyncio.Event()).clear()
 
     def end_sending(self, chat_id: int) -> None:
-        count = self._sending_count.get(chat_id, 1) - 1
-        if count > 0:
-            self._sending_count[chat_id] = count
+        task = asyncio.current_task()
+        senders = self._sending.get(chat_id, {})
+        left = senders.get(task, 1) - 1
+        if left > 0:
+            senders[task] = left
             return
-        self._sending_count.pop(chat_id, None)
+        senders.pop(task, None)
+        if senders:
+            return
+        self._sending.pop(chat_id, None)
         self.sending_chats.discard(chat_id)
         self._send_idle.setdefault(chat_id, asyncio.Event()).set()
+
+    def is_sending(self, chat_id: int, task: Optional[asyncio.Task]) -> bool:
+        """`task` is inside a send to this chat (begin_sending)."""
+        return task in self._sending.get(chat_id, {})
 
     async def wait_while_sending(self, chat_id: int) -> None:
         """Until no send to this chat is under way (begin_sending)."""
@@ -1636,7 +1654,8 @@ class SessionRuntime:
         task = self.draft_tasks.pop(chat_id, None)
         if task is None or task.done():
             return
-        if chat_id in self.sending_chats:
+        if self.is_sending(chat_id, task):
+            # One sending: it finishes, and marks what it told as told.
             return
         task.cancel()
 
@@ -1670,6 +1689,10 @@ class SessionRuntime:
             await self.hub.broadcast({"type": "drafting", "chat_id": chat_id, "delay_seconds": round(delay, 1)})
             log.info("[%s]   drafting a reply for chat %s in %.0fs…", self.session_id, chat_id, delay)
             await asyncio.sleep(delay)
+            # A reply still going out in this chat first: what it told is
+            # marked as told before this one reads the chat and its news —
+            # and the checks below see how things stand once it may go.
+            await self.wait_while_sending(chat_id)
             # Quiet hours may have been switched on or moved while waiting.
             if (left := self.quiet_seconds_left()) > 0:
                 await self.defer_reply(chat_id, left + humanlike.sample_reply_delay(self.config["reply_delay"]))
@@ -1691,9 +1714,6 @@ class SessionRuntime:
                 await self.staging_skip(chat_id, None)
                 return
 
-            # A reply still going out in this chat first: what it told is
-            # marked as told before this one reads the chat and its news.
-            await self.wait_while_sending(chat_id)
             history = await self.db.get_history_for_ai(chat_id, limit=self.history_messages(), with_times=True)
             if not history:
                 log.info("[%s] No usable history for chat %s; skipping draft.", self.session_id, chat_id)

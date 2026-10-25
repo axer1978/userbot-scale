@@ -300,9 +300,11 @@ _TAXI = {"taxi", "taksi", "taksī", "такси"}
 _IN = {"in", "в", "iekšā"}
 
 _TIME = re.compile(r"^(\d{1,2})[:.](\d{2})$")
-# A length after YES / NO ("yes 2 hours", "ok 30 min"): the number is not a
-# booking number.
-_UNIT = re.compile(r"(?i)^(?:h|hrs?|hours?|min|mins|minutes?|ч|час\w*|мин\w*|stund\w*|min[ūu]t\w*|horas?|minutos?)$")
+# A length or a time of day after YES / NO ("yes 2 hours", "ok 30 min.",
+# "jā 2 st.", "sí 2 hs", "yes 9 pm"): the number is not a booking number.
+_UNIT = re.compile(
+    r"(?i)^(?:h|hs|hrs?|hours?|min|mins|minutes?|st|ч|час|часа|часов|мин|минут\w*|stund\w*|min[ūu]t\w*|horas?|"
+    r"minutos?|am|pm|o'?clock|вечера|утра|дня|ночи|vakarā|rītā|noche|tarde|mañana)$")
 _DMY = re.compile(r"^(\d{1,2})[./](\d{1,2})(?:[./](\d{2}|\d{4}))?$")
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 
@@ -405,9 +407,12 @@ def _parse_when(tokens: Sequence[str], today: date) -> tuple[Optional[dtime], Op
     return at, day, ""
 
 
-def parse_owner_reply(text: str, *, today: date) -> Optional[OwnerCommand]:
+def parse_owner_reply(text: str, *, today: date, lengths: bool = True) -> Optional[OwnerCommand]:
     """What the owner wrote, as a command, or None when it is not one (then
-    it is an ordinary message and gets an ordinary reply)."""
+    it is an ordinary message and gets an ordinary reply). `lengths`: a
+    number followed by a length or a time of day ("yes 2 hours") is no
+    booking number — only while her own words are read (the model then
+    reads it); with commands only it is as it always was."""
     tokens = (text or "").strip().split()
     if not tokens:
         return None
@@ -452,7 +457,7 @@ def parse_owner_reply(text: str, *, today: date) -> Optional[OwnerCommand]:
         return None
     rest = tokens[1:]
     number = _number(rest[0]) if rest else None
-    if number is not None and len(rest) > 1 and _UNIT.match(_word(rest[1])):
+    if lengths and number is not None and len(rest) > 1 and _UNIT.match(_word(rest[1]).rstrip(".?…)")):
         number = None  # "yes 2 hours": a length, read by the model
     loose = len(rest) > (1 if number is not None else 0)
     if rest and number is None and kind in ("yes", "no"):
@@ -561,6 +566,7 @@ ACTION_SYNONYMS = {
     "decline": "no", "declined": "no", "reject": "no", "rejected": "no", "refuse": "no",
     "propose": "time", "move": "time", "reschedule": "time", "new_time": "time",
     "taxi": "in_taxi", "on_the_way": "in_taxi", "complete": "done", "completed": "done", "no_show": "noshow",
+    "noshowed": "noshow", "cancelled": "cancel", "canceled": "cancel", "finished": "done",
     "tell": "none", "ask": "none", "relay": "none", "message": "none", "question": "none",
 }
 
@@ -587,6 +593,11 @@ def describe_minutes(minutes: int) -> str:
 
 def booking_minutes(booking: Mapping[str, Any]) -> int:
     return int((booking["ends_at"] - booking["starts_at"]).total_seconds() // 60)
+
+
+def _short_at(booking: Mapping[str, Any], when: datetime) -> str:
+    """'Tue 21:00' for `when` in the booking's zone."""
+    return when.astimezone(tzinfo_for(booking["tz"])).strftime("%a %H:%M")
 
 
 def _short_when(booking: Mapping[str, Any]) -> str:
@@ -617,7 +628,10 @@ def owner_state_note(rows: Sequence[Mapping[str, Any]], *, outcall_taxi: bool = 
     lines = []
     for b in rows:
         length = describe_minutes(booking_minutes(b))
-        if b["state"] == bs.CONFIRMED and b.get("proposed_by") == bs.CUSTOMER:
+        if b["state"] in bs.FINAL:
+            over = {bs.CANCELLED: "cancelled", bs.COMPLETED: "done", bs.NO_SHOW: "he did not come"}[b["state"]]
+            what = f"{over} (it was for {describe_when(b)}, {length})"
+        elif b["state"] == bs.CONFIRMED and b.get("proposed_by") == bs.CUSTOMER:
             what = (f"confirmed for {describe_when(b)} ({length}); the customer asks to move it to "
                     f"{describe_proposal(b)}, waiting for their answer")
         elif b.get("proposed_by") == bs.OWNER:
@@ -625,9 +639,6 @@ def owner_state_note(rows: Sequence[Mapping[str, Any]], *, outcall_taxi: bool = 
                     f"{describe_proposal(b)} instead, waiting for the customer")
         elif b["state"] in (bs.REQUESTED, bs.PENDING):
             what = f"the customer asks for {describe_when(b)} ({length}), waiting for their answer"
-        elif b["state"] in bs.FINAL:
-            over = {bs.CANCELLED: "cancelled", bs.COMPLETED: "done", bs.NO_SHOW: "he did not come"}[b["state"]]
-            what = f"{over} (it was for {describe_when(b)}, {length})"
         else:
             what = f"confirmed for {describe_when(b)} ({length})"
             if outcall_taxi and is_outcall(b):
@@ -736,11 +747,13 @@ def _clean_answer(data: Any) -> Optional[dict[str, Any]]:
     carries = any(answer[key] for key in ("extras_ok", "extras_no", "tell_customer", "ask_customer", "for_me"))
     timed = answer["start"] is not None or answer["in_minutes"] is not None
     raw = data.get("action")
-    word = raw.strip().lower().replace(" ", "_") if isinstance(raw, str) else ""
+    word = raw.strip().lower().replace(" ", "_").replace("-", "_") if isinstance(raw, str) else ""
     if word in OWNER_ACTIONS:
         answer["action"] = word
         if word == "none" and not (carries or timed or answer["duration_minutes"] is not None):
-            return None  # nothing about this booking
+            if not answer["question"]:
+                return None  # nothing about this booking
+            answer["action"] = "unclear"  # only a question for her: she is asked it
         return answer
     mapped = ACTION_SYNONYMS.get(word, "")
     if mapped and mapped != "none":
@@ -824,8 +837,11 @@ def _fitting(action: str, rows: Sequence[Mapping[str, Any]], now: datetime) -> l
     elif action in ("done", "noshow"):
         fits = [b for b in rows if b["state"] == bs.CONFIRMED and b["starts_at"] <= now]
     else:
-        fits = list(rows)
-    return fits or (list(rows) if len(rows) == 1 else [])
+        # Words alone or her own question: a booking that is still on before
+        # one that is over.
+        fits = [b for b in rows if b["state"] in bs.LIVE] or list(rows)
+    live = [b for b in rows if b["state"] in bs.LIVE]
+    return fits or (live if len(live) == 1 else list(rows) if len(rows) == 1 else [])
 
 
 def _typed_numbers(text: str) -> set[int]:
@@ -878,6 +894,10 @@ def _command_from(
                                 candidates=tuple(b["number"] for b in (fits or rows)), **words)
     booking = next((b for b in rows if b["number"] == number), None)
     timed = answer.get("start") is not None or answer.get("in_minutes") is not None
+    if action in ("no", "cancel") and timed:
+        # Turned down with another time ("not today, tomorrow 15:00"; "cancel
+        # the 15:00, make it 17:00"): that time is what she offers him.
+        action = "time"
     if action in ("yes", "none") and timed and not (action == "none" and words["tell"]):
         # A yes, or words alone, that come with a time: the time is never
         # dropped. By his time (or ready by it) the yes stands; any other
@@ -886,14 +906,22 @@ def _command_from(
         if booking is None or at is None:
             return OwnerCommand("unclear", number, missing="time", **words)
         asked = _asked_start(booking)
-        if action == "yes" and (at == asked or at <= asked + READY_SLACK):
+        # A delay ("yes, ready in 10") is a yes when she is ready by his
+        # time; a clock time only when it is his time.
+        delay = answer.get("start") is None
+        if action == "yes" and (at <= asked + READY_SLACK if delay else abs(at - asked) <= READY_SLACK):
             return OwnerCommand("stays" if is_settled(booking) else "yes", number, **words)
         who = booking.get("customer_name") or "the customer"
         offer = _offer(number, at, booking)
-        question = (f"#{number} {who} asked for {_short_when(booking)}: confirm that (YES {number}), or offer him "
-                    f"{offer.split(' ', 1)[1]} ({offer})?" if action == "yes" else
-                    f"#{number} {who}: offer him {offer.split(' ', 1)[1]} instead of {_short_when(booking)}? "
-                    f"Answer {offer}, or say what to tell him.")
+        offered, his = offer.split(" ", 1)[1], _short_at(booking, asked)
+        if action == "yes":
+            question = f"#{number} {who} asked for {his}: confirm that (YES {number}), or offer him {offered} ({offer})?"
+        elif is_settled(booking):
+            question = (f"#{number} {who} is booked for {his}: offer him {offered} instead ({offer}), or say what "
+                        "to tell him.")
+        else:
+            question = (f"#{number} {who} asked for {his}: offer him {offered} instead ({offer}), or confirm his "
+                        f"time (YES {number})?")
         return OwnerCommand("unclear", number, **{**words, "question": question})
     if action == "yes":
         settled = booking is not None and is_settled(booking)
@@ -1036,6 +1064,11 @@ def _unnamed_asked(commands: list[OwnerCommand], rows: Sequence[Mapping[str, Any
                            candidates=tuple(c.number for c in unnamed), at=None, day=None)]
 
 
+def named_in(typed: str, rows: Sequence[Mapping[str, Any]]) -> set[int]:
+    """The bookings her message names: by number, or by the customer's name."""
+    return {b["number"] for b in rows if _names_booking(b, typed)}
+
+
 def standing_for_all(standing: str, rows: Sequence[Mapping[str, Any]]) -> str:
     """Her instruction for every customer, as read — "" when it names one of
     them ("after today don't take Juris again"): a remark about one man
@@ -1059,13 +1092,16 @@ def owner_command_from(
 @dataclass(frozen=True)
 class OwnerPlan:
     """What is done with her message once it is read (BookingFlow, and
-    owner_check exactly the same): the commands, carried out in order; or
-    the one booking she is asked about instead (`ask`; 0: the one waiting
-    for her answer, or which of those). `earlier_lost`: her typed command
-    went through as she typed it, without what she said before it (the
-    message it answers) — she is told so."""
+    owner_check exactly the same): the commands, carried out in order; and
+    the one booking she is asked about (`ask`; 0: the one waiting for her
+    answer, or which of those), with what of hers waits on that question
+    (`ask_with`: repeated in it, held for her answer) — the commands for
+    her other bookings still go. `earlier_lost`: her typed command went
+    through as she typed it, without what she said before it (the message
+    it answers) — she is told so."""
     commands: tuple[OwnerCommand, ...] = ()
     ask: Optional[int] = None
+    ask_with: Optional[OwnerCommand] = None
     earlier_lost: bool = False
 
 
@@ -1088,22 +1124,45 @@ def _contradicts(typed: str, read: str) -> bool:
         (typed == "yes" and read in ("no", "cancel", "noshow"))
 
 
-def plan_owner_answer(typed: Optional[OwnerCommand], commands: Sequence[OwnerCommand], *, standing: str = "",
-                      held_words: bool = False, settled: Collection[int] = ()) -> OwnerPlan:
-    """Her message as read (`commands`, owner_commands_from) against what
-    she typed, if it parses as a command (`typed`, parse_owner_reply):
+def _typed_kind(kind: str, number: Optional[int], settled: Collection[int],
+                waiting: Optional[Collection[int]]) -> str:
+    """Her typed YES / NO on a booking: a YES to one already confirmed
+    changes nothing but what she adds; otherwise a YES / NO on one that
+    does not wait for her answer (confirmed, or over) is her words only —
+    a NO to his question is no decline of his booking (CANCEL is)."""
+    if kind == "yes" and number in settled:
+        return "stays"
+    if kind in ("yes", "no") and waiting is not None and number not in waiting:
+        return "none"
+    return kind
 
-    - a strict command (read only because it answers the bot's question
-      about her message before it) goes through as she typed it, for the
-      booking she typed; the reading only adds her words to it when it
-      agrees. `held_words`: that earlier message had words, a length or
-      extras, which are then lost when the reading has none that fit;
-    - a loose one ("YES 3 tell him cash") is the reading's — unless the
-      reading has nothing for the booking she typed, or turns her yes into a
-      no or her no into a yes: then she is asked;
-    - a plain YES / NO without a number takes the one booking the reading
-      agrees on (a YES to one already confirmed, `settled`, changes nothing
-      but what she adds), else she is asked which;
+
+def plan_owner_answer(typed: Optional[OwnerCommand], commands: Sequence[OwnerCommand], *, standing: str = "",
+                      held_words: bool = False, settled: Collection[int] = (),
+                      waiting: Optional[Collection[int]] = None, focus: Collection[int] = (),
+                      named: Optional[Collection[int]] = None) -> OwnerPlan:
+    """Her message as read (`commands`, owner_commands_from) against what
+    she typed, if it parses as a command (`typed`, parse_owner_reply).
+    `settled`: the bookings confirmed with nothing to answer; `waiting`:
+    those waiting for her answer; `focus`: the bookings the bot's open
+    question to her (or the message she quoted) is about; `named`: those her
+    message names (named_in).
+
+    - a strict command (read only because it answers the bot's question,
+      or because its booking is in doubt) goes through as she typed it, for
+      the booking she typed; the reading only adds her words to it when it
+      agrees. `held_words`: the message the question was about had words, a
+      length or extras, which are then lost when the reading has none;
+    - a plain YES / NO without a number takes the one booking of the
+      question (`focus`) the reading agrees on; with no question open and
+      several requests waiting, she is asked which — never the reading's
+      pick; words alone for a booking that does not wait stay words;
+    - a loose one ("YES 3 tell him cash") is the reading's — keeping her
+      typed change when the reading has only her words for it; when the
+      reading has nothing for the booking she typed, or turns her yes into
+      a no or her no into a yes, she is asked about it — her words for
+      other bookings, and changes to bookings she named, still go (a change
+      to one she did not name is the misreading itself);
     - a loose YES / NO read as about no booking ("no problem babe"): she is
       asked about the request waiting for her, never left thinking it
       counted;
@@ -1113,29 +1172,36 @@ def plan_owner_answer(typed: Optional[OwnerCommand], commands: Sequence[OwnerCom
     if not typed.loose:
         n = typed.number
         if n is None:
-            fits = [c for c in commands if c.number is not None and _agrees(typed.kind, c.kind)]
+            if not focus and waiting is not None and len(waiting) > 1:
+                return OwnerPlan(ask=0)
+            fits = [c for c in commands if c.number is not None and _agrees(typed.kind, c.kind)
+                    and (not focus or c.number in focus)]
             if len(fits) != 1:
                 return OwnerPlan(ask=0)
             fit = fits[0]
-            kind = typed.kind if fit.kind == "none" else fit.kind
-            if kind == "yes" and fit.number in settled:
-                kind = "stays"
+            kind = _typed_kind(typed.kind if fit.kind == "none" else fit.kind, fit.number, settled, waiting)
             return OwnerPlan((replace(fit, kind=kind),), earlier_lost=held_words and not _carries(fit))
         read = next((c for c in commands if c.number == n), None)
         if read is not None and _agrees(typed.kind, read.kind):
-            # A YES to one already confirmed changes nothing but what she adds.
-            kind = "stays" if typed.kind == "yes" and n in settled else typed.kind
-            merged = replace(typed, kind=kind, minutes=read.minutes, tell=read.tell, ask=read.ask,
-                             extras_ok=read.extras_ok, extras_no=read.extras_no, for_me=read.for_me)
+            merged = replace(typed, kind=_typed_kind(typed.kind, n, settled, waiting), minutes=read.minutes,
+                             tell=read.tell, ask=read.ask, extras_ok=read.extras_ok, extras_no=read.extras_no,
+                             for_me=read.for_me)
             # The reading agrees but has none of what she said before: she is
             # told that part did not go.
             return OwnerPlan((merged,), earlier_lost=held_words and not _carries(read))
-        lost = held_words or any(_carries(c) for c in commands)
+        lost = held_words or (read is not None and _carries(read))
         return OwnerPlan((typed,), earlier_lost=lost)
     if typed.number is not None:
         read = next((c for c in commands if c.number == typed.number), None)
+        others = tuple(c for c in commands if c.number != typed.number and (
+            c.kind in ("none", "stays") or named is None or c.number in named))
         if read is None or _contradicts(typed.kind, read.kind):
-            return OwnerPlan(ask=typed.number)
+            return OwnerPlan(others, ask=typed.number, ask_with=read if read is not None and _carries(read) else None)
+        if read.kind == "none" and typed.kind in ("yes", "no", "cancel", "done", "noshow"):
+            # The reading kept only her words for it ("CANCEL 6 tell him I'm
+            # sick" read as words): her typed change goes with them.
+            kept = replace(read, kind=_typed_kind(typed.kind, typed.number, settled, waiting))
+            return OwnerPlan(tuple(kept if c is read else c for c in commands))
     if not commands and not standing:
         return OwnerPlan(ask=typed.number if typed.number is not None else 0)
     return OwnerPlan(tuple(commands))
@@ -1198,15 +1264,29 @@ def format_facts(booking: Mapping[str, Any], *, outcall_taxi: bool = False, proo
     return "\n".join(lines)
 
 
+def _held_items(cmd: Optional[OwnerCommand]) -> list[str]:
+    """What of her answer waits on a question to her, as she can recognise it."""
+    if cmd is None:
+        return []
+    items = [f"for {describe_minutes(cmd.minutes)}"] if cmd.minutes else []
+    return items + ([f"tell him {cmd.tell}"] if cmd.tell else []) + [f"yes to {x}" for x in cmd.extras_ok] + \
+        [f"no {x}" for x in cmd.extras_no] + ([f"ask him {cmd.ask}"] if cmd.ask else [])
+
+
 def _held(cmd: Optional[OwnerCommand]) -> str:
     """What of her answer waits until she says which booking, or yes or no:
     said back with the question, so nothing she wrote is lost from view."""
-    if cmd is None:
-        return ""
-    items = [f"for {describe_minutes(cmd.minutes)}"] if cmd.minutes else []
-    items += ([f"tell him {cmd.tell}"] if cmd.tell else []) + [f"yes to {x}" for x in cmd.extras_ok] + \
-        [f"no {x}" for x in cmd.extras_no] + ([f"ask him {cmd.ask}"] if cmd.ask else [])
+    items = _held_items(cmd)
     return f" With your answer: {'; '.join(items)}." if items else ""
+
+
+def format_held_lost(number: int, cmd: Optional[OwnerCommand]) -> str:
+    """Her plain command came long after the question it answers: what she
+    said with that question did not go with it."""
+    items = _held_items(cmd)
+    what = f" ({'; '.join(items)})" if items else ""
+    return (f"#{number}: what you wrote with it before{what} was not passed on with this — send it again if it "
+            "still matters.")
 
 
 def format_which_one(rows: Sequence[Mapping[str, Any]], cmd: Optional[OwnerCommand] = None) -> str:
@@ -1251,6 +1331,11 @@ EARLIER_NOT_APPLIED = ("What you wrote before this did not fit it, so only this 
 # over, the account off): they wait, and are dropped when too old.
 WORDS_WAIT = ("His chat is not being answered right now, so this waits; it is dropped if it can't go within a "
               "day.")
+def words_after_quiet_hours(until: datetime) -> str:
+    """Her words for him while replies wait for the quiet hours to end."""
+    return f"His replies wait for the quiet hours to end (about {until:%H:%M}), so this goes to him then."
+
+
 # Her message could not be read and there is no booking to put it on.
 READ_NOTHING_FAILED = ("I couldn't read that just now — nothing was saved or passed on. Please send it again in a "
                        "few minutes.")
@@ -1260,28 +1345,42 @@ READ_EARLIER_FAILED = ("I couldn't read this together with your message before i
                        "through, nothing else from that message. Send that part again if it still matters.")
 
 # Words after a typed command that may turn it into something else: a no
-# ("ok, not today") turns a YES; another time or length ("yes at 9", "yes 3
-# hours", "no 3, tomorrow at 15:00 instead", "ok 9pm", "half an hour") turns
-# any of them. When they can't be read, the command does not stand alone.
+# ("ok, not today") turns a YES; another time, day or length ("yes at 9",
+# "yes 3 hours", "no 3, tomorrow at 15:00 instead", "ok 9pm", "half an hour",
+# "jā, rīt", "si, manana", "да, к 9", "ok friday") turns any of them; so does
+# any other number than the booking's. When they can't be read, the command
+# does not stand alone. Phrases that say yes in no-words ("no problem", "не
+# вопрос", "no hay problema") are no no.
+_YES_PHRASES = re.compile(
+    r"(?i)\b(?:no\s+problem\w*|no\s+prob|no\s+worries|don'?t\s+worry|не\s+вопрос|без\s+проблем|"
+    r"nav\s+problēm\w*|nav\s+problem\w*|no\s+hay\s+problema|no\s+pasa\s+nada|sin\s+problema)\b")
 _DOUBT_NO = re.compile(r"(?i)\b(?:no|not|nope|never|don'?t|can'?t|won'?t|cannot|нет|не|нельзя|nē|ne|nevar|nunca)\b")
 _DOUBT_TIME = re.compile(
-    r"(?i)\b(?:later|earlier|sooner|tomorrow|after|before|instead|half|quarter|"
-    r"позже|попозже|раньше|завтра|после|через|полчас\w*|четверть|"
-    r"vēlāk|agrāk|rīt|pēc|pusstund\w*|ceturksn\w*|"
-    r"mañana|después|luego|antes|tarde|media|"
-    r"hours?|hrs?|час\w*|минут\w*|stund\w*|minūt\w*|minut\w*|horas?)\b"
-    r"|\b(?:at|в|во|plkst\.?|um|a\s+las?)\s*\d{1,2}\b|\b\d{1,2}\s*(?:am|pm)\b|\bin\s+\d+|\d{1,2}[:.]\d{2}"
-    r"|\b\d+\s*(?:h|hrs?|hours?|min|mins|minutes?|ч|час\w*|мин\w*|stund\w*|min[ūu]t\w*|horas?)\b")
+    r"(?i)\b(?:later|earlier|sooner|tomorrow|tonight|tonite|after|before|instead|half|quarter|by|around|till|"
+    r"until|next|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|"
+    r"позже|попозже|раньше|завтра|после|через|полчас\w*|четверть|вечер\w*|утр\w*|ноч\w*|понедельник\w*|"
+    r"вторник\w*|сред[ауы]|четверг\w*|пятниц\w*|суббот\w*|воскресень\w*|выходн\w*|"
+    r"vēlāk|velak|agrāk|agrak|rīt|rit|pēc|pec|pusstund\w*|ceturksn\w*|vakar\w*|pirmdien\w*|otrdien\w*|"
+    r"trešdien\w*|tresdien\w*|ceturtdien\w*|piektdien\w*|sestdien\w*|svētdien\w*|svetdien\w*|"
+    r"mañana|manana|después|despues|luego|antes|tarde|media|noche|lunes|martes|miércoles|miercoles|jueves|"
+    r"viernes|sábado|sabado|domingo|"
+    r"hours?|hrs?|hs|час\w*|минут\w*|stund\w*|minūt\w*|minut\w*|horas?)\b"
+    r"|\b(?:at|в|во|к|на|до|около|plkst\.?|uz|ap|līdz|lidz|um|en|para|sobre|hasta)\s*\d{1,2}\b"
+    r"|\b(?:a|para|sobre|hasta)\s+las?\s*\d{1,2}\b|\b\d{1,2}\s*(?:am|pm)\b|\bin\s+\d+|\d{1,2}[:.]\d{2}"
+    r"|\b\d+\s*(?:h|hs|hrs?|hours?|min|mins|minutes?|st|ч|час\w*|мин\w*|stund\w*|min[ūu]t\w*|horas?)\b")
 
 
-def loose_doubt(text: str, kind: str = "yes") -> bool:
-    """Her typed command (`kind`) has words after it that may change what it
-    means: for a YES a no or another time, for the others another time."""
+def loose_doubt(text: str, kind: str = "yes", number: Optional[int] = None) -> bool:
+    """Her typed command (`kind`, on booking `number`) has words after it
+    that may change what it means: for a YES a no, and for any of them
+    another time, day or length, or another number than the booking's."""
     words = (text or "").strip().split(None, 1)
     if len(words) < 2:
         return False
     rest = words[1]
-    return bool(_DOUBT_TIME.search(rest) or (kind == "yes" and _DOUBT_NO.search(rest)))
+    if any(int(d) != number for d in re.findall(r"\b\d{1,2}\b", rest)):
+        return True
+    return bool(_DOUBT_TIME.search(rest) or (kind == "yes" and _DOUBT_NO.search(_YES_PHRASES.sub(" ", rest))))
 
 
 def format_standing_saved(text: str) -> str:
