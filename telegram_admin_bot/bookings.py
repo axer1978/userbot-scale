@@ -34,6 +34,7 @@ try:
 except ImportError:  # pragma: no cover - Python < 3.9
     ZoneInfo = None  # type: ignore[assignment]
 
+import booker_texts
 import booking_states as bs
 
 # ------------------------------------------------------------ time handling
@@ -102,15 +103,60 @@ def describe_until(starts_at: datetime, now: datetime) -> str:
 
 
 # ------------------------------------------------ messages to the owner
+#
+# Every line to her is said through booker_texts (`t`: her language, and the
+# account's own versions of the main messages); the default, ENGLISH, is
+# what these always said. Days and lengths shown to her are hers too
+# (when_for, span_for, ...); describe_when and the others stay English for
+# the model and the panel.
 
-ANSWER_HELP = "Reply YES {n} or NO {n}, or a new time like {n} 15:30 or {n} 04.10 15:30."
+# The commands line of a request, in English ({n}: the booking number).
+ANSWER_HELP = booker_texts.TEXTS["answer_help"]["en"]
 
 
-def _who(booking: Mapping[str, Any]) -> str:
-    who = booking.get("customer_name") or "Unknown customer"
-    if booking.get("customer_username"):
-        who += f" (@{booking['customer_username']})"
-    return who
+def span_for(t: booker_texts.Texts, starts_at: datetime, ends_at: datetime, tz_name: str) -> str:
+    """describe_span in her language."""
+    zone = tzinfo_for(tz_name)
+    return t.span(starts_at.astimezone(zone), ends_at.astimezone(zone))
+
+
+def when_for(booking: Mapping[str, Any], t: booker_texts.Texts) -> str:
+    """describe_when in her language."""
+    return span_for(t, booking["starts_at"], booking["ends_at"], booking["tz"])
+
+
+def proposal_for(booking: Mapping[str, Any], t: booker_texts.Texts) -> str:
+    """describe_proposal in her language."""
+    return span_for(t, booking["proposed_starts_at"], booking["proposed_ends_at"], booking["tz"])
+
+
+def at_for(t: booker_texts.Texts, at: datetime, tz_name: str) -> str:
+    """'Fri 03 Oct 14:00' (availability.describe) in her language."""
+    local = at.astimezone(tzinfo_for(tz_name))
+    return f"{t.day(local, year=False)} {local:%H:%M}"
+
+
+def why_for(t: booker_texts.Texts, reason: str) -> str:
+    """Why a time can't be had (availability's reason), in her language."""
+    key = f"why_{reason}"
+    return t.say(key) if t.has(key) else reason.replace("_", " ")
+
+
+def _customer(booking: Mapping[str, Any], t: booker_texts.Texts) -> str:
+    return booking.get("customer_name") or t.say("unknown_customer")
+
+
+def _handle(booking: Mapping[str, Any]) -> str:
+    return f" (@{booking['customer_username']})" if booking.get("customer_username") else ""
+
+
+def _who(booking: Mapping[str, Any], t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
+    return _customer(booking, t) + _handle(booking)
+
+
+def _him(booking: Mapping[str, Any], t: booker_texts.Texts) -> str:
+    """The customer's name in her answers back, else "the customer"."""
+    return booking.get("customer_name") or t.say("the_customer")
 
 
 def _named(name: str) -> str:
@@ -120,110 +166,114 @@ def _named(name: str) -> str:
     return f"{name} — " if name else ""
 
 
-def format_request(booking: Mapping[str, Any], *, changed: bool = False, name: str = "") -> str:
+def _blanks(booking: Mapping[str, Any], t: booker_texts.Texts, *, name: str = "",
+            who: str = "") -> dict[str, str]:
+    """The blanks every template of a booking has (booker_texts.TEMPLATES)."""
+    return {
+        "number": str(booking["number"]), "customer": who or _customer(booking, t), "handle": _handle(booking),
+        "girl": name, "girl_tag": _named(name), "when": when_for(booking, t),
+        "length": t.minutes(booking_minutes(booking)),
+    }
+
+
+def format_request(booking: Mapping[str, Any], *, changed: bool = False, name: str = "",
+                   t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """A new request, or one whose time the customer changed before you
     answered: who asks, for whom (her name, else the account's), the extras
     he asked for, when."""
     n = booking["number"]
-    head = f"📅 Booking request #{n}" + (" (new time)" if changed else "")
-    lines = [head, f"Customer: {_who(booking)}"]
-    if name:
-        lines.append(f"Girl: {name}")
-    lines.append(f"Extras: {booking.get('extras') or 'none mentioned'}")
-    lines.append(f"When: {describe_when(booking)}")
-    if booking.get("service"):
-        lines.append(f"What: {booking['service']}")
-    if booking.get("notes"):
-        lines.append(f"Notes: {booking['notes']}")
-    lines += ["", ANSWER_HELP.format(n=n)]
-    return "\n".join(lines)
+    return t.template(
+        "request", **_blanks(booking, t, name=name),
+        changed=t.say("request_new_time") if changed else "",
+        extras=booking.get("extras") or t.say("request_no_extras"),
+        service=booking.get("service") or "", notes=booking.get("notes") or "",
+        commands=t.say("answer_help", n=n))
 
 
-def format_move_request(booking: Mapping[str, Any], *, name: str = "") -> str:
+def format_move_request(booking: Mapping[str, Any], *, name: str = "",
+                        t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """The customer asks to move a confirmed booking."""
-    n = booking["number"]
-    return "\n".join([
-        f"🔁 {_named(name)}#{n}: {_who(booking)} asks to move their booking",
-        f"From: {describe_when(booking)}",
-        f"To:   {describe_proposal(booking)}",
-        "",
-        f"Reply YES {n} to move it, NO {n} to keep the old time, or a different time like {n} 15:30.",
-    ])
+    return t.template("move_request", **_blanks(booking, t, name=name), to=proposal_for(booking, t),
+                      commands=t.say("move_commands", n=booking["number"]))
 
 
-def format_owner_update(booking: Mapping[str, Any], what: str, *, name: str = "") -> str:
+def format_owner_update(booking: Mapping[str, Any], what: str, *, name: str = "",
+                        t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """Something the owner should know that they did not do themselves."""
-    return f"{_named(name)}#{booking['number']} {_who(booking)}, {describe_when(booking)}: {what}"
+    return t.say("owner_update", girl_tag=_named(name), n=booking["number"], who=_who(booking, t),
+                 when=when_for(booking, t), what=what)
+
+
+def format_customer_cancelled(booking: Mapping[str, Any], *, name: str = "",
+                              t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
+    """The customer cancelled his booking."""
+    return t.template("customer_cancelled", **_blanks(booking, t, name=name))
+
+
+# Her answer back for the actions that have a template of their own.
+_ACK_TEMPLATES = {"confirm": "confirmed", "accept_proposal": "confirmed", "decline": "declined",
+                  "reschedule": "moved", "cancel": "cancelled"}
 
 
 def format_acknowledgement(booking: Mapping[str, Any], action: str, *, outcall_taxi: bool = False,
-                           proof: bool = False) -> str:
-    n, who = booking["number"], booking.get("customer_name") or "the customer"
+                           proof: bool = False, t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
+    n, who = booking["number"], _him(booking, t)
     if action == "propose":
-        return f"#{n}: {describe_proposal(booking)} proposed to {who}. You'll hear back when they answer."
+        return t.template("proposed", **_blanks(booking, t, who=who), proposed=proposal_for(booking, t))
     # When and how long, so she sees which booking it was and what she gave him.
-    span = f"{describe_when(booking)} ({describe_minutes(booking_minutes(booking))})"
-    words = {
-        "confirm": f"confirmed ✅ for {span} — {who} will be told.",
-        "accept_proposal": f"confirmed ✅ for {span} — {who} will be told.",
-        "reschedule": f"moved to {describe_when(booking)} ✅ — {who} will be told.",
-        "change_length": f"now {span} ✅ — {who} will be told.",
-        "decline": f"declined ❌ — {who} will be told.",
-        "reject_proposal": f"stays at {describe_when(booking)} — {who} will be told.",
-        "cancel": f"cancelled ❌ — {who} will be told.",
-        "mark_completed": "marked as done.",
-        "mark_no_show": "marked as missed.",
-        "ready": f"ready ✅ — {who} is asked to order the taxi to your address and send its link. It will come here.",
-        "in_taxi": f"in the taxi ✅ — {who} is asked for the address, floor, way in and a photo of the place. "
-                   "They will come here.",
-    }
-    text = f"#{n} {words.get(action, action)}"
+    when, length = when_for(booking, t), t.minutes(booking_minutes(booking))
+    if action in _ACK_TEMPLATES:
+        text = t.template(_ACK_TEMPLATES[action], **_blanks(booking, t, who=who))
+    elif t.has(f"ack_{action}"):
+        text = t.say(f"ack_{action}", n=n, who=who, when=when, length=length)
+    else:
+        text = t.say("ack_other", n=n, action=action)
     if outcall_taxi and action in ("confirm", "accept_proposal") and is_outcall(booking):
-        if proof:
-            text += (f" It's an outcall: {who} is asked for a photo that shows he's at the place (hotel card or "
-                     f"the building). It comes here, then he orders your taxi. READY {n} skips the photo.")
-        else:
-            text += f" It's an outcall: send READY {n} when you're ready, and {who} is told to order the taxi."
+        text += " " + t.say("ack_outcall_proof" if proof else "ack_outcall_ready", n=n, who=who)
     return text
 
 
-def outcall_step(booking: Mapping[str, Any], *, proof: bool = False) -> str:
-    """Where a confirmed outcall's taxi steps stand, for the owner."""
+def outcall_step(booking: Mapping[str, Any], *, proof: bool = False,
+                 t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
+    """Where a confirmed outcall's taxi steps stand, for the owner (and, in
+    English, for the reader of her words)."""
     n = booking["number"]
     if booking.get("in_taxi_at"):
-        return "in the taxi"
+        return t.say("step_in_taxi")
     if booking.get("taxi_link_at"):
-        return f"taxi link sent — send IN {n} when you're in"
+        return t.say("step_taxi_link", n=n)
     if booking.get("proof_at"):
-        return "his photo came — waiting for his taxi link"
+        return t.say("step_proof_came")
     if booking.get("ready_at"):
-        return "ready — waiting for his taxi link"
+        return t.say("step_ready")
     if proof:
-        return f"waiting for his photo of the place (READY {n} skips it)"
-    return f"send READY {n} when you're ready"
+        return t.say("step_wait_proof", n=n)
+    return t.say("step_send_ready", n=n)
 
 
 def format_list(bookings: Sequence[Mapping[str, Any]], outcalls: Sequence[Mapping[str, Any]] = (), *,
-                proof: bool = False) -> str:
+                proof: bool = False, t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     if not bookings and not outcalls:
-        return "Nothing is waiting for your answer right now."
+        return t.say("list_nothing")
     lines = []
     if bookings:
-        lines.append("Waiting for your answer:")
+        lines.append(t.say("list_waiting"))
     for b in bookings:
+        n, who = b["number"], _who(b, t)
         if b["state"] == bs.CONFIRMED and b.get("proposed_by") == bs.CUSTOMER:
-            lines.append(f"  #{b['number']} — {_who(b)} wants to move {describe_when(b)} → {describe_proposal(b)}")
+            lines.append("  " + t.say("list_move", n=n, who=who, when=when_for(b, t), to=proposal_for(b, t)))
         elif b.get("proposed_by") == bs.OWNER:
-            lines.append(f"  #{b['number']} — {_who(b)}, you proposed {describe_proposal(b)} (waiting for them)")
+            lines.append("  " + t.say("list_proposed", n=n, who=who, proposed=proposal_for(b, t)))
         else:
-            lines.append(f"  #{b['number']} — {_who(b)}, {describe_when(b)}")
+            lines.append("  " + t.say("list_request", n=n, who=who, when=when_for(b, t)))
     if bookings:
-        lines += ["", "Reply YES <number>, NO <number>, or <number> <new time>."]
+        lines += ["", t.say("list_commands")]
     if outcalls:
         if lines:
             lines.append("")
-        lines.append("Outcalls:")
-        lines += [f"  #{b['number']} — {_who(b)}, {describe_when(b)}: {outcall_step(b, proof=proof)}"
+        lines.append(t.say("list_outcalls"))
+        lines += ["  " + t.say("list_outcall", n=b["number"], who=_who(b, t), when=when_for(b, t),
+                               step=outcall_step(b, proof=proof, t=t))
                   for b in outcalls]
     return "\n".join(lines)
 
@@ -231,51 +281,86 @@ def format_list(bookings: Sequence[Mapping[str, Any]], outcalls: Sequence[Mappin
 # ------------------------------------------------- outcalls, to the owner
 
 
-def format_ready_reminder(booking: Mapping[str, Any]) -> str:
-    n = booking["number"]
-    return (f"🚕 #{n} {_who(booking)}, {describe_when(booking)} (outcall): send READY {n} when you're "
-            "ready — then he orders the taxi.")
+def format_ready_reminder(booking: Mapping[str, Any], *, name: str = "",
+                          t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
+    return t.template("ready_reminder", **_blanks(booking, t, name=name),
+                      commands=t.say("ready_reminder_commands", n=booking["number"]))
 
 
-def format_taxi_link(booking: Mapping[str, Any], text: str, in_taxi_minutes: Optional[int]) -> str:
+def format_taxi_link(booking: Mapping[str, Any], text: str, in_taxi_minutes: Optional[int], *,
+                     t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """The customer's message with the taxi link. `in_taxi_minutes`: when
     he is told she is in the taxi without her IN n; None when no IN n is
     wanted (he knows already, or is told at once)."""
     n = booking["number"]
-    head = f"🚕 #{n} {_who(booking)} sent the taxi link:\n{text}"
+    head = t.say("taxi_link", n=n, who=_who(booking, t), text=text)
     if in_taxi_minutes is None:
         return head
-    return (f"{head}\n\nSend IN {n} when you're in the taxi (if you don't, he is told you're in it in "
-            f"{in_taxi_minutes} min).")
+    return f"{head}\n\n" + t.say("taxi_link_in", n=n, minutes=in_taxi_minutes)
 
 
-def format_proof_header(booking: Mapping[str, Any], caption: str = "") -> str:
+def format_proof_header(booking: Mapping[str, Any], caption: str = "", *,
+                        t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """Before his proof photo goes on to her: what it is, and what comes next."""
-    head = (f"📷 #{booking['number']} {_who(booking)} sent his photo of the place (below). He's asked to order "
-            "your taxi now; the link will come here.")
+    head = t.say("proof_header", n=booking["number"], who=_who(booking, t))
     return f"{head}\n{caption}" if caption else head
 
 
-def format_arrived(booking: Mapping[str, Any], said: str, *, way_in_sent: bool, name: str = "") -> str:
+def format_arrived(booking: Mapping[str, Any], said: str, *, way_in_sent: bool, name: str = "",
+                   t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """An incall customer says he has arrived: what he wrote, and what the
     owner does now."""
-    what = "he's here — the way in was sent to him." if way_in_sent else "he's here — go and meet him."
-    head = format_owner_update(booking, what, name=name)
-    return f"{head}\n{said}" if said else head
+    return t.template("arrived", **_blanks(booking, t, name=name), said=said or "",
+                      way_in=t.say("way_in_sent" if way_in_sent else "way_in_meet"))
 
 
-def format_passed_on(booking: Mapping[str, Any], text: str) -> str:
+def format_passed_on(booking: Mapping[str, Any], text: str, *,
+                     t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """What the customer wrote while the outcall is under way, word for word."""
-    return f"💬 #{booking['number']} {_who(booking)}:\n{text}"
+    return t.say("passed_on", n=booking["number"], who=_who(booking, t), text=text)
 
 
-def format_photo_header(booking: Mapping[str, Any], caption: str = "") -> str:
-    head = f"📷 #{booking['number']} {_who(booking)} sent a photo"
-    return f"{head}:\n{caption}" if caption else f"{head}:"
+def format_photo_header(booking: Mapping[str, Any], caption: str = "", *,
+                        t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
+    head = t.say("photo_header", n=booking["number"], who=_who(booking, t))
+    return f"{head}\n{caption}" if caption else head
 
 
-def format_which(kind: str) -> str:
-    return f"Which booking? Add its number, e.g. {kind.upper()} 7. Send LIST to see them."
+def format_which(kind: str, *, t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
+    return t.say("which", kind=t.command(kind))
+
+
+def preview_messages(t: booker_texts.Texts, *, tz: str, now: datetime, name: str = "Mia") -> dict[str, str]:
+    """Each main message (booker_texts.TEMPLATES) as the bot would send it
+    for a made-up booking, through the same functions as the real ones: for
+    the panel's live preview."""
+    zone = tzinfo_for(tz)
+    today = now.astimezone(zone).date()
+    start = datetime.combine(today + timedelta(days=1), dtime(21, 0), tzinfo=zone)
+    to = datetime.combine(today + timedelta(days=2), dtime(20, 0), tzinfo=zone)
+    booking = {
+        "number": 3, "state": bs.PENDING, "customer_name": "Alex", "customer_username": "alex_m",
+        "extras": "kissing, shower together", "service": "", "notes": "", "tz": tz,
+        "starts_at": start, "ends_at": plus_minutes(start, 60), "proposed_by": None,
+        "proposed_starts_at": None, "proposed_ends_at": None,
+    }
+    moving = {**booking, "state": bs.CONFIRMED, "proposed_by": bs.CUSTOMER, "proposed_starts_at": to,
+              "proposed_ends_at": plus_minutes(to, 60)}
+    offered = {**moving, "state": bs.PENDING, "proposed_by": bs.OWNER}
+    confirmed = {**booking, "state": bs.CONFIRMED}
+    moved = {**confirmed, "starts_at": to, "ends_at": plus_minutes(to, 60)}
+    return {
+        "request": format_request(booking, name=name, t=t),
+        "move_request": format_move_request(moving, name=name, t=t),
+        "confirmed": format_acknowledgement(confirmed, "confirm", t=t),
+        "declined": format_acknowledgement({**booking, "state": bs.CANCELLED}, "decline", t=t),
+        "proposed": format_acknowledgement(offered, "propose", t=t),
+        "moved": format_acknowledgement(moved, "reschedule", t=t),
+        "cancelled": format_acknowledgement({**booking, "state": bs.CANCELLED}, "cancel", t=t),
+        "customer_cancelled": format_customer_cancelled({**booking, "state": bs.CANCELLED}, name=name, t=t),
+        "arrived": format_arrived(confirmed, "I'm at the door 🙂", way_in_sent=True, name=name, t=t),
+        "ready_reminder": format_ready_reminder(confirmed, name=name, t=t),
+    }
 
 
 # -------------------------------------------------- the owner's answer
@@ -595,14 +680,15 @@ def booking_minutes(booking: Mapping[str, Any]) -> int:
     return int((booking["ends_at"] - booking["starts_at"]).total_seconds() // 60)
 
 
-def _short_at(booking: Mapping[str, Any], when: datetime) -> str:
+def _short_at(booking: Mapping[str, Any], when: datetime, t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """'Tue 21:00' for `when` in the booking's zone."""
-    return when.astimezone(tzinfo_for(booking["tz"])).strftime("%a %H:%M")
+    local = when.astimezone(tzinfo_for(booking["tz"]))
+    return f"{t.weekday(local)} {local:%H:%M}"
 
 
-def _short_when(booking: Mapping[str, Any]) -> str:
+def _short_when(booking: Mapping[str, Any], t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """'Tue 21:00' in the booking's zone, for a question to the owner."""
-    return booking["starts_at"].astimezone(tzinfo_for(booking["tz"])).strftime("%a %H:%M")
+    return _short_at(booking, booking["starts_at"], t)
 
 
 def extras_list(text: str) -> list[str]:
@@ -860,6 +946,7 @@ def _offer(number: int, at: datetime, booking: Mapping[str, Any]) -> str:
 def _command_from(
     answer: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], *, now: datetime, tz_name: str,
     replied: Optional[Mapping[str, Any]], outcall_taxi: bool, typed: Optional[str],
+    t: booker_texts.Texts = booker_texts.ENGLISH,
 ) -> Optional[OwnerCommand]:
     action = answer["action"]
     words = {
@@ -911,17 +998,12 @@ def _command_from(
         delay = answer.get("start") is None
         if action == "yes" and (at <= asked + READY_SLACK if delay else abs(at - asked) <= READY_SLACK):
             return OwnerCommand("stays" if is_settled(booking) else "yes", number, **words)
-        who = booking.get("customer_name") or "the customer"
+        who = _him(booking, t)
         offer = _offer(number, at, booking)
-        offered, his = offer.split(" ", 1)[1], _short_at(booking, asked)
-        if action == "yes":
-            question = f"#{number} {who} asked for {his}: confirm that (YES {number}), or offer him {offered} ({offer})?"
-        elif is_settled(booking):
-            question = (f"#{number} {who} is booked for {his}: offer him {offered} instead ({offer}), or say what "
-                        "to tell him.")
-        else:
-            question = (f"#{number} {who} asked for {his}: offer him {offered} instead ({offer}), or confirm his "
-                        f"time (YES {number})?")
+        offered, his = offer.split(" ", 1)[1], _short_at(booking, asked, t)
+        key = ("ask_confirm_or_offer" if action == "yes" else "ask_offer_instead_booked" if is_settled(booking)
+               else "ask_offer_or_confirm")
+        question = t.say(key, n=number, who=who, his=his, offered=offered, offer=offer)
         return OwnerCommand("unclear", number, **{**words, "question": question})
     if action == "yes":
         settled = booking is not None and is_settled(booking)
@@ -997,6 +1079,7 @@ def _merge(first: OwnerCommand, second: OwnerCommand) -> OwnerCommand:
 def owner_commands_from(
     answers: Sequence[Mapping[str, Any]], rows: Sequence[Mapping[str, Any]], *, now: datetime, tz_name: str,
     replied: Optional[Mapping[str, Any]] = None, outcall_taxi: bool = True, typed: Optional[str] = None,
+    t: booker_texts.Texts = booker_texts.ENGLISH,
 ) -> list[OwnerCommand]:
     """What the reader found (OwnerReading.answers) as the commands it
     amounts to for the bookings in `rows`: one per booking, in the order
@@ -1007,12 +1090,13 @@ def owner_commands_from(
     one), else the only one that fits; when several fit, the command is
     `unclear` (missing "which") so she is asked which one. `typed`: her
     message — a booking number the model gives that is neither open nor in
-    it is a guess, and she is asked instead."""
+    it is a guess, and she is asked instead. `t`: her words, for the
+    questions to her a reading may come with."""
     commands: list[OwnerCommand] = []
     replied = replied if len(answers) == 1 else None
     for answer in answers:
         cmd = _command_from(answer, rows, now=now, tz_name=tz_name, replied=replied, outcall_taxi=outcall_taxi,
-                            typed=typed)
+                            typed=typed, t=t)
         if cmd is None:
             continue
         if cmd.kind == "list":
@@ -1081,11 +1165,12 @@ def standing_for_all(standing: str, rows: Sequence[Mapping[str, Any]]) -> str:
 def owner_command_from(
     data: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], *, now: datetime, tz_name: str,
     replied: Optional[Mapping[str, Any]] = None, outcall_taxi: bool = True, typed: Optional[str] = None,
+    t: booker_texts.Texts = booker_texts.ENGLISH,
 ) -> Optional[OwnerCommand]:
     """One answer of the reader as its command (see owner_commands_from).
     None: nothing to do (an outcall step while the taxi steps are off)."""
     commands = owner_commands_from([data], rows, now=now, tz_name=tz_name, replied=replied,
-                                   outcall_taxi=outcall_taxi, typed=typed)
+                                   outcall_taxi=outcall_taxi, typed=typed, t=t)
     return commands[0] if commands else None
 
 
@@ -1210,139 +1295,148 @@ def plan_owner_answer(typed: Optional[OwnerCommand], commands: Sequence[OwnerCom
 # --------------------------------- her answer, back to her and on to him
 
 
-def passing_on_words(cmd: OwnerCommand) -> str:
+def _extras_said(ok: Sequence[str], no: Sequence[str], t: booker_texts.Texts) -> list[str]:
+    """The extras she takes / refuses, as she can recognise them."""
+    return [t.say("extra_yes", extra=x) for x in ok] + [t.say("extra_no", extra=x) for x in no]
+
+
+def passing_on_words(cmd: OwnerCommand, *, t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """What goes on to him from her answer, for her acknowledgement, so she
     can catch a misread: " I'll tell him: bring cash; no anal. I'll ask him:
     does he want 2 hours?" ("" when nothing goes to him)."""
-    told = ([cmd.tell.rstrip(". ")] if cmd.tell else []) + [f"yes to {x}" for x in cmd.extras_ok] + \
-        [f"no {x}" for x in cmd.extras_no]
-    text = f" I'll tell him: {'; '.join(told)}." if told else ""
+    told = ([cmd.tell.rstrip(". ")] if cmd.tell else []) + _extras_said(cmd.extras_ok, cmd.extras_no, t)
+    text = " " + t.say("words_tell", items="; ".join(told)) if told else ""
     if cmd.ask:
-        text += f" I'll ask him: {cmd.ask.rstrip()}" + ("" if cmd.ask.rstrip().endswith("?") else "?")
+        question = cmd.ask.rstrip() + ("" if cmd.ask.rstrip().endswith("?") else "?")
+        text += " " + t.say("words_ask", question=question)
     return text
 
 
-def format_words_ack(booking: Mapping[str, Any], cmd: OwnerCommand) -> str:
+def format_words_ack(booking: Mapping[str, Any], cmd: OwnerCommand, *,
+                     t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """Her words for him alone (nothing about the booking changes)."""
-    text = f"#{booking['number']} {booking.get('customer_name') or 'the customer'}:" + passing_on_words(cmd)
-    return text + (" His answer will come here." if cmd.ask else "")
+    text = t.say("words_ack", n=booking["number"], who=_him(booking, t)) + passing_on_words(cmd, t=t)
+    return text + (" " + t.say("answer_comes") if cmd.ask else "")
 
 
-def format_facts(booking: Mapping[str, Any], *, outcall_taxi: bool = False, proof: bool = False) -> str:
+def format_facts(booking: Mapping[str, Any], *, outcall_taxi: bool = False, proof: bool = False,
+                 t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """Her question about a booking ("how long?", "is it outcall?"), answered
     from the booking itself."""
     n, state = booking["number"], booking["state"]
-    where = "outcall" if is_outcall(booking) else "incall"
-    lines = [f"#{n} {_who(booking)} — {describe_when(booking)} "
-             f"({describe_minutes(booking_minutes(booking))}), {where}."]
+    where = t.say("facts_outcall" if is_outcall(booking) else "facts_incall")
+    lines = [t.say("facts_head", n=n, who=_who(booking, t), when=when_for(booking, t),
+                   length=t.minutes(booking_minutes(booking)), where=where)]
     if state in (bs.REQUESTED, bs.PENDING):
-        lines.append(f"You proposed {describe_proposal(booking)}; waiting for him." if
-                     booking.get("proposed_by") == bs.OWNER else "Waiting for your answer.")
+        lines.append(t.say("facts_you_proposed", proposed=proposal_for(booking, t)) if
+                     booking.get("proposed_by") == bs.OWNER else t.say("facts_waiting"))
     elif state == bs.CONFIRMED:
-        line = "Confirmed."
+        line = t.say("facts_confirmed")
         if booking.get("proposed_by") == bs.CUSTOMER:
-            line += f" He asks to move it to {describe_proposal(booking)} — waiting for your answer."
+            line += " " + t.say("facts_move", to=proposal_for(booking, t))
         elif booking.get("proposed_by") == bs.OWNER:
-            line += f" You proposed moving it to {describe_proposal(booking)}; waiting for him."
+            line += " " + t.say("facts_you_proposed_move", proposed=proposal_for(booking, t))
         if outcall_taxi and is_outcall(booking):
-            line += f" Outcall: {outcall_step(booking, proof=proof)}."
+            line += " " + t.say("facts_outcall_step", step=outcall_step(booking, proof=proof, t=t))
         elif booking.get("arrived_at"):
-            line += " He says he has arrived."
+            line += " " + t.say("facts_arrived")
         lines.append(line)
     else:
-        lines.append({bs.CANCELLED: "Cancelled.", bs.COMPLETED: "Done.", bs.NO_SHOW: "He didn't come."}
-                     .get(state, state))
-    lines.append(f"Extras he asked for: {booking.get('extras') or 'none'}.")
+        over = {bs.CANCELLED: "facts_cancelled", bs.COMPLETED: "facts_completed", bs.NO_SHOW: "facts_no_show"}
+        lines.append(t.say(over[state]) if state in over else state)
+    lines.append(t.say("facts_extras", extras=booking.get("extras") or t.say("facts_none")))
     if booking.get("extras_ok") or booking.get("extras_no"):
-        lines.append(f"You said yes to: {booking.get('extras_ok') or '-'}; no to: {booking.get('extras_no') or '-'}.")
+        lines.append(t.say("facts_extras_said", ok=booking.get("extras_ok") or "-", no=booking.get("extras_no") or "-"))
     if booking.get("service"):
-        lines.append(f"What: {booking['service']}")
+        lines.append(t.say("facts_service", service=booking["service"]))
     if booking.get("notes"):
-        lines.append(f"Notes: {booking['notes']}")
+        lines.append(t.say("facts_notes", notes=booking["notes"]))
     if booking.get("booker_asked_at"):
-        lines.append("You asked him something; his answers come here.")
+        lines.append(t.say("facts_asked"))
     return "\n".join(lines)
 
 
-def _held_items(cmd: Optional[OwnerCommand]) -> list[str]:
+def _held_items(cmd: Optional[OwnerCommand], t: booker_texts.Texts = booker_texts.ENGLISH) -> list[str]:
     """What of her answer waits on a question to her, as she can recognise it."""
     if cmd is None:
         return []
-    items = [f"for {describe_minutes(cmd.minutes)}"] if cmd.minutes else []
-    return items + ([f"tell him {cmd.tell}"] if cmd.tell else []) + [f"yes to {x}" for x in cmd.extras_ok] + \
-        [f"no {x}" for x in cmd.extras_no] + ([f"ask him {cmd.ask}"] if cmd.ask else [])
+    items = [t.say("held_for", length=t.minutes(cmd.minutes))] if cmd.minutes else []
+    return items + ([t.say("held_tell", words=cmd.tell)] if cmd.tell else []) + \
+        _extras_said(cmd.extras_ok, cmd.extras_no, t) + ([t.say("held_ask", words=cmd.ask)] if cmd.ask else [])
 
 
-def _held(cmd: Optional[OwnerCommand]) -> str:
+def _held(cmd: Optional[OwnerCommand], t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """What of her answer waits until she says which booking, or yes or no:
     said back with the question, so nothing she wrote is lost from view."""
-    items = _held_items(cmd)
-    return f" With your answer: {'; '.join(items)}." if items else ""
+    items = _held_items(cmd, t)
+    return " " + t.say("held", items="; ".join(items)) if items else ""
 
 
-def format_held_lost(number: int, cmd: Optional[OwnerCommand]) -> str:
+def format_held_lost(number: int, cmd: Optional[OwnerCommand], *,
+                     t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """Her plain command came long after the question it answers: what she
     said with that question did not go with it."""
-    items = _held_items(cmd)
-    what = f" ({'; '.join(items)})" if items else ""
-    return (f"#{number}: what you wrote with it before{what} was not passed on with this — send it again if it "
-            "still matters.")
+    items = _held_items(cmd, t)
+    return t.say("held_lost", n=number, what=f" ({'; '.join(items)})" if items else "")
 
 
-def format_which_one(rows: Sequence[Mapping[str, Any]], cmd: Optional[OwnerCommand] = None) -> str:
+def format_which_one(rows: Sequence[Mapping[str, Any]], cmd: Optional[OwnerCommand] = None, *,
+                     t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """Several bookings fit her answer: which one? (With what she said for
     it, `cmd`, repeated.)"""
     if not rows:
-        return "Which booking is that about? Send LIST to see them." + _held(cmd)
-    named = [f"#{b['number']} {b.get('customer_name') or 'unknown'}, {_short_when(b)}" for b in rows]
-    listed = named[0] if len(named) == 1 else ", ".join(named[:-1]) + ", or " + named[-1]
-    return f"Which one: {listed}? Answer with the number." + _held(cmd)
+        return t.say("which_about") + _held(cmd, t)
+    named = [f"#{b['number']} {b.get('customer_name') or t.say('unknown')}, {_short_when(b, t)}" for b in rows]
+    listed = named[0] if len(named) == 1 else t.say("or_last", items=", ".join(named[:-1]), last=named[-1])
+    return t.say("which_one", listed=listed) + _held(cmd, t)
 
 
-def format_question(cmd: OwnerCommand, booking: Optional[Mapping[str, Any]] = None) -> str:
+def format_question(cmd: OwnerCommand, booking: Optional[Mapping[str, Any]] = None, *,
+                    t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """The one short question she is asked when her answer can't be carried
     out as it stands."""
     if booking is None:
-        return (cmd.question or "Which booking is that about? Send LIST to see them.") + _held(cmd)
+        return (cmd.question or t.say("which_about")) + _held(cmd, t)
     n = booking["number"]
     if cmd.question:
-        return (cmd.question if f"#{n}" in cmd.question else f"#{n}: {cmd.question}") + _held(cmd)
-    who = booking.get("customer_name") or "the customer"
+        return (cmd.question if f"#{n}" in cmd.question else f"#{n}: {cmd.question}") + _held(cmd, t)
+    who = _him(booking, t)
     if cmd.missing == "time":
-        return f"#{n} {who}: what time should I offer him?" + _held(cmd)
-    return f"#{n} {who}, {_short_when(booking)}: yes or no? Or give another time." + _held(cmd)
+        return t.say("question_time", n=n, who=who) + _held(cmd, t)
+    return t.say("question_yes_no", n=n, who=who, when=_short_when(booking, t)) + _held(cmd, t)
 
 
-def read_failed(numbers: Sequence[int]) -> str:
+def read_failed(numbers: Sequence[int], *, t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """Her words could not be read (the model is down or out of budget)."""
-    n = str(numbers[0]) if len(numbers) == 1 else "<number>"
-    return f"I couldn't read that just now — answer with YES {n} / NO {n}, or a time like {n} 15:30."
+    n = str(numbers[0]) if len(numbers) == 1 else t.say("number_placeholder")
+    return t.say("read_failed", n=n)
 
 
+# The fixed lines below, in English, under their old names; what goes to
+# her is t.say(<key>) in her language.
+#
 # A loose YES / NO / ... carried out as typed because her words could not be
 # read: she is told the rest of her message did nothing.
-READ_REST_FAILED = ("I couldn't read the rest of your message just now: only that went through, and nothing was "
-                    "passed on to him. Send the rest again, or use YES n / NO n / n 15:30.")
+READ_REST_FAILED = booker_texts.ENGLISH.say("read_rest_failed")
 # Her typed command answered the bot's question, and what she wrote before
 # it did not fit it (she typed NO where she had asked for a yes with words).
-EARLIER_NOT_APPLIED = ("What you wrote before this did not fit it, so only this went through and nothing from "
-                       "before went to him. Send that part again if it still matters.")
+EARLIER_NOT_APPLIED = booker_texts.ENGLISH.say("earlier_not_applied")
 # Her words for him while his chat is not being answered (paused, taken
 # over, the account off): they wait, and are dropped when too old.
-WORDS_WAIT = ("His chat is not being answered right now, so this waits; it is dropped if it can't go within a "
-              "day.")
-def words_after_quiet_hours(until: datetime) -> str:
+WORDS_WAIT = booker_texts.ENGLISH.say("words_wait")
+
+
+def words_after_quiet_hours(until: datetime, *, t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """Her words for him while replies wait for the quiet hours to end."""
-    return f"His replies wait for the quiet hours to end (about {until:%H:%M}), so this goes to him then."
+    return t.say("words_after_quiet_hours", until=f"{until:%H:%M}")
 
 
 # Her message could not be read and there is no booking to put it on.
-READ_NOTHING_FAILED = ("I couldn't read that just now — nothing was saved or passed on. Please send it again in a "
-                       "few minutes.")
+READ_NOTHING_FAILED = booker_texts.ENGLISH.say("read_nothing_failed")
 # The same for a plain command that answered the bot's question about her
 # message before it (the length, the words for him in that one).
-READ_EARLIER_FAILED = ("I couldn't read this together with your message before it just now: only this went "
-                       "through, nothing else from that message. Send that part again if it still matters.")
+READ_EARLIER_FAILED = booker_texts.ENGLISH.say("read_earlier_failed")
+
 
 # Words after a typed command that may turn it into something else: a no
 # ("ok, not today") turns a YES; another time, day or length ("yes at 9",
@@ -1383,8 +1477,8 @@ def loose_doubt(text: str, kind: str = "yes", number: Optional[int] = None) -> b
     return bool(_DOUBT_TIME.search(rest) or (kind == "yes" and _DOUBT_NO.search(_YES_PHRASES.sub(" ", rest))))
 
 
-def format_standing_saved(text: str) -> str:
-    return f'Saved for the admin to add to your rules: "{text}". Nothing changes until they accept it.'
+def format_standing_saved(text: str, *, t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
+    return t.say("standing_saved", text=text)
 
 
 def booker_news_item(cmd: OwnerCommand, *, at: datetime) -> dict[str, Any]:
@@ -1429,25 +1523,24 @@ def booker_news_line(items: Sequence[Mapping[str, Any]]) -> str:
     return _NEWS + "; ".join(parts) + ". " + BOOKER_WORDS_RULE
 
 
-def _said(items: Sequence[Mapping[str, Any]]) -> str:
+def _said(items: Sequence[Mapping[str, Any]], t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """Her words in booker_news items, as she can recognise them."""
     parts = []
     for item in items:
         told = ([str(item["tell"])] if item.get("tell") else []) + \
-            [f"yes to {x}" for x in item.get("extras_ok") or ()] + [f"no {x}" for x in item.get("extras_no") or ()]
+            _extras_said(item.get("extras_ok") or (), item.get("extras_no") or (), t)
         if told:
             parts.append("; ".join(told))
         if item.get("ask"):
-            parts.append(f"ask him {item['ask']}")
+            parts.append(t.say("held_ask", words=item["ask"]))
     return " / ".join(f'"{part}"' for part in parts)
 
 
-def format_words_dropped(booking: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> str:
+def format_words_dropped(booking: Mapping[str, Any], items: Sequence[Mapping[str, Any]], *,
+                         t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """Her words that no reply carried in time (his chat was not answered,
     or the meeting is over since): dropped, and she is told which."""
-    who = booking.get("customer_name") or "the customer"
-    return (f"#{booking['number']} {who}: this did not reach him in time and was dropped: {_said(items)}. "
-            "Tell him yourself if it still matters.")
+    return t.say("words_dropped", n=booking["number"], who=_him(booking, t), said=_said(items, t))
 
 
 def refused_extras_line(extras: Sequence[str]) -> str:

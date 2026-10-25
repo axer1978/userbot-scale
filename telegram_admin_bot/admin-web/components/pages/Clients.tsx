@@ -5,14 +5,17 @@
 // history of both are edited here, against platform_api.py. The account's
 // pause switch and per-contact styles stay in the top bar and Style dialog.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BookerMessagesEditor, type BookerMessagesClient, type BookerUi } from "@/components/BookerMessagesEditor";
 import { ConfigEditor } from "@/components/ConfigEditor";
 import { useDialogs, useToast } from "@/components/feedback";
 import { PageShell, Tabs } from "@/components/ui";
 import { api, errorText } from "@/lib/api";
 import { cx, fmtTime } from "@/lib/format";
+import { usePanel } from "@/lib/panel";
 import type {
-  AuditEvent, BaseView, ConfigProposal, IndustryView, PlatformTree, TenantView, Version,
+  AuditEvent, BaseView, BookerMessagesView, BookerPreview, ConfigProposal, IndustryView, PlatformTree, TenantView,
+  Version,
 } from "@/lib/types";
 import { useLoader } from "@/lib/useLoader";
 
@@ -21,7 +24,7 @@ export type TreeNode = { kind: NodeKind; id: number };
 
 const TABS = {
   tenant: [["config", "Config"], ["prompt", "Prompt"], ["versions", "Versions"],
-           ["preview", "Rendered prompt"], ["assist", "Ask AI"], ["audit", "Audit log"]],
+           ["preview", "Rendered prompt"], ["booker", "Booker messages"], ["assist", "Ask AI"], ["audit", "Audit log"]],
   industry: [["template", "Template"], ["config", "Default config"], ["versions", "Versions"], ["clients", "Clients"]],
   base: [["rules", "Rules"], ["versions", "Versions"], ["prices", "AI prices"]],
 } as const satisfies Record<NodeKind, readonly (readonly [string, string])[]>;
@@ -255,6 +258,28 @@ function TenantAssist({ id, setView, onApplied }: TenantProps & { onApplied: () 
   );
 }
 
+const ADMIN_UI: BookerUi = { btn: "btn", primary: "btn primary", small: "btn small" };
+
+/** The language and wording of the bot's messages to this client's booker. */
+function TenantBookerMessages({ id, onDirtyChange }: { id: number; onDirtyChange: (dirty: boolean) => void }) {
+  const { can } = usePanel();
+  const client = useMemo<BookerMessagesClient>(() => ({
+    load: () => api<BookerMessagesView>("GET", `/api/tenants/${id}/booker-messages`),
+    preview: (body) => api<BookerPreview>("POST", `/api/tenants/${id}/booker-messages/preview`, body),
+    save: (body) => api<BookerMessagesView>("PUT", `/api/tenants/${id}/booker-messages`, body),
+  }), [id]);
+  return (
+    <>
+      <p className="pf-note">What the bot sends the person who answers this client&apos;s booking requests: her
+        language, and this client&apos;s own wording of the main messages. Saving changes only these two settings
+        (booking.booker_language, booking.booker_messages); the bot uses them from its next message.</p>
+      <BookerMessagesEditor client={client} canSave={can("bookings.messages")} ui={ADMIN_UI} askReason
+                            onDirtyChange={onDirtyChange}
+                            readOnlyNote="You can look at these but not change them: saving needs the “Messages to the booker” permission (bookings.messages)." />
+    </>
+  );
+}
+
 function TenantAudit({ id }: { id: number }) {
   const toast = useToast();
   const [events, setEvents] = useState<AuditEvent[] | null>(null);
@@ -365,8 +390,14 @@ function BasePrices() {
 export function Clients({ initialNode, initialTab }: { initialNode: TreeNode | null; initialTab?: string }) {
   const toast = useToast();
   const { confirm, prompt } = useDialogs();
+  const { can } = usePanel();
   const askReason = useAskReason();
   const [node, setNode] = useState<TreeNode | null>(initialNode);
+  // Unsaved edits on the Booker messages tab: moving away asks first.
+  const bookerDirty = useRef(false);
+  const setBookerDirty = useCallback((dirty: boolean) => { bookerDirty.current = dirty; }, []);
+  const leaveOk = async () => !bookerDirty.current
+    || confirm("The booker messages have unsaved changes. Leave without saving them?");
   const [tab, setTab] = useState<string>(initialNode ? tabFor(initialNode.kind, initialTab) : "");
   const [view, setView] = useState<AnyView | null>(null);
   // Bumped on every load, so editors start over from what the server has now.
@@ -401,7 +432,9 @@ export function Clients({ initialNode, initialTab }: { initialNode: TreeNode | n
     window.history.replaceState(null, "", `/clients?node=${key}&tab=${tab}`);
   }, [node, tab]);
 
-  const select = (target: TreeNode, targetTab?: string) => {
+  const select = async (target: TreeNode, targetTab?: string) => {
+    if (!(await leaveOk())) return;
+    bookerDirty.current = false;
     setView(null);
     setNode(target);
     setTab(tabFor(target.kind, targetTab));
@@ -465,7 +498,8 @@ export function Clients({ initialNode, initialTab }: { initialNode: TreeNode | n
   let detail: React.ReactNode = <div className="empty">Pick a client, an industry, or the platform rules on the left.</div>;
 
   if (node && view && tree) {
-    const tabs = TABS[node.kind] as readonly (readonly [string, string])[];
+    const tabs = (TABS[node.kind] as readonly (readonly [string, string])[])
+      .filter(([key]) => key !== "booker" || can("view.config"));
     let head: React.ReactNode = null;
     let body: React.ReactNode = null;
 
@@ -507,6 +541,7 @@ export function Clients({ initialNode, initialTab }: { initialNode: TreeNode | n
             rules / industry template / client version). Per-reply notes (appointments, media, style) are added at runtime.</p>
           <pre className="pf-rendered">{v.prompt.rendered}</pre>
         </>,
+        booker: <TenantBookerMessages key={node.id} id={node.id} onDirtyChange={setBookerDirty} />,
         assist: <TenantAssist {...props} onApplied={() => setTab("config")} />,
         audit: <TenantAudit id={node.id} />,
       }[tab];
@@ -572,7 +607,11 @@ export function Clients({ initialNode, initialTab }: { initialNode: TreeNode | n
 
     detail = <>
       {head}
-      <Tabs tabs={tabs} value={tab} onChange={setTab} />
+      <Tabs tabs={tabs} value={tab} onChange={async (next) => {
+        if (next === tab || !(await leaveOk())) return;
+        bookerDirty.current = false;
+        setTab(next);
+      }} />
       <div>{body}</div>
     </>;
   }

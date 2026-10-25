@@ -696,6 +696,18 @@ the opening hours, the calendar link and AI usage.
 - The customer can change the time before the owner answers (same number),
   ask to move a confirmed booking (the owner answers `YES 7` / `NO 7`), or
   cancel. Every change is in the booking's history and the audit log.
+- **How her messages look** (`booking.booker_language`, `booking.booker_messages`;
+  panel: Clients → the client → *Booker messages*, and the owner's own page
+  *Booking messages*): everything the bot sends her is in English, Russian,
+  Latvian or Spanish, commands included in words she can type back (*ДА 3*,
+  *JĀ 3*, *SÍ 3*). The ten main messages (new request, he wants to move it,
+  confirmed, declined, new time offered, moved, cancelled, cancelled by him,
+  he has arrived, the outcall READY reminder) can be rewritten with blanks
+  (`{number}`, `{customer}`, `{when}`, `{length}`, `{extras}`, …) and a live
+  preview; a line whose blanks are all empty is left out, the booking number
+  and the commands line are always kept, a text with an unknown blank can't be
+  saved, and one that fails anyway falls back to the default. Staff need
+  *bookings.messages* to save. Model and panel texts stay English.
 - **Reminders** (`booking.reminders`): a list of `{minutes_before,
   instruction}`, by default 24 h and 2 h before. The instruction says what
   that reminder should say. The customer can reply `1` (coming) or `2`

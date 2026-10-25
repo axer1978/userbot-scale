@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 import audit
+import booker_settings
 import commands
 import config_assist
 import llm_usage
@@ -354,6 +355,28 @@ async def api_save_tenant_config(tenant_id: int, body: ConfigBody) -> dict[str, 
         except commands.CommandError:
             pass
     return await api_tenant(tenant_id)
+
+
+# --------------------------------------------- the messages to the booker
+
+
+@router.get("/api/tenants/{tenant_id}/booker-messages")
+async def api_booker_messages(tenant_id: int) -> dict[str, Any]:
+    return booker_settings.view(await guarded(store().bundle(tenant_id)))
+
+
+@router.post("/api/tenants/{tenant_id}/booker-messages/preview")
+async def api_booker_messages_preview(tenant_id: int, body: booker_settings.MessagesBody) -> dict[str, Any]:
+    """The page's live preview: nothing is saved."""
+    bundle = await guarded(store().bundle(tenant_id))
+    return booker_settings.preview(bundle, body.language, body.messages)
+
+
+@router.put("/api/tenants/{tenant_id}/booker-messages")
+async def api_save_booker_messages(tenant_id: int, body: booker_settings.MessagesBody) -> dict[str, Any]:
+    bundle = await guarded(booker_settings.save(store(), tenant_id, body, actor=ACTOR))
+    await reload_accounts([bundle.tenant["session_id"]], bundle)
+    return booker_settings.view(bundle)
 
 
 @router.put("/api/tenants/{tenant_id}/prompt")

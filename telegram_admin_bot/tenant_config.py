@@ -30,6 +30,8 @@ from typing import Any, Literal, Optional, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+import booker_texts
+
 try:
     from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover
@@ -338,6 +340,20 @@ class Booking(_Strict):
     # No IN n this long after his taxi link reached her: he is told she is
     # in the taxi anyway. 0 = as soon as the link comes.
     outcall_in_taxi_minutes: int = Field(5, ge=0, le=120)
+    # The language of everything the bot sends the booker (booker_texts),
+    # and the account's own text for the main messages to her, by message
+    # (booker_texts.TEMPLATES); a message not set, or empty, is the default.
+    booker_language: Literal["en", "ru", "lv", "es"] = "en"
+    booker_messages: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("booker_messages")
+    @classmethod
+    def _booker_messages(cls, value: dict[str, str]) -> dict[str, str]:
+        problems = booker_texts.check_all(value)
+        if problems:
+            raise ValueError("; ".join(f"{key}: {problem}" for key, problem in problems))
+        # An empty text is the default: not kept.
+        return {key: text for key, text in value.items() if text.strip()}
 
     @field_validator("reminders")
     @classmethod
@@ -773,7 +789,9 @@ def _kind(annotation: Any, field: Any = None) -> str:
         (item,) = get_args(annotation) or (str,)
         return "json" if _submodel(item) is not None else "list"
     if get_origin(annotation) is dict:
-        return "map"
+        # Texts by name (booking.booker_messages) are edited as JSON; numbers
+        # by name (price_floors) as lines.
+        return "json" if get_args(annotation)[1:] == (str,) else "map"
     if field is not None and any((getattr(m, "max_length", 0) or 0) > 256 for m in field.metadata):
         return "longtext"
     return "text"

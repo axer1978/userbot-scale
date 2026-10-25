@@ -8,11 +8,14 @@ export class OwnerApiError extends Error {
   status: number;
   /** The server's own words (what a gate looks like: "change_password", ...). */
   detail: string;
+  /** A refused settings save answers {message, errors: [{path, message}]}. */
+  errors: { path: string; message: string }[] | null;
 
-  constructor(detail: string, status: number) {
+  constructor(detail: string, status: number, errors: { path: string; message: string }[] | null = null) {
     super(detail);
     this.status = status;
     this.detail = detail;
+    this.errors = errors;
   }
 }
 
@@ -32,13 +35,21 @@ export const MIN_PASSWORD = 10;
 async function answer<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let detail = res.statusText || "Request failed";
+    let errors: { path: string; message: string }[] | null = null;
     try {
       const data = await res.json();
-      if (data && data.detail) detail = typeof data.detail === "string" ? data.detail : "Please check the form.";
+      if (data && data.detail) {
+        const d = data.detail;
+        if (typeof d === "string") detail = d;
+        else {
+          detail = typeof d.message === "string" && d.message ? d.message : "Please check the form.";
+          if (Array.isArray(d.errors)) errors = d.errors;
+        }
+      }
     } catch {
       /* not JSON */
     }
-    throw new OwnerApiError(detail, res.status);
+    throw new OwnerApiError(detail, res.status, errors);
   }
   return (res.status === 204 ? null : await res.json()) as T;
 }
