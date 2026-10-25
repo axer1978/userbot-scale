@@ -237,3 +237,74 @@ async def test_check_key_says_when_deepseek_cannot_be_reached():
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         ok, why = await ai_responder.check_key("sk-test", client=client)
     assert not ok and why == "could not reach DeepSeek to check it (ConnectError)" and "sk-test" not in why
+
+
+# ------------------------------------------- the booker's own words
+
+def test_her_chat_is_shown_with_the_time_of_each_message():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    riga = ZoneInfo("Europe/Riga")
+    history = [
+        {"role": "assistant", "content": "📅 Booking request #3\nCustomer: Khan",
+         "at": datetime(2026, 10, 20, 9, 20, tzinfo=ZoneInfo("UTC"))},
+        {"role": "user", "content": "yes", "at": datetime(2026, 10, 20, 12, 39, tzinfo=riga)},
+        {"role": "user", "content": "  and   cash only "},
+    ]
+    assert ai_responder.render_transcript(history, riga) == (
+        "[Tue 20 Oct 12:20] me: 📅 Booking request #3 Customer: Khan\n[Tue 20 Oct 12:39] them: yes\nthem: and cash only")
+    # Without a zone: as it always was.
+    assert ai_responder.render_transcript(history) == (
+        "me: 📅 Booking request #3 Customer: Khan\nthem: yes\nthem: and cash only")
+
+
+@pytest.mark.asyncio
+async def test_the_reader_of_her_words_asks_for_json_and_returns_every_answer():
+    import json
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    import httpx
+
+    import bookings
+
+    seen = []
+    reading = {"answers": [{"number": 3, "action": "yes", "duration_minutes": 60, "extras_no": ["anal"],
+                            "tell_customer": "bring cash"}, {"number": 4, "action": "no"}], "standing": None}
+
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(reading)}}]})
+
+    now = datetime(2026, 10, 20, 12, 40, tzinfo=ZoneInfo("Europe/Riga"))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        got = await ai_responder.read_owner_answer(
+            api_key="k", history=[{"role": "user", "content": "yes 3 but cash, no anal. 4 no", "at": now}],
+            latest="yes 3 but cash, no anal. 4 no", tz_name="Europe/Riga", now=now, state_note="#3 Khan: ...",
+            ai_config={"model": "deepseek-chat", "max_tokens": 50, "temperature": 1.0}, client=client)
+    payload = seen[0]
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["temperature"] == 0.0 and payload["max_tokens"] >= 600
+    assert payload["messages"][0]["content"] == bookings.OWNER_ANSWER_SYSTEM_PROMPT
+    assert "[Tue 20 Oct 12:40] them: yes 3 but cash, no anal. 4 no" in payload["messages"][1]["content"]
+    assert [(a["action"], a["number"]) for a in got.answers] == [("yes", 3), ("no", 4)]
+    assert got.answers[0]["tell_customer"] == "bring cash" and got.answers[0]["extras_no"] == ["anal"]
+
+
+@pytest.mark.asyncio
+async def test_other_calls_send_no_response_format(monkeypatch):
+    import json
+
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await ai_responder.generate_reply(api_key="k", history=[{"role": "user", "content": "hi"}], persona={},
+                                          ai_config={}, client=client)
+    assert "response_format" not in seen[0]

@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time as dtime, timedelta, timezone
 from typing import Any, Mapping, Optional, Sequence
 
@@ -160,10 +161,13 @@ def format_acknowledgement(booking: Mapping[str, Any], action: str, *, outcall_t
     n, who = booking["number"], booking.get("customer_name") or "the customer"
     if action == "propose":
         return f"#{n}: {describe_proposal(booking)} proposed to {who}. You'll hear back when they answer."
+    # When and how long, so she sees which booking it was and what she gave him.
+    span = f"{describe_when(booking)} ({describe_minutes(booking_minutes(booking))})"
     words = {
-        "confirm": f"confirmed ✅ — {who} will be told.",
-        "accept_proposal": f"confirmed ✅ — {who} will be told.",
+        "confirm": f"confirmed ✅ for {span} — {who} will be told.",
+        "accept_proposal": f"confirmed ✅ for {span} — {who} will be told.",
         "reschedule": f"moved to {describe_when(booking)} ✅ — {who} will be told.",
+        "change_length": f"now {span} ✅ — {who} will be told.",
         "decline": f"declined ❌ — {who} will be told.",
         "reject_proposal": f"stays at {describe_when(booking)} — {who} will be told.",
         "cancel": f"cancelled ❌ — {who} will be told.",
@@ -303,7 +307,8 @@ _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 @dataclass(frozen=True)
 class OwnerCommand:
     # yes | no | propose | cancel | done | noshow | list | ready | in_taxi,
-    # and from the reader of her own words: unclear | stays
+    # and from the reader of her own words: unclear | stays | none (the
+    # booking does not change: only words for him, or her own question)
     kind: str
     number: Optional[int] = None
     # For propose: the wall time and, if given, the day ("today"/"tomorrow"
@@ -311,10 +316,33 @@ class OwnerCommand:
     at: Optional[dtime] = None
     day: Optional[date] = None
     error: str = ""
-    # A YES/NO with words after it ("ok in 20 min", "yes after 3"): the
-    # words may change what it means, so the reader of her own words decides
-    # when it can, and this stands only when it can't.
+    # A YES / NO / CANCEL / DONE / NOSHOW with words after it ("ok in 20
+    # min", "CANCEL 7 tell him I'm sick"): the words may change what it
+    # means or carry more, so the reader of her own words decides when it
+    # can, and this stands only when it can't (BookingFlow.on_owner_message).
     loose: bool = False
+    # From the reader of her own words; empty for a strict command. The
+    # length she set, in minutes.
+    minutes: Optional[int] = None
+    # What goes on to him: facts to tell, a question to ask, extras she
+    # takes or refuses.
+    tell: str = ""
+    ask: str = ""
+    extras_ok: tuple[str, ...] = ()
+    extras_no: tuple[str, ...] = ()
+    # She asked about the booking herself: answered to her, nothing to him.
+    for_me: bool = False
+    # unclear: the question to ask her (else one by `missing`: "which" when
+    # several bookings fit — `candidates` — or "time" when no time could be
+    # read).
+    question: str = ""
+    missing: str = ""
+    candidates: tuple[int, ...] = ()
+
+    @property
+    def has_words(self) -> bool:
+        """Something of hers goes on to him."""
+        return bool(self.tell or self.ask or self.extras_ok or self.extras_no)
 
 
 def _word(token: str) -> str:
@@ -427,7 +455,7 @@ def parse_owner_reply(text: str, *, today: date) -> Optional[OwnerCommand]:
         # longer that does not start with a number is conversation.
         if len(rest) > 3:
             return None
-    return OwnerCommand(kind, number, loose=loose and kind in ("yes", "no"))
+    return OwnerCommand(kind, number, loose=loose)
 
 
 def resolve_local(cmd: OwnerCommand, booking: Mapping[str, Any]) -> datetime:
@@ -441,67 +469,168 @@ def resolve_local(cmd: OwnerCommand, booking: Mapping[str, Any]) -> datetime:
 # ------------------------------------ the owner's answer in her own words
 
 OWNER_ANSWER_SYSTEM_PROMPT = (
-    "You read the chat between a booking assistant ('me') and the person who "
-    "takes its bookings ('them': the owner, or the girl herself). 'me' sends "
-    "them the customers' booking requests; they answer, often in their own "
-    "words rather than with a command. Decide what their LATEST message means "
-    "for the bookings listed, given what each customer asked for. Answer with "
-    "a single JSON object and nothing else:\n"
-    '{"action": "yes"|"no"|"ready_at"|"time"|"cancel"|"done"|"noshow"|"ready"|'
-    '"in_taxi"|"list"|"unclear"|"none", "number": <booking number or null>, '
-    '"start": "YYYY-MM-DDTHH:MM" or null, "in_minutes": <integer or null>}\n'
-    "Actions:\n"
-    "- yes: they take the booking at the time the customer asked: 'yes', 'ok', "
-    "'yes I confirm', 'sure, let him come', 'fine', 'da', 'jā', '👍'. For a "
-    "customer asking to move a booking: they agree to the new time.\n"
-    "- no: they turn it down and give no other time: 'no', 'not today', "
-    "'I'm busy', 'can't'.\n"
-    "- ready_at: they say WHEN they will be ready or free, instead of a plain "
-    "yes: 'I'm ready in 20 minutes', 'give me half an hour', 'I will be able "
-    "to meet in 1 hour', 'free after 15:00', 'yes but in 40 min'. A delay goes "
-    "in in_minutes (counted from their latest message), a clock time in start.\n"
-    "- time: they put forward a different meeting time: 'can he come at "
-    "15:30?', 'tomorrow 12:00 instead', 'better at 8'. Put it in start.\n"
+    "You read the chat between a booking assistant ('me') and the person who takes its bookings "
+    "('them': the girl herself, or whoever books for her). 'me' sends them each customer's booking "
+    "request and passes on what customers write; they answer in their own words, in any language "
+    "(English, Russian, Latvian, Spanish, or a mix), rarely with a command. Work out everything "
+    "their LATEST message means for the bookings listed, reading it together with the conversation "
+    "before it. Missing a part of it is the worst mistake: go through it piece by piece — every "
+    "booking it is about, every yes, no or time, every length, extra, thing to tell the customer, "
+    "question for the customer and question for me.\n"
+    "Answer with a single JSON object and nothing else:\n"
+    '{"answers": [{"number": <booking number or null>, "action": "yes"|"no"|"ready_at"|"time"|"cancel"|'
+    '"done"|"noshow"|"ready"|"in_taxi"|"list"|"unclear"|"none", "start": "YYYY-MM-DDTHH:MM" or null, '
+    '"in_minutes": <integer or null>, "duration_minutes": <integer or null>, "extras_ok": [<extra>, ...], '
+    '"extras_no": [<extra>, ...], "tell_customer": "<words for the customer>" or null, '
+    '"ask_customer": "<question for the customer>" or null, "for_me": true|false, '
+    '"question": "<one short question for them>" or null}], "standing": "<instruction>" or null}\n'
+    "One answer per booking their message is about, in the order they mention them. An empty list "
+    "when it is about no booking: a greeting, thanks, small talk, a remark.\n"
+    "action:\n"
+    "- yes: they take the booking at the time the customer asked: 'yes', 'ok', 'yes I confirm', "
+    "'sure, let him come', 'fine', 'both fine', 'da', 'да', 'jā', 'sí', 'vale', '👍'. For a customer "
+    "asking to move a booking: they agree to the new time. A yes with a condition ('yes if he comes "
+    "alone', 'yes but only 1 hour', 'ok, cash only') is still yes; the condition goes in the fields "
+    "below.\n"
+    "- no: they turn it down and give no other time: 'no', 'not today', 'I'm busy', 'can't', 'нет', "
+    "'nē', 'no puedo'.\n"
+    "- ready_at: they say WHEN they will be ready or free instead of a plain yes: 'I'm ready in 20 "
+    "minutes', 'give me half an hour', 'I can meet in 1 hour', 'free after 15:00', 'yes but in 40 "
+    "min'. A delay goes in in_minutes (counted from their latest message), a clock time in start.\n"
+    "- time: they put forward a different meeting time: 'can he come at 15:30?', 'tomorrow 12:00 "
+    "instead', 'better at 8', 'not today, tomorrow any time after 2' (the earliest time they name "
+    "goes in start: tomorrow 14:00).\n"
     "- cancel: they call off a booking that is already confirmed.\n"
     "- done / noshow: after the meeting: it happened / the customer did not come.\n"
-    "- ready: an outcall, and they are ready to leave NOW ('I'm ready', "
-    "'ready, he can order the taxi'). 'Ready in 20 minutes' is ready_at.\n"
-    "- in_taxi: an outcall, and they are in the taxi now.\n"
-    "- list: they ask what is waiting.\n"
-    "- unclear: it is about a booking but you cannot tell which answer it is.\n"
-    "- none: not about the bookings: a greeting, thanks, a question, chat.\n"
-    "number: the booking it is about: the one their message replies to (when "
-    "given below), the one they name by number or customer name, else the "
-    "only one waiting for their answer. null when you cannot tell.\n"
-    "Use 24-hour local time in the given timezone and resolve 'today', "
-    "'tomorrow' and bare hours ('at 8' in the afternoon is 20:00) from the "
-    "current date and time; never invent a time that was not said."
+    "- ready: an outcall, and they are ready to leave NOW ('I'm ready', 'ready, he can order the "
+    "taxi'). 'Ready in 20 minutes' is ready_at.\n"
+    "- in_taxi: an outcall, and they are in the taxi or on the way to him now.\n"
+    "- list: they ask what is waiting for them.\n"
+    "- unclear: it is about a booking but you cannot tell what they want; put the one short "
+    "question to ask them in question.\n"
+    "- none: about this booking, but the booking itself does not change: only something to tell "
+    "or ask the customer, extras, or a question for me.\n"
+    "The fields of an answer:\n"
+    "- number: the booking it is about: the one their message replies to (when given below), the "
+    "one they name by number or by the customer's name, else the only booking it can be about; "
+    "null when you cannot tell. When my last message asked them something (which booking? what "
+    "time?), their latest message answers it: read the two of theirs together.\n"
+    "- start / in_minutes: only with ready_at and time. 24-hour local time in the given timezone; "
+    "resolve 'today', 'tomorrow' and bare hours ('at 8' in the afternoon is 20:00) from the "
+    "current date and time. Never invent a time that was not said.\n"
+    "- duration_minutes: the length they set ('1 hour only' is 60, 'max 30 min' is 30), with yes, "
+    "ready_at or time, or for a booking that is already confirmed; else null.\n"
+    "- extras_ok / extras_no: the extra services they accept / refuse for this customer, a word or "
+    "two each ('anal', 'domination'); empty lists when they name none.\n"
+    "- tell_customer: what they want the customer told, in short plain words, close to how they "
+    "said it: the condition of their yes, 'bring cash', 'I'm 10 min late', 'come alone'. Only what "
+    "they clearly want him to hear. Never their remarks or opinions about him ('he didn't show "
+    "last time', 'he's weird', 'don't take him again' stay private), never what they said to me "
+    "only, never what the action tells him anyway (that it is confirmed or declined, the new "
+    "time, the length, the extras). null when there is nothing.\n"
+    "- ask_customer: a question they want put to the customer ('ask him if he wants 2 hours', "
+    "'ask him for a photo first', 'pregúntale el número de habitación'); null when there is none.\n"
+    "- for_me: true when they ask ME something about the booking: 'how long does he want?', 'what "
+    "extras did he ask for?', 'is it outcall?', 'did he send the photo?'.\n"
+    "standing: an instruction about ALL future customers rather than one booking ('from now on "
+    "cash only', 'no more anal for anyone'), in their words; else null.\n"
+    "Put each thing in one place only, and make nothing up: an empty list, null or false is always "
+    "better than a guess."
 )
 
 OWNER_ACTIONS = ("yes", "no", "ready_at", "time", "cancel", "done", "noshow", "ready", "in_taxi", "list",
                  "unclear", "none")
+# Words the model uses now and then instead of the actions it was given.
+ACTION_SYNONYMS = {
+    "confirm": "yes", "confirmed": "yes", "accept": "yes", "accepted": "yes", "approve": "yes", "ok": "yes",
+    "decline": "no", "declined": "no", "reject": "no", "rejected": "no", "refuse": "no",
+    "propose": "time", "move": "time", "reschedule": "time", "new_time": "time",
+    "taxi": "in_taxi", "on_the_way": "in_taxi", "complete": "done", "completed": "done", "no_show": "noshow",
+    "tell": "none", "ask": "none", "relay": "none", "message": "none", "question": "none",
+}
+
+# What one reading may hold: answers per message, characters of the words
+# for him (or of a question / standing instruction), extras per list and
+# characters per extra.
+MAX_ANSWERS = 8
+MAX_WORDS = 300
+MAX_EXTRAS = 8
+MAX_EXTRA = 60
+# The length she can set, in minutes.
+MIN_LENGTH, MAX_LENGTH = 15, 12 * 60
+
+
+def describe_minutes(minutes: int) -> str:
+    """'1 hour', '2 hours', '1 h 30 min', '45 min'."""
+    if minutes >= 60 and minutes % 60 == 0:
+        hours = minutes // 60
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+    if minutes > 60:
+        return f"{minutes // 60} h {minutes % 60} min"
+    return f"{minutes} min"
+
+
+def booking_minutes(booking: Mapping[str, Any]) -> int:
+    return int((booking["ends_at"] - booking["starts_at"]).total_seconds() // 60)
+
+
+def _short_when(booking: Mapping[str, Any]) -> str:
+    """'Tue 21:00' in the booking's zone, for a question to the owner."""
+    return booking["starts_at"].astimezone(tzinfo_for(booking["tz"])).strftime("%a %H:%M")
+
+
+def extras_list(text: str) -> list[str]:
+    """A comma list (bookings.extras_ok / extras_no) as its items."""
+    return [item.strip() for item in (text or "").split(",") if item.strip()]
+
+
+def extras_joined(old: str, new: Sequence[str]) -> str:
+    """The comma list `old` with `new` added, each extra once (any case)."""
+    items = extras_list(old)
+    seen = {item.lower() for item in items}
+    for item in new:
+        item = " ".join(str(item).split()).strip(",")
+        if item and item.lower() not in seen:
+            seen.add(item.lower())
+            items.append(item)
+    return ", ".join(items)
 
 
 def owner_state_note(rows: Sequence[Mapping[str, Any]], *, outcall_taxi: bool = False, proof: bool = False) -> str:
-    """The bookings she may be answering about, for the reader of her words."""
+    """The bookings she may be answering about, in full, for the reader of
+    her words."""
     lines = []
     for b in rows:
+        length = describe_minutes(booking_minutes(b))
         if b["state"] == bs.CONFIRMED and b.get("proposed_by") == bs.CUSTOMER:
-            what = (f"confirmed for {describe_when(b)}; the customer asks to move it to "
+            what = (f"confirmed for {describe_when(b)} ({length}); the customer asks to move it to "
                     f"{describe_proposal(b)}, waiting for their answer")
         elif b.get("proposed_by") == bs.OWNER:
-            what = (f"the customer asked for {describe_when(b)}; they proposed {describe_proposal(b)} instead, "
-                    "waiting for the customer")
+            what = (f"the customer asked for {describe_when(b)} ({length}); they proposed "
+                    f"{describe_proposal(b)} instead, waiting for the customer")
         elif b["state"] in (bs.REQUESTED, bs.PENDING):
-            what = f"the customer asks for {describe_when(b)}, waiting for their answer"
+            what = f"the customer asks for {describe_when(b)} ({length}), waiting for their answer"
         else:
-            what = f"confirmed for {describe_when(b)}"
+            what = f"confirmed for {describe_when(b)} ({length})"
             if outcall_taxi and is_outcall(b):
                 what += f"; outcall: {outcall_step(b, proof=proof)}"
         if is_outcall(b) and "outcall" not in what:
-            what += " (outcall)"
-        extras = f"; extras: {b['extras']}" if b.get("extras") else ""
-        lines.append(f"#{b['number']} {b.get('customer_name') or 'unknown customer'}: {what}{extras}")
+            what += "; outcall"
+        elif not is_outcall(b):
+            what += "; incall"
+            if b.get("arrived_at") and b["state"] == bs.CONFIRMED:
+                what += ", he says he has arrived"
+        if b.get("extras"):
+            what += f"; extras he asked for: {b['extras']}"
+        if b.get("extras_ok"):
+            what += f"; extras they said yes to: {b['extras_ok']}"
+        if b.get("extras_no"):
+            what += f"; extras they refused: {b['extras_no']}"
+        if b.get("notes"):
+            what += f"; notes: {' '.join(str(b['notes']).split())}"
+        if b.get("booker_asked_at"):
+            what += "; they asked him something, his answers come to them"
+        lines.append(f"#{b['number']} {b.get('customer_name') or 'unknown customer'}: {what}")
     return "\n".join(lines)
 
 
@@ -509,6 +638,8 @@ def owner_answer_prompt(
     transcript: str, tz_name: str, *, now: datetime, state_note: str, latest: str,
     replying_to: Optional[int] = None,
 ) -> str:
+    # The runtime's clock is UTC; she means her own wall clock.
+    now = now.astimezone(tzinfo_for(tz_name))
     parts = [f"Current date and time: {now:%A %Y-%m-%d %H:%M} ({tz_name}).",
              "Bookings:\n" + (state_note or "none."),
              "Conversation, oldest first:\n\n" + transcript]
@@ -518,9 +649,91 @@ def owner_answer_prompt(
     return "\n".join(parts)
 
 
-def parse_owner_answer(text: str) -> Optional[dict[str, Any]]:
-    """The reader's JSON, cleaned: {"action", "number", "start",
-    "in_minutes"}. None when it is not about the bookings or unusable."""
+@dataclass(frozen=True)
+class OwnerReading:
+    """What the reader found in her message: one answer per booking (the
+    JSON's keys, cleaned by parse_owner_answer), and an instruction meant
+    for every customer from now on."""
+    answers: tuple[dict[str, Any], ...] = ()
+    standing: str = ""
+
+
+def _text(value: Any, limit: int = MAX_WORDS) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split())[:limit].strip()
+
+
+def _whole(value: Any, low: int, high: int) -> Optional[int]:
+    """An integer the model gave (7, 7.0, "7") within [low, high], else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    return value if isinstance(value, int) and low <= value <= high else None
+
+
+def _extras(value: Any) -> list[str]:
+    if isinstance(value, str):
+        value = value.split(",")
+    if not isinstance(value, (list, tuple)):
+        return []
+    items: list[str] = []
+    for item in value:
+        text = _text(item, MAX_EXTRA).strip(",")
+        if text and text.lower() not in {i.lower() for i in items}:
+            items.append(text)
+    return items[:MAX_EXTRAS]
+
+
+def _clean_answer(data: Any) -> Optional[dict[str, Any]]:
+    """One answer of the reader's JSON, every field checked; None when it
+    holds nothing usable. An action it does not know, on a booking it
+    names, is `unclear`: she is asked rather than her answer lost."""
+    if not isinstance(data, dict):
+        return None
+    number = data.get("number")
+    if isinstance(number, str):
+        number = _number(number)
+    elif isinstance(number, float) and number.is_integer():
+        number = int(number)
+    start = data.get("start")
+    answer = {
+        "action": data.get("action"),
+        "number": number if isinstance(number, int) and not isinstance(number, bool) and number > 0 else None,
+        "start": start.strip() if isinstance(start, str) and start.strip() else None,
+        "in_minutes": _whole(data.get("in_minutes"), 0, 24 * 60),
+        "duration_minutes": _whole(data.get("duration_minutes"), MIN_LENGTH, MAX_LENGTH),
+        "extras_ok": _extras(data.get("extras_ok")),
+        "extras_no": _extras(data.get("extras_no")),
+        "tell_customer": _text(data.get("tell_customer")) or None,
+        "ask_customer": _text(data.get("ask_customer")) or None,
+        "for_me": data.get("for_me") is True,
+        "question": _text(data.get("question")) or None,
+    }
+    carries = any(answer[key] for key in ("extras_ok", "extras_no", "tell_customer", "ask_customer", "for_me"))
+    action = answer["action"]
+    if isinstance(action, str) and action.strip().lower() not in OWNER_ACTIONS:
+        action = ACTION_SYNONYMS.get(action.strip().lower().replace(" ", "_"), action)
+    answer["action"] = action.strip().lower() if isinstance(action, str) else action
+    if answer["action"] not in OWNER_ACTIONS:
+        if carries:
+            answer["action"] = "none"
+        elif answer["number"] is not None:
+            answer["action"] = "unclear"
+        else:
+            return None
+    if answer["action"] == "none" and not carries and answer["duration_minutes"] is None:
+        return None
+    return answer
+
+
+def parse_owner_answer(text: str) -> Optional[OwnerReading]:
+    """The reader's JSON, cleaned. None when it is unusable (no JSON, broken
+    JSON, not an object): the caller treats that like a model that could not
+    be asked. An empty reading: nothing about the bookings."""
     match = re.search(r"\{.*\}", (text or "").strip(), re.DOTALL)
     if not match:
         return None
@@ -528,22 +741,28 @@ def parse_owner_answer(text: str) -> Optional[dict[str, Any]]:
         data = json.loads(match.group(0))
     except json.JSONDecodeError:
         return None
-    if not isinstance(data, dict) or data.get("action") not in OWNER_ACTIONS or data["action"] == "none":
+    if not isinstance(data, dict):
         return None
-    number = data.get("number")
-    if isinstance(number, str):
-        number = _number(number)
-    minutes = data.get("in_minutes")
-    if isinstance(minutes, float) and minutes.is_integer():
-        minutes = int(minutes)
-    start = data.get("start")
-    return {
-        "action": data["action"],
-        "number": number if isinstance(number, int) and not isinstance(number, bool) and number > 0 else None,
-        "start": start if isinstance(start, str) and start.strip() else None,
-        "in_minutes": minutes if isinstance(minutes, int) and not isinstance(minutes, bool)
-        and 0 <= minutes <= 24 * 60 else None,
-    }
+    if "answers" in data:
+        raw = data["answers"] if data["answers"] is not None else []
+        if not isinstance(raw, list):
+            return None
+    elif "action" in data:
+        raw = [data]  # one answer, the shape before there could be several
+    else:
+        return None
+    answers = tuple(a for a in (_clean_answer(item) for item in raw[:MAX_ANSWERS]) if a is not None)
+    standing = _text(data.get("standing"))
+    if raw and not answers and not standing and any(_unusable(item) for item in raw[:MAX_ANSWERS]):
+        # It meant to say something about a booking, in a shape that can't
+        # be used: not read, rather than read as nothing.
+        return None
+    return OwnerReading(answers, standing)
+
+
+def _unusable(item: Any) -> bool:
+    """An answer that is not an empty `none`: something was meant by it."""
+    return not (isinstance(item, dict) and item.get("action") == "none")
 
 
 def ready_time(at: datetime) -> datetime:
@@ -570,43 +789,335 @@ def is_settled(booking: Mapping[str, Any]) -> bool:
     return booking["state"] == bs.CONFIRMED and booking.get("proposed_by") != bs.CUSTOMER
 
 
-def owner_command_from(
-    data: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], *, now: datetime, tz_name: str,
-    replied: Optional[Mapping[str, Any]] = None, outcall_taxi: bool = True,
+def _fitting(action: str, rows: Sequence[Mapping[str, Any]], now: datetime) -> list[Mapping[str, Any]]:
+    """The bookings an answer naming none can be about."""
+    if action in ("yes", "no", "ready_at", "time", "unclear"):
+        fits = [b for b in rows if awaits_owner(b)]
+    elif action in ("ready", "in_taxi"):
+        fits = [b for b in rows if b["state"] == bs.CONFIRMED and is_outcall(b)]
+    elif action == "cancel":
+        fits = [b for b in rows if b["state"] == bs.CONFIRMED and b["starts_at"] > now]
+    elif action in ("done", "noshow"):
+        fits = [b for b in rows if b["state"] == bs.CONFIRMED and b["starts_at"] <= now]
+    else:
+        fits = list(rows)
+    return fits or (list(rows) if len(rows) == 1 else [])
+
+
+def _typed_numbers(text: str) -> set[int]:
+    return {int(digits) for digits in re.findall(r"\d+", text or "") if len(digits) <= 7}
+
+
+def _command_from(
+    answer: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], *, now: datetime, tz_name: str,
+    replied: Optional[Mapping[str, Any]], outcall_taxi: bool, typed: Optional[str],
 ) -> Optional[OwnerCommand]:
-    """What the reader of her words found (parse_owner_answer), as the
-    command it amounts to for the bookings in `rows`. None: nothing to do
-    (an outcall step while the taxi steps are off)."""
-    action = data["action"]
-    number = data["number"] or (replied["number"] if replied else None)
-    booking = next((b for b in rows if b["number"] == number), None)
-    if action not in ("ready_at", "time"):
-        if action in ("ready", "in_taxi") and not outcall_taxi:
+    action = answer["action"]
+    words = {
+        "minutes": answer.get("duration_minutes"), "tell": answer.get("tell_customer") or "",
+        "ask": answer.get("ask_customer") or "", "extras_ok": tuple(answer.get("extras_ok") or ()),
+        "extras_no": tuple(answer.get("extras_no") or ()), "for_me": bool(answer.get("for_me")),
+        "question": answer.get("question") or "",
+    }
+    if action == "list":
+        return OwnerCommand("list")
+    if action in ("ready", "in_taxi") and not outcall_taxi:
+        if not (words["tell"] or words["ask"] or words["extras_ok"] or words["extras_no"] or words["for_me"]):
             return None
-        if action == "yes" and booking is not None and is_settled(booking):
-            return OwnerCommand("stays", number)
-        return OwnerCommand(action, number)
+        action = "none"
+    number = answer.get("number")
+    if (number is not None and typed is not None and number not in {b["number"] for b in rows}
+            and number not in _typed_numbers(typed) and not (replied and replied["number"] == number)):
+        # A booking that is not open and that she did not name: the model's
+        # guess, never acted on.
+        fits = _fitting(action, rows, now)
+        return OwnerCommand("unclear", None, missing="which", candidates=tuple(b["number"] for b in (fits or rows)),
+                            **words)
+    if number is None and replied is not None:
+        number = replied["number"]
+    if number is None:
+        fits = _fitting(action, rows, now)
+        if len(fits) == 1:
+            number = fits[0]["number"]
+        elif action not in ("ready", "in_taxi"):
+            # READY / IN with no number: outcall_command picks the outcall.
+            return OwnerCommand("unclear", None, missing="which",
+                                candidates=tuple(b["number"] for b in (fits or rows)), **words)
+    booking = next((b for b in rows if b["number"] == number), None)
+    if action == "yes":
+        settled = booking is not None and is_settled(booking)
+        return OwnerCommand("stays" if settled else "yes", number, **words)
+    if action not in ("ready_at", "time"):
+        return OwnerCommand(action, number, **words)
     # A moment she named.
-    awaiting = [b for b in rows if awaits_owner(b)]
-    if booking is None and number is None and len(awaiting) == 1:
-        booking = awaiting[0]
     if booking is None:
-        return OwnerCommand("unclear", number)
-    if data.get("start"):
-        at = parse_local(data["start"], tz_name)
-    elif data.get("in_minutes") is not None:
-        at = now + timedelta(minutes=data["in_minutes"])
+        return OwnerCommand("unclear", number, **words)
+    if answer.get("start"):
+        at = parse_local(answer["start"], tz_name)
+    elif answer.get("in_minutes") is not None:
+        at = now + timedelta(minutes=answer["in_minutes"])
     else:
         at = None
     if at is None:
-        return OwnerCommand("unclear", booking["number"])
+        return OwnerCommand("unclear", number, missing="time", **words)
     at = ready_time(at)
     asked = booking["proposed_starts_at"] if booking.get("proposed_by") == bs.CUSTOMER else booking["starts_at"]
     # Ready by the time he asked for, or that very time: a yes.
     if at == asked or (action == "ready_at" and at <= asked + READY_SLACK):
-        return OwnerCommand("stays" if is_settled(booking) else "yes", booking["number"])
+        return OwnerCommand("stays" if is_settled(booking) else "yes", number, **words)
     local = at.astimezone(tzinfo_for(booking["tz"]))
-    return OwnerCommand("propose", booking["number"], at=local.time(), day=local.date())
+    return OwnerCommand("propose", number, at=local.time(), day=local.date(), **words)
+
+
+_NO_CHANGE = ("none", "stays")
+
+
+def _joined(first: str, second: str) -> str:
+    if not first or not second or second.lower() in first.lower():
+        return first or second
+    return f"{first}; {second}"
+
+
+def _merge(first: OwnerCommand, second: OwnerCommand) -> OwnerCommand:
+    """Two answers about one booking as one command: the change one of them
+    makes, and everything both carry. Two different changes: she is asked."""
+    changes = [c for c in (first, second) if c.kind not in _NO_CHANGE]
+    if len(changes) == 2 and (changes[0].kind, changes[0].at, changes[0].day) != \
+            (changes[1].kind, changes[1].at, changes[1].day):
+        base = replace(first, kind="unclear", at=None, day=None, missing="", question="")
+    elif changes:
+        base = changes[0]
+    else:
+        base = first if first.kind == "stays" else second
+    return replace(
+        base,
+        minutes=first.minutes if first.minutes is not None else second.minutes,
+        tell=_joined(first.tell, second.tell), ask=_joined(first.ask, second.ask),
+        extras_ok=tuple(dict.fromkeys(first.extras_ok + second.extras_ok)),
+        extras_no=tuple(dict.fromkeys(first.extras_no + second.extras_no)),
+        for_me=first.for_me or second.for_me, question=base.question or first.question or second.question,
+    )
+
+
+def owner_commands_from(
+    answers: Sequence[Mapping[str, Any]], rows: Sequence[Mapping[str, Any]], *, now: datetime, tz_name: str,
+    replied: Optional[Mapping[str, Any]] = None, outcall_taxi: bool = True, typed: Optional[str] = None,
+) -> list[OwnerCommand]:
+    """What the reader found (OwnerReading.answers) as the commands it
+    amounts to for the bookings in `rows`: one per booking, in the order
+    she named them, each carrying what goes on to him (tell, ask, extras),
+    the length she set and whether she asked something herself. A booking she
+    did not name is the replied-to request when her message holds one answer
+    only (with several, "tell the other one ..." must not land on the quoted
+    one), else the only one that fits; when several fit, the command is
+    `unclear` (missing "which") so she is asked which one. `typed`: her
+    message — a booking number the model gives that is neither open nor in
+    it is a guess, and she is asked instead."""
+    commands: list[OwnerCommand] = []
+    replied = replied if len(answers) == 1 else None
+    for answer in answers:
+        cmd = _command_from(answer, rows, now=now, tz_name=tz_name, replied=replied, outcall_taxi=outcall_taxi,
+                            typed=typed)
+        if cmd is None:
+            continue
+        if cmd.kind == "list":
+            if not any(c.kind == "list" for c in commands):
+                commands.append(cmd)
+            continue
+        same = next((i for i, c in enumerate(commands) if cmd.number is not None and c.number == cmd.number), None)
+        if same is None:
+            commands.append(cmd)
+        else:
+            commands[same] = _merge(commands[same], cmd)
+    return commands
+
+
+def owner_command_from(
+    data: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], *, now: datetime, tz_name: str,
+    replied: Optional[Mapping[str, Any]] = None, outcall_taxi: bool = True, typed: Optional[str] = None,
+) -> Optional[OwnerCommand]:
+    """One answer of the reader as its command (see owner_commands_from).
+    None: nothing to do (an outcall step while the taxi steps are off)."""
+    commands = owner_commands_from([data], rows, now=now, tz_name=tz_name, replied=replied,
+                                   outcall_taxi=outcall_taxi, typed=typed)
+    return commands[0] if commands else None
+
+
+# --------------------------------- her answer, back to her and on to him
+
+
+def passing_on_words(cmd: OwnerCommand) -> str:
+    """What goes on to him from her answer, for her acknowledgement, so she
+    can catch a misread: " I'll tell him: bring cash; no anal. I'll ask him:
+    does he want 2 hours?" ("" when nothing goes to him)."""
+    told = ([cmd.tell.rstrip(". ")] if cmd.tell else []) + [f"yes to {x}" for x in cmd.extras_ok] + \
+        [f"no {x}" for x in cmd.extras_no]
+    text = f" I'll tell him: {'; '.join(told)}." if told else ""
+    if cmd.ask:
+        text += f" I'll ask him: {cmd.ask.rstrip()}" + ("" if cmd.ask.rstrip().endswith("?") else "?")
+    return text
+
+
+def format_words_ack(booking: Mapping[str, Any], cmd: OwnerCommand) -> str:
+    """Her words for him alone (nothing about the booking changes)."""
+    text = f"#{booking['number']} {booking.get('customer_name') or 'the customer'}:" + passing_on_words(cmd)
+    return text + (" His answer will come here." if cmd.ask else "")
+
+
+def format_facts(booking: Mapping[str, Any], *, outcall_taxi: bool = False, proof: bool = False) -> str:
+    """Her question about a booking ("how long?", "is it outcall?"), answered
+    from the booking itself."""
+    n, state = booking["number"], booking["state"]
+    where = "outcall" if is_outcall(booking) else "incall"
+    lines = [f"#{n} {_who(booking)} — {describe_when(booking)} "
+             f"({describe_minutes(booking_minutes(booking))}), {where}."]
+    if state in (bs.REQUESTED, bs.PENDING):
+        lines.append(f"You proposed {describe_proposal(booking)}; waiting for him." if
+                     booking.get("proposed_by") == bs.OWNER else "Waiting for your answer.")
+    elif state == bs.CONFIRMED:
+        line = "Confirmed."
+        if booking.get("proposed_by") == bs.CUSTOMER:
+            line += f" He asks to move it to {describe_proposal(booking)} — waiting for your answer."
+        elif booking.get("proposed_by") == bs.OWNER:
+            line += f" You proposed moving it to {describe_proposal(booking)}; waiting for him."
+        if outcall_taxi and is_outcall(booking):
+            line += f" Outcall: {outcall_step(booking, proof=proof)}."
+        elif booking.get("arrived_at"):
+            line += " He says he has arrived."
+        lines.append(line)
+    else:
+        lines.append({bs.CANCELLED: "Cancelled.", bs.COMPLETED: "Done.", bs.NO_SHOW: "He didn't come."}
+                     .get(state, state))
+    lines.append(f"Extras he asked for: {booking.get('extras') or 'none'}.")
+    if booking.get("extras_ok") or booking.get("extras_no"):
+        lines.append(f"You said yes to: {booking.get('extras_ok') or '-'}; no to: {booking.get('extras_no') or '-'}.")
+    if booking.get("service"):
+        lines.append(f"What: {booking['service']}")
+    if booking.get("notes"):
+        lines.append(f"Notes: {booking['notes']}")
+    if booking.get("booker_asked_at"):
+        lines.append("You asked him something; his answers come here.")
+    return "\n".join(lines)
+
+
+def _held(cmd: Optional[OwnerCommand]) -> str:
+    """What of her answer waits until she says which booking, or yes or no:
+    said back with the question, so nothing she wrote is lost from view."""
+    if cmd is None:
+        return ""
+    items = [f"for {describe_minutes(cmd.minutes)}"] if cmd.minutes else []
+    items += ([f"tell him {cmd.tell}"] if cmd.tell else []) + [f"yes to {x}" for x in cmd.extras_ok] + \
+        [f"no {x}" for x in cmd.extras_no] + ([f"ask him {cmd.ask}"] if cmd.ask else [])
+    return f" With your answer: {'; '.join(items)}." if items else ""
+
+
+def format_which_one(rows: Sequence[Mapping[str, Any]], cmd: Optional[OwnerCommand] = None) -> str:
+    """Several bookings fit her answer: which one? (With what she said for
+    it, `cmd`, repeated.)"""
+    if not rows:
+        return "Which booking is that about? Send LIST to see them." + _held(cmd)
+    named = [f"#{b['number']} {b.get('customer_name') or 'unknown'}, {_short_when(b)}" for b in rows]
+    listed = named[0] if len(named) == 1 else ", ".join(named[:-1]) + ", or " + named[-1]
+    return f"Which one: {listed}? Answer with the number." + _held(cmd)
+
+
+def format_question(cmd: OwnerCommand, booking: Optional[Mapping[str, Any]] = None) -> str:
+    """The one short question she is asked when her answer can't be carried
+    out as it stands."""
+    if booking is None:
+        return (cmd.question or "Which booking is that about? Send LIST to see them.") + _held(cmd)
+    n = booking["number"]
+    if cmd.question:
+        return (cmd.question if f"#{n}" in cmd.question else f"#{n}: {cmd.question}") + _held(cmd)
+    who = booking.get("customer_name") or "the customer"
+    if cmd.missing == "time":
+        return f"#{n} {who}: what time should I offer him?" + _held(cmd)
+    return f"#{n} {who}, {_short_when(booking)}: yes or no? Or give another time." + _held(cmd)
+
+
+def read_failed(numbers: Sequence[int]) -> str:
+    """Her words could not be read (the model is down or out of budget)."""
+    n = str(numbers[0]) if len(numbers) == 1 else "<number>"
+    return f"I couldn't read that just now — answer with YES {n} / NO {n}, or a time like {n} 15:30."
+
+
+# A loose YES / NO / ... carried out as typed because her words could not be
+# read: she is told the rest of her message did nothing.
+READ_REST_FAILED = ("I couldn't read the rest of your message just now: only that went through, and nothing was "
+                    "passed on to him. Send the rest again, or use YES n / NO n / n 15:30.")
+# The same for a plain command that answered the bot's question about her
+# message before it (the length, the words for him in that one).
+READ_EARLIER_FAILED = ("I couldn't read this together with your message before it just now: only this went "
+                       "through, nothing else from that message. Send that part again if it still matters.")
+
+# Words after a YES that may turn it into something else ("ok, not today",
+# "yes 3 hours", "yes but at 18:00", "yes tomorrow"): when they can't be
+# read, the YES does not stand on its own.
+_DOUBT = re.compile(
+    r"(?i)\b(?:no|not|nope|never|don'?t|can'?t|won'?t|cannot|later|tomorrow|after|instead|нет|не|нельзя|позже|"
+    r"завтра|после|через|nē|ne|nevar|vēlāk|rīt|pēc|mañana|después|luego|nunca|"
+    r"hours?|hrs?|час\w*|минут\w*|stund\w*|minūt\w*|minut\w*|horas?)\b"
+    r"|\bin\s+\d+|\d{1,2}[:.]\d{2}|\b\d+\s*(?:h|hrs?|hours?|min|mins|minutes?|ч|час\w*|мин\w*|stund\w*|min[ūu]t\w*|horas?)\b")
+
+
+def loose_doubt(text: str) -> bool:
+    """Her YES has words after it that may change what it means."""
+    words = (text or "").strip().split(None, 1)
+    return len(words) > 1 and bool(_DOUBT.search(words[1]))
+
+
+def format_standing_saved(text: str) -> str:
+    return f'Saved for the admin to add to your rules: "{text}". Nothing changes until they accept it.'
+
+
+def booker_news_item(cmd: OwnerCommand, *, at: datetime) -> dict[str, Any]:
+    """Her words for his next reply, as kept in bookings.booker_news until a
+    reply carries them."""
+    return {"id": uuid.uuid4().hex, "at": at.isoformat(), "tell": cmd.tell, "ask": cmd.ask,
+            "extras_ok": list(cmd.extras_ok), "extras_no": list(cmd.extras_no)}
+
+
+BOOKER_WORDS_RULE = (
+    "Say it as yourself, in your own words and their language, first person, short. Never mention "
+    "anyone else (no booker, owner, manager or friend, no 'she says'), never 'let me check'. Keep "
+    "every fact exactly as given, and add no price, time, address or promise that is not in it."
+)
+
+
+def booker_news_line(items: Sequence[Mapping[str, Any]]) -> str:
+    """Her words for him (booker_news items), for the reply writer. The bot
+    is the girl herself, so it is said in the first person."""
+    tell = [str(i["tell"]) for i in items if i.get("tell")]
+    ask = [str(i["ask"]) for i in items if i.get("ask")]
+    # Her last word on each extra wins ("no anal" ... "ok, anal is fine").
+    said: dict[str, tuple[bool, str]] = {}
+    for item in items:
+        for extra in item.get("extras_ok") or ():
+            said[str(extra).lower()] = (True, str(extra))
+        for extra in item.get("extras_no") or ():
+            said[str(extra).lower()] = (False, str(extra))
+    yes = [name for ok, name in said.values() if ok]
+    no = [name for ok, name in said.values() if not ok]
+    parts = []
+    if tell:
+        parts.append("tell them " + "; ".join(f'"{t}"' for t in tell))
+    if yes:
+        parts.append("these extras are fine for them: " + ", ".join(yes))
+    if no:
+        parts.append("these extras are NOT on offer for them: " + ", ".join(no))
+    if ask:
+        parts.append("ask them " + "; ".join(f'"{q}"' for q in ask))
+    if not parts:
+        return ""
+    return _NEWS + "; ".join(parts) + ". " + BOOKER_WORDS_RULE
+
+
+def refused_extras_line(extras: Sequence[str]) -> str:
+    """Extras she refused for this customer: never offered again in the chat."""
+    if not extras:
+        return ""
+    return ("Extras NOT on offer for them, whatever your lists say: " + ", ".join(extras) + ". Never offer, "
+            "agree to or price these; if they ask, a short no in your own words.")
 
 
 # ------------------------------------------------------- the customer's side
@@ -788,6 +1299,7 @@ _NOTICE_TEXT = {
     bs.NOTICE_EXPIRED: "the request for {when} could not be confirmed in time and has lapsed. Apologise briefly and offer to find another time.",
     bs.NOTICE_REQUESTED: "their request for {when} has been passed on; it is NOT confirmed yet. Say you will confirm it in a moment.",
     bs.NOTICE_KEPT: "the appointment could not be moved; it stays on {when}. Tell them so.",
+    bs.NOTICE_LENGTH: "the appointment now lasts a different time: it is {when}. Tell them, restating when it starts and ends.",
 }
 
 

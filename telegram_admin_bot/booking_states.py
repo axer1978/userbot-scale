@@ -11,7 +11,8 @@ States:
     requested ──submitted──▶ pending ──confirm──▶ confirmed ──mark_completed──▶ completed
         │                     │  ▲                  │  │
         │                     │  └─change_request   │  └──mark_no_show──▶ no_show
-        │                     ├──propose (stays)    ├──propose / accept_proposal / reschedule (stays)
+        │                     ├──propose (stays)    ├──propose / accept_proposal / reschedule /
+        │                     │                     │  change_length (stays)
         └──decline/cancel/expire──▶ cancelled ◀─────┴──cancel
 
 Nothing here confirms a booking on its own: `confirm` needs the owner or an
@@ -57,6 +58,8 @@ NOTICE_CANCELLED = "cancelled"
 NOTICE_EXPIRED = "expired"
 NOTICE_REQUESTED = "requested"
 NOTICE_KEPT = "kept"
+# The booker changed how long a confirmed booking lasts.
+NOTICE_LENGTH = "length"
 # The taxi steps of an outcall (not state changes: the booking stays
 # confirmed). She is ready: he orders the taxi. She is in it: he sends
 # the way to him.
@@ -109,12 +112,28 @@ def submitted(booking: Mapping[str, Any], *, provider_chat_id: int, provider_mes
     })
 
 
-def confirm(booking: Mapping[str, Any], *, actor: str, now: datetime) -> Change:
-    """The owner said yes to the time as it stands."""
+def _length(booking: Mapping[str, Any], ends_at: Optional[datetime],
+            blocked_until: Optional[datetime]) -> dict[str, Any]:
+    """The columns of a new end the owner set ("yes, but only 1 hour"),
+    blocked for as long after it as before. Nothing when she set none."""
+    if ends_at is None:
+        return {}
+    if ends_at <= booking["starts_at"]:
+        raise IllegalTransition(f"the new end of booking #{booking['number']} is not after its start")
+    if blocked_until is None:
+        blocked_until = ends_at + (booking["blocked_until"] - booking["ends_at"])
+    return {"ends_at": ends_at, "blocked_until": blocked_until}
+
+
+def confirm(booking: Mapping[str, Any], *, actor: str, now: datetime, ends_at: Optional[datetime] = None,
+            blocked_until: Optional[datetime] = None) -> Change:
+    """The owner said yes to the time as it stands; with `ends_at`, for the
+    length she gave ("yes, but only 1 hour")."""
     state = _require(booking, "confirm", (REQUESTED, PENDING), actor, DECIDERS)
     _future(booking["starts_at"], now, "the booking time")
     return Change("confirm", state, CONFIRMED, {
-        **_NO_PROPOSAL, "decided_by": actor, "decided_at": now, "customer_notice": NOTICE_CONFIRMED,
+        **_NO_PROPOSAL, **_length(booking, ends_at, blocked_until),
+        "decided_by": actor, "decided_at": now, "customer_notice": NOTICE_CONFIRMED,
     })
 
 
@@ -169,16 +188,20 @@ def propose(
 
 def accept_proposal(
     booking: Mapping[str, Any], *, actor: str, now: datetime, blocked_until: datetime,
+    ends_at: Optional[datetime] = None,
 ) -> Change:
     """The other side takes the proposed time: the owner's proposal by the
-    customer, the customer's by the owner (YES n) or an admin."""
+    customer, the customer's by the owner (YES n) or an admin. `ends_at`:
+    the owner takes the customer's new time for the length she gives."""
     proposer = booking.get("proposed_by")
     if proposer is None or booking.get("proposed_starts_at") is None:
         raise IllegalTransition(f"booking #{booking['number']} has no proposed time")
     allowed = (CUSTOMER,) if proposer == OWNER else DECIDERS
     state = _require(booking, "accept the proposed time of", (REQUESTED, PENDING, CONFIRMED), actor, allowed)
-    starts_at, ends_at = booking["proposed_starts_at"], booking["proposed_ends_at"]
+    starts_at, ends_at = booking["proposed_starts_at"], ends_at or booking["proposed_ends_at"]
     _future(starts_at, now, "the proposed time")
+    if ends_at <= starts_at:
+        raise IllegalTransition(f"the new end of booking #{booking['number']} is not after its start")
     fields = {
         **_NO_PROPOSAL, "starts_at": starts_at, "ends_at": ends_at, "blocked_until": blocked_until,
         "decided_by": actor, "decided_at": now,
@@ -220,6 +243,19 @@ def reschedule(
     return Change("reschedule", state, CONFIRMED, {
         **_NO_PROPOSAL, "starts_at": starts_at, "ends_at": ends_at, "blocked_until": blocked_until,
         "customer_notice": NOTICE_RESCHEDULED,
+    })
+
+
+def change_length(
+    booking: Mapping[str, Any], *, actor: str, ends_at: datetime, blocked_until: datetime, now: datetime,
+) -> Change:
+    """The owner makes a confirmed booking longer or shorter ("make it 2
+    hours"): same start, a new end. Also while it is under way, as long as
+    the new end is still to come."""
+    state = _require(booking, "change the length of", (CONFIRMED,), actor, DECIDERS)
+    _future(ends_at, now, "the new end")
+    return Change("change_length", state, CONFIRMED, {
+        **_length(booking, ends_at, blocked_until), "customer_notice": NOTICE_LENGTH,
     })
 
 

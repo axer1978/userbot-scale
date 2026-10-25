@@ -139,11 +139,11 @@ async def test_upgrading_a_database_with_telegram_data_keeps_it_all(pg_pool, tmp
         for table, rows in before.items():
             after = [dict(r) for r in await con.fetch(f"SELECT * FROM {table} ORDER BY 1, 2")]
             new_cols = {"wa_message_id", "provider_wa_message_id"}
-            # Added by later migrations (0011, 0013, 0014, 0016, 0019, 0020), with their own defaults.
+            # Added by later migrations (0011, 0013, 0014, 0016, 0019, 0020, 0022), with their own defaults.
             later = {"instructions_message_ids", "instructions_cleanup_at", "instructions_cleaned_at",
                      "sent_elsewhere", "draft_text",
                      "ready_at", "ready_reminded_at", "taxi_link", "taxi_link_at", "in_taxi_at", "in_taxi_by",
-                     "extras", "proof_at"}
+                     "extras", "proof_at", "booker_news", "extras_ok", "extras_no", "booker_asked_at"}
             assert [{k: v for k, v in r.items() if k not in new_cols | later} for r in after] == rows, table
             assert all(r.get(c) is None for r in after for c in new_cols)
         # The account still runs as it did.

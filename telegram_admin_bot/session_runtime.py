@@ -1677,9 +1677,10 @@ class SessionRuntime:
             note = await self.flow.reply_note(chat_id)
             # While their time waits for the owner nothing is said — except
             # that photos they ask to see still go out: those they have not
-            # had, on their own, with no text.
+            # had, on their own, with no text. The owner's own words for
+            # them always go out.
             photos_only: list[dict[str, Any]] = []
-            if await self.flow.quiet_until_answered(chat_id, history):
+            if not note.her_words and await self.flow.quiet_until_answered(chat_id, history):
                 photos_only = await self.photos_they_asked_for(history)
                 if not photos_only:
                     await self.skip_reply(chat_id, OWNER_SKIP)
@@ -1800,38 +1801,41 @@ class SessionRuntime:
             # The fallback phrase was found before sending (above), queued
             # after: the reply still goes out (or is drafted) as normal.
 
-            if self.config["auto_send"] and self.transport.can_send and not hold and verdict.ok:
-                self.sending_chats.add(chat_id)
-                try:
+            # From here a newer draft does not cut this one short (cancel_draft):
+            # once the reply is out or saved, the news it carried must be marked
+            # as told (flow.delivered), or it would be said twice.
+            self.sending_chats.add(chat_id)
+            try:
+                if self.config["auto_send"] and self.transport.can_send and not hold and verdict.ok:
                     await self.send_burst(
                         chat_id, parts, typing=True, attachments=attachments,
                         actor=audit.BOT, reason="automatic reply", llm_model=model, prompt_version=version,
                     )
-                finally:
-                    self.sending_chats.discard(chat_id)
-                log.info(
-                    "[%s] Auto-sent AI reply to chat %s%s.", self.session_id, chat_id,
-                    f" as {len(parts)} messages" if len(parts) > 1 else "",
-                )
-            else:
-                if hold and self.config["auto_send"]:
-                    log.info("[%s]   reply carries a video — held for approval in the panel.", self.session_id)
-                row = await self.db.record_message(
-                    chat_id, DIR_OUT, STATUS_PENDING, text, bump_preview=False, attachments=attachments,
-                    llm_model=model, prompt_version=version,
-                )
-                if row is not None:
-                    await self.push_message(row)
-                log.info("[%s] Draft awaiting approval for chat %s.", self.session_id, chat_id)
-                # Waiting for approval because auto_send is off or for a
-                # video is a normal draft; held by policy is unanswered.
-                if not verdict.ok:
-                    await self.queue_unanswered(chat_id, unanswered.POLICY_HOLD, "; ".join(verdict.reasons))
-            if fallback:
-                await self.queue_unanswered(chat_id, unanswered.FALLBACK, f"the reply contains “{fallback}”")
-            if not photos_only:
-                # Photos alone pass on no booking news.
-                await self.flow.delivered(chat_id, note)
+                    log.info(
+                        "[%s] Auto-sent AI reply to chat %s%s.", self.session_id, chat_id,
+                        f" as {len(parts)} messages" if len(parts) > 1 else "",
+                    )
+                else:
+                    if hold and self.config["auto_send"]:
+                        log.info("[%s]   reply carries a video — held for approval in the panel.", self.session_id)
+                    row = await self.db.record_message(
+                        chat_id, DIR_OUT, STATUS_PENDING, text, bump_preview=False, attachments=attachments,
+                        llm_model=model, prompt_version=version,
+                    )
+                    if row is not None:
+                        await self.push_message(row)
+                    log.info("[%s] Draft awaiting approval for chat %s.", self.session_id, chat_id)
+                    # Waiting for approval because auto_send is off or for a
+                    # video is a normal draft; held by policy is unanswered.
+                    if not verdict.ok:
+                        await self.queue_unanswered(chat_id, unanswered.POLICY_HOLD, "; ".join(verdict.reasons))
+                if fallback:
+                    await self.queue_unanswered(chat_id, unanswered.FALLBACK, f"the reply contains “{fallback}”")
+                if not photos_only:
+                    # Photos alone pass on no booking news.
+                    await self.flow.delivered(chat_id, note)
+            finally:
+                self.sending_chats.discard(chat_id)
             await scheduler.clear_deferred(self.pool, self.tenant_id, chat_id)
             self.schedule_go_offline(chat_id)
 
@@ -2273,8 +2277,11 @@ class SessionRuntime:
         if is_provider:
             if has_photo and await self.save_owner_photo(message, text):
                 return
+            # A command, or (booking.owner_free_text) anything she writes:
+            # read and answered by the booking flow, never with a reply
+            # meant for a customer.
             if has_text and await self.flow.on_owner_message(chat_id, text, message.reply_to):
-                log.info("[%s]   booking command from the owner — handled.", self.session_id)
+                log.info("[%s]   message from the booking owner — handled by the booking flow.", self.session_id)
                 return
             log.info("[%s]   message from the booking owner; replying as usual.", self.session_id)
 

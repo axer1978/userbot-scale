@@ -304,23 +304,78 @@ def test_strict_commands_are_never_loose():
         assert not bookings.parse_owner_reply(text, today=date(2026, 10, 4)).loose
 
 
+def _answer(**fields):
+    """A cleaned answer as parse_owner_answer gives it: every key, empty by default."""
+    return {"action": None, "number": None, "start": None, "in_minutes": None, "duration_minutes": None,
+            "extras_ok": [], "extras_no": [], "tell_customer": None, "ask_customer": None, "for_me": False,
+            "question": None, **fields}
+
+
 @pytest.mark.parametrize("raw, expected", [
-    ('{"action": "yes", "number": 8, "start": null, "in_minutes": null}',
-     {"action": "yes", "number": 8, "start": None, "in_minutes": None}),
+    # The shape before there could be several answers: one answer.
+    ('{"action": "yes", "number": 8, "start": null, "in_minutes": null}', _answer(action="yes", number=8)),
     ('Sure: ```{"action": "ready_at", "number": "#8", "in_minutes": 20.0}```',
-     {"action": "ready_at", "number": 8, "start": None, "in_minutes": 20}),
-    ('{"action": "time", "number": null, "start": "2026-10-20T15:30"}',
-     {"action": "time", "number": None, "start": "2026-10-20T15:30", "in_minutes": None}),
-    ('{"action": "ready_at", "number": 0, "in_minutes": -5}',
-     {"action": "ready_at", "number": None, "start": None, "in_minutes": None}),
+     _answer(action="ready_at", number=8, in_minutes=20)),
+    ('{"answers": [{"action": "time", "number": null, "start": "2026-10-20T15:30"}]}',
+     _answer(action="time", start="2026-10-20T15:30")),
+    ('{"answers": [{"action": "ready_at", "number": 0, "in_minutes": -5}]}', _answer(action="ready_at")),
+    # Everything she wants passed on, checked and trimmed.
+    ('{"answers": [{"action": "yes", "number": 3, "duration_minutes": "60", "extras_ok": "domination, Domination",'
+     ' "extras_no": ["anal", "", 7], "tell_customer": "  bring\\n cash ", "ask_customer": "", "for_me": "true"}]}',
+     _answer(action="yes", number=3, duration_minutes=60, extras_ok=["domination"], extras_no=["anal"],
+             tell_customer="bring cash")),
+    # A length out of range is no length.
+    ('{"answers": [{"action": "yes", "number": 3, "duration_minutes": 5}]}', _answer(action="yes", number=3)),
+    ('{"answers": [{"action": "yes", "number": 3, "duration_minutes": 9000}]}', _answer(action="yes", number=3)),
+    # An unknown action that carries words is about the booking, nothing more.
+    ('{"answers": [{"action": "relay", "number": 6, "tell_customer": "I\'m 10 min late"}]}',
+     _answer(action="none", number=6, tell_customer="I'm 10 min late")),
+    ('{"answers": [{"action": "none", "number": 6, "for_me": true}]}', _answer(action="none", number=6, for_me=True)),
 ])
 def test_the_owner_answer_is_cleaned(raw, expected):
-    assert bookings.parse_owner_answer(raw) == expected
+    reading = bookings.parse_owner_answer(raw)
+    assert reading is not None and reading.answers == (expected,)
 
 
-@pytest.mark.parametrize("raw", ['{"action": "none"}', '{"action": "maybe"}', "yes", "", '{"action": '])
-def test_no_owner_answer_when_not_about_a_booking_or_unusable(raw):
+def test_one_message_can_answer_several_bookings_and_give_a_standing_rule():
+    reading = bookings.parse_owner_answer(
+        '{"answers": [{"action": "yes", "number": 3}, {"action": "no", "number": 4}, {"action": "none", "number": 5}],'
+        ' "standing": "from now on   cash only"}')
+    assert [(a["action"], a["number"]) for a in reading.answers] == [("yes", 3), ("no", 4)]
+    assert reading.standing == "from now on cash only"
+    # At most MAX_ANSWERS; long words are cut.
+    many = bookings.parse_owner_answer(
+        '{"answers": [' + ", ".join(f'{{"action": "yes", "number": {n}}}' for n in range(1, 20)) + "]}")
+    assert len(many.answers) == bookings.MAX_ANSWERS
+    long = bookings.parse_owner_answer('{"answers": [{"action": "none", "number": 1, "tell_customer": "' +
+                                       "x" * 1000 + '"}]}')
+    assert len(long.answers[0]["tell_customer"]) == bookings.MAX_WORDS
+
+
+@pytest.mark.parametrize("raw", ['{"action": "none"}', '{"answers": []}',
+                                 '{"answers": null, "standing": ""}', '{"answers": [{"action": "none"}]}'])
+def test_an_answer_about_no_booking_is_an_empty_reading(raw):
+    assert bookings.parse_owner_answer(raw) == bookings.OwnerReading()
+
+
+@pytest.mark.parametrize("raw", ["yes", "", '{"action": ', "[1, 2]", '{"answers": "yes"}', '{"hello": 1}',
+                                 # It meant something, in a shape that can't be used: not read, rather
+                                 # than read as nothing (then a loose YES still stands, she is told).
+                                 '{"action": "maybe"}', '{"answers": [{"action": "whatever"}, {"action": "none"}]}'])
+def test_an_unusable_answer_is_none(raw):
     assert bookings.parse_owner_answer(raw) is None
+
+
+@pytest.mark.parametrize("action, read_as", [("confirm", "yes"), ("Accepted", "yes"), ("decline", "no"),
+                                             ("reschedule", "time"), ("taxi", "in_taxi"), ("no_show", "noshow")])
+def test_the_models_other_words_for_an_action_are_understood(action, read_as):
+    reading = bookings.parse_owner_answer(f'{{"answers": [{{"number": 3, "action": "{action}"}}]}}')
+    assert reading.answers[0]["action"] == read_as
+
+
+def test_an_unknown_action_on_a_booking_she_named_asks_her_rather_than_losing_it():
+    reading = bookings.parse_owner_answer('{"answers": [{"number": 3, "action": "think about it"}]}')
+    assert (reading.answers[0]["action"], reading.answers[0]["number"]) == ("unclear", 3)
 
 
 @pytest.mark.parametrize("hm, expected", [((12, 20, 0), (12, 20)), ((12, 21, 0), (12, 25)), ((12, 20, 30), (12, 25)),
@@ -340,9 +395,9 @@ def test_the_owner_reader_sees_each_booking_and_what_he_asked_for():
            proposed_ends_at=datetime(2026, 10, 4, 14, 0, tzinfo=timezone.utc)),
     ], outcall_taxi=True)
     lines = note.split("\n")
-    assert lines[0] == ("#7 Anna: the customer asks for Sun 04 Oct 2026, 15:00–16:00, waiting for their answer; "
-                        "extras: domination +50")
-    assert lines[1].startswith("#8 Khan: confirmed for Sun 04 Oct 2026, 15:00–16:00; outcall: send READY 8")
+    assert lines[0] == ("#7 Anna: the customer asks for Sun 04 Oct 2026, 15:00–16:00 (1 hour), waiting for their "
+                        "answer; incall; extras he asked for: domination +50")
+    assert lines[1].startswith("#8 Khan: confirmed for Sun 04 Oct 2026, 15:00–16:00 (1 hour); outcall: send READY 8")
     assert "asks to move it to Sun 04 Oct 2026, 16:00–17:00, waiting for their answer" in lines[2]
     prompt = bookings.owner_answer_prompt("them: ready in 20", "Europe/Riga",
                                           now=datetime(2026, 10, 4, 14, 40, tzinfo=ZoneInfo("Europe/Riga")),
@@ -411,3 +466,246 @@ def test_the_address_note_follows_when_the_address_may_go():
         assert bookings.asks_where(where), where
     for other in ("how much?", "ok 22:00", "price for 1 hour", "do you do domination?", "somewhere nice"):
         assert not bookings.asks_where(other), other
+
+
+# ------------------------------------- the booker's own words, as commands
+
+NOW = datetime(2026, 10, 20, 12, 40, tzinfo=RIGA)
+
+
+def _row(number, state=bs.PENDING, start="2026-10-20T21:00", minutes=60, **extra):
+    begin = bookings.parse_local(start, "Europe/Riga")
+    return {"id": number, "number": number, "state": state, "starts_at": begin,
+            "ends_at": begin + timedelta(minutes=minutes), "tz": "Europe/Riga",
+            "customer_name": extra.pop("customer_name", f"C{number}"), "customer_username": None, "service": "",
+            "notes": "", "extras": "", "proposed_by": None, "proposed_starts_at": None, "proposed_ends_at": None,
+            **extra}
+
+
+PAIR = [_row(3, customer_name="Khan", extras="anal, domination +50"),
+        _row(4, start="2026-10-20T22:00", customer_name="Marco"),
+        _row(6, bs.CONFIRMED, start="2026-10-20T13:00", customer_name="Juris")]
+
+
+def commands(answers, rows=PAIR, **kw):
+    return bookings.owner_commands_from([_answer(**a) for a in answers], rows, now=NOW, tz_name="Europe/Riga", **kw)
+
+
+def test_one_message_gives_a_command_per_booking_with_what_goes_to_him():
+    yes, no = commands([
+        {"action": "yes", "number": 3, "duration_minutes": 60, "extras_no": ["anal"], "tell_customer": "bring cash"},
+        {"action": "no", "number": 4},
+    ])
+    assert (yes.kind, yes.number, yes.minutes, yes.tell, yes.extras_no) == ("yes", 3, 60, "bring cash", ("anal",))
+    assert (no.kind, no.number, no.has_words) == ("no", 4, False)
+    assert bookings.passing_on_words(yes) == " I'll tell him: bring cash; no anal."
+
+
+def test_a_booking_she_does_not_name_is_the_only_one_that_fits_else_she_is_asked():
+    # Two requests wait: which one?
+    [cmd] = commands([{"action": "yes"}])
+    assert (cmd.kind, cmd.missing, cmd.candidates) == ("unclear", "which", (3, 4))
+    # ... unless she quoted one of them.
+    [cmd] = commands([{"action": "yes"}], replied=PAIR[1])
+    assert (cmd.kind, cmd.number) == ("yes", 4)
+    # Words with no booking named, and only one booking at all.
+    [cmd] = commands([{"action": "none", "tell_customer": "I'm 10 min late"}], rows=[PAIR[2]])
+    assert (cmd.kind, cmd.number, cmd.tell) == ("none", 6, "I'm 10 min late")
+    # Cancel fits the confirmed one coming up.
+    [cmd] = commands([{"action": "cancel"}])
+    assert (cmd.kind, cmd.number) == ("cancel", 6)
+
+
+def test_a_yes_to_a_confirmed_booking_changes_nothing_but_still_carries_her_words():
+    [cmd] = commands([{"action": "yes", "number": 6, "tell_customer": "come alone"}])
+    assert (cmd.kind, cmd.tell) == ("stays", "come alone")
+
+
+def test_another_day_after_an_hour_is_proposed_at_that_hour():
+    [cmd] = commands([{"action": "time", "number": 3, "start": "2026-10-21T14:00", "duration_minutes": 60}])
+    assert (cmd.kind, cmd.number, cmd.at, cmd.day, cmd.minutes) == ("propose", 3, time(14, 0), date(2026, 10, 21), 60)
+    # A time she meant but none could be read: she is asked for it.
+    [cmd] = commands([{"action": "time", "number": 3}])
+    assert (cmd.kind, cmd.missing) == ("unclear", "time")
+    assert bookings.format_question(cmd, PAIR[0]) == "#3 Khan: what time should I offer him?"
+
+
+def test_two_answers_about_one_booking_are_one_command():
+    [cmd] = commands([{"action": "yes", "number": 3, "tell_customer": "bring cash"},
+                      {"action": "none", "number": 3, "ask_customer": "does he want 2 hours?", "extras_no": ["anal"]},
+                      {"action": "none", "number": 3, "tell_customer": "bring cash", "extras_no": ["anal"]}])
+    assert (cmd.kind, cmd.tell, cmd.ask, cmd.extras_no) == ("yes", "bring cash", "does he want 2 hours?", ("anal",))
+    # A yes and a no for the same booking: she is asked.
+    [cmd] = commands([{"action": "yes", "number": 3}, {"action": "no", "number": 3}])
+    assert cmd.kind == "unclear" and cmd.number == 3
+    assert bookings.format_question(cmd, PAIR[0]) == "#3 Khan, Tue 21:00: yes or no? Or give another time."
+    # LIST once, however often she asks.
+    assert [c.kind for c in commands([{"action": "list"}, {"action": "list"}])] == ["list"]
+
+
+def test_an_outcall_step_while_the_taxi_steps_are_off_keeps_only_her_words():
+    rows = [_row(7, bs.CONFIRMED, start="2026-10-20T13:30", notes="Outcall.")]
+    assert commands([{"action": "in_taxi", "number": 7}], rows=rows, outcall_taxi=False) == []
+    [cmd] = commands([{"action": "in_taxi", "number": 7, "tell_customer": "10 min"}], rows=rows, outcall_taxi=False)
+    assert (cmd.kind, cmd.tell) == ("none", "10 min")
+    # On: READY / IN with no number is left to the outcall steps to place.
+    [cmd] = commands([{"action": "ready"}], rows=rows + [_row(8, bs.CONFIRMED, notes="Outcall.")])
+    assert (cmd.kind, cmd.number) == ("ready", None)
+
+
+def test_the_owner_command_for_one_answer_is_the_first_command():
+    cmd = bookings.owner_command_from(_answer(action="yes", number=4), PAIR, now=NOW, tz_name="Europe/Riga")
+    assert (cmd.kind, cmd.number) == ("yes", 4)
+    assert bookings.owner_command_from(_answer(action="ready", number=7), PAIR, now=NOW, tz_name="Europe/Riga",
+                                       outcall_taxi=False) is None
+
+
+@pytest.mark.parametrize("text", ["vale", "claro que no", "cancela 7", "CONFIRMO 3", "dale"])
+def test_spanish_words_are_read_never_taken_as_strict_commands(text):
+    # "claro que no" is "of course not": only the reader of her words decides.
+    assert parse(text) is None
+
+
+@pytest.mark.parametrize("text, kind, number, loose", [
+    ("CANCEL 7 tell him sorry I'm sick", "cancel", 7, True), ("DONE 4 all good", "done", 4, True),
+    ("NOSHOW 4 never came", "noshow", 4, True), ("CANCEL 7", "cancel", 7, False)])
+def test_cancel_done_noshow_with_words_after_them_are_read_too(text, kind, number, loose):
+    cmd = parse(text)
+    assert (cmd.kind, cmd.number, cmd.loose) == (kind, number, loose)
+
+
+def test_the_quoted_request_names_the_booking_only_when_her_message_holds_one_answer():
+    # "yes. tell the other one I'm 10 min late", quoting #3's request: the
+    # words must not land on #3.
+    first, second = commands([{"action": "yes", "number": 3}, {"action": "none", "tell_customer": "I'm 10 min late"}],
+                             replied=PAIR[0])
+    assert (first.kind, first.number, first.tell) == ("yes", 3, "")
+    assert (second.kind, second.missing, second.tell) == ("unclear", "which", "I'm 10 min late")
+    # One answer: the quoted request is the one.
+    [cmd] = commands([{"action": "none", "tell_customer": "bring cash"}], replied=PAIR[1])
+    assert (cmd.kind, cmd.number) == ("none", 4)
+
+
+def test_a_booking_number_the_model_made_up_is_never_acted_on():
+    # #12 is not open and she never wrote 12.
+    [cmd] = commands([{"action": "cancel", "number": 12}], typed="cancel him, he's sick")
+    assert (cmd.kind, cmd.number, cmd.missing) == ("unclear", None, "which")
+    # She named it herself: kept (a booking further ahead than the open ones).
+    [cmd] = commands([{"action": "cancel", "number": 12}], typed="cancel 12, he's sick")
+    assert (cmd.kind, cmd.number) == ("cancel", 12)
+
+
+def test_her_questions_repeat_what_waits_on_her_answer():
+    cmd = bookings.OwnerCommand("unclear", 3, minutes=60, extras_no=("anal",), tell="bring cash")
+    assert bookings.format_question(cmd, PAIR[0]) == (
+        "#3 Khan, Tue 21:00: yes or no? Or give another time. With your answer: for 1 hour; tell him bring cash; "
+        "no anal.")
+    which = bookings.OwnerCommand("unclear", missing="which", ask="does he want 2 hours?")
+    assert bookings.format_which_one(PAIR[:2], which).endswith(
+        "Answer with the number. With your answer: ask him does he want 2 hours?.")
+
+
+@pytest.mark.parametrize("text, doubt", [
+    ("ok see you", False), ("yes babe", False), ("YES 3 tell him cash", False), ("ok sure let him come", False),
+    ("ok, not today", True), ("yes 3 hours", True), ("yes but in 40 min", True), ("ok in 5", True),
+    ("yes after 3", True), ("jā, bet tikai stundu", True), ("да, но не сегодня", True), ("yes tomorrow", True),
+    ("ok 18:00", True)])
+def test_words_that_may_turn_a_yes_into_something_else(text, doubt):
+    assert bookings.loose_doubt(text) is doubt
+
+
+def test_her_last_word_on_an_extra_wins():
+    line = bookings.booker_news_line([{"extras_no": ["anal"]}, {"extras_ok": ["Anal"], "extras_no": ["rimming"]}])
+    assert "fine for them: Anal" in line and "NOT on offer for them: rimming" in line
+    assert "NOT on offer for them: anal" not in line.replace("rimming", "")
+
+
+# --------------------------------- what she is told, and what goes to him
+
+def test_her_acknowledgements_say_back_what_was_understood():
+    confirmed = _row(3, bs.CONFIRMED, minutes=90, customer_name="Khan")
+    assert bookings.format_acknowledgement(confirmed, "confirm") == (
+        "#3 confirmed ✅ for Tue 20 Oct 2026, 21:00–22:30 (1 h 30 min) — Khan will be told.")
+    words = bookings.OwnerCommand("none", 3, tell="I'm 10 min late", extras_ok=("domination",),
+                                  ask="does he want 2 hours")
+    assert bookings.format_words_ack(confirmed, words) == (
+        "#3 Khan: I'll tell him: I'm 10 min late; yes to domination. I'll ask him: does he want 2 hours? "
+        "His answer will come here.")
+    assert bookings.passing_on_words(bookings.OwnerCommand("yes", 3)) == ""
+
+
+@pytest.mark.parametrize("minutes, text", [(60, "1 hour"), (120, "2 hours"), (90, "1 h 30 min"), (45, "45 min")])
+def test_lengths_in_words(minutes, text):
+    assert bookings.describe_minutes(minutes) == text
+
+
+def test_her_questions_are_answered_from_the_booking():
+    facts = bookings.format_facts(_row(3, customer_name="Khan", extras="anal, domination +50", extras_no="anal",
+                                       notes="Hotel Radisson. Outcall.", minutes=120))
+    assert facts.split("\n")[:3] == [
+        "#3 Khan — Tue 20 Oct 2026, 21:00–23:00 (2 hours), outcall.",
+        "Waiting for your answer.",
+        "Extras he asked for: anal, domination +50.",
+    ]
+    assert "You said yes to: -; no to: anal." in facts and "Notes: Hotel Radisson. Outcall." in facts
+    arrived = bookings.format_facts(_row(6, bs.CONFIRMED, start="2026-10-20T12:45", customer_name="Juris",
+                                         arrived_at=NOW))
+    assert "incall." in arrived and "Confirmed. He says he has arrived." in arrived
+
+
+def test_which_one_lists_the_bookings_that_fit():
+    assert bookings.format_which_one(PAIR[:2]) == (
+        "Which one: #3 Khan, Tue 21:00, or #4 Marco, Tue 22:00? Answer with the number.")
+    assert bookings.format_which_one([]) == "Which booking is that about? Send LIST to see them."
+    # Her own question from the reader, tied to the booking.
+    assert bookings.format_question(bookings.OwnerCommand("unclear", 3, question="1 or 2 hours?"), PAIR[0]) == \
+        "#3: 1 or 2 hours?"
+
+
+def test_when_her_words_cannot_be_read_she_is_shown_the_commands():
+    assert bookings.read_failed([3]) == (
+        "I couldn't read that just now — answer with YES 3 / NO 3, or a time like 3 15:30.")
+    assert "YES <number>" in bookings.read_failed([3, 4])
+    assert bookings.format_standing_saved("cash only") == (
+        'Saved for the admin to add to your rules: "cash only". Nothing changes until they accept it.')
+
+
+def test_her_words_reach_him_as_her_own_never_as_someone_elses():
+    cmd = bookings.OwnerCommand("yes", 3, tell="bring cash", ask="does he want 2 hours?", extras_no=("anal",))
+    item = bookings.booker_news_item(cmd, at=NOW)
+    assert item["tell"] == "bring cash" and item["extras_no"] == ["anal"] and len(item["id"]) == 32
+    assert item["at"] == NOW.isoformat()
+    line = bookings.booker_news_line(
+        [item, {"tell": "", "ask": "", "extras_ok": ["domination"], "extras_no": ["anal"]}])
+    assert line.startswith(
+        'NEWS TO PASS ON IN THIS REPLY: tell them "bring cash"; these extras are fine for them: domination; '
+        'these extras are NOT on offer for them: anal; ask them "does he want 2 hours?".')
+    assert "first person" in line and "never 'let me check'" in line and "no booker" in line
+    assert bookings.booker_news_line([{"tell": "", "ask": "", "extras_ok": [], "extras_no": []}]) == ""
+
+
+def test_refused_extras_stay_refused():
+    assert bookings.refused_extras_line([]) == ""
+    line = bookings.refused_extras_line(["anal", "rimming"])
+    assert "anal, rimming" in line and "Never offer, agree to or price these" in line
+    assert bookings.extras_joined("anal, Domination", ["domination", " rimming ", ""]) == "anal, Domination, rimming"
+    assert bookings.extras_list(" anal ,, rimming") == ["anal", "rimming"]
+
+
+def test_the_reader_is_told_her_own_wall_clock_whatever_clock_it_is_given():
+    # The runtime's clock is UTC: 09:40 UTC is 12:40 in Riga.
+    prompt = bookings.owner_answer_prompt("them: at 8", "Europe/Riga", now=NOW.astimezone(timezone.utc),
+                                          state_note="", latest="at 8")
+    assert prompt.startswith("Current date and time: Tuesday 2026-10-20 12:40 (Europe/Riga).")
+
+
+def test_the_reader_is_told_how_long_and_what_she_already_decided():
+    note = bookings.owner_state_note([
+        _row(3, customer_name="Khan", minutes=120, extras="anal", extras_ok="domination", extras_no="anal",
+             booker_asked_at=NOW),
+        _row(6, bs.CONFIRMED, start="2026-10-20T12:45", customer_name="Juris", arrived_at=NOW),
+    ])
+    first, second = note.split("\n")
+    assert "(2 hours)" in first and "extras they said yes to: domination" in first
+    assert "extras they refused: anal" in first and "they asked him something" in first
+    assert second.endswith("(1 hour); incall, he says he has arrived")

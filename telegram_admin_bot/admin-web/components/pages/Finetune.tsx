@@ -939,6 +939,7 @@ type OnPatch = (rule: PromptRule, body: RulePatch, done: string) => Promise<bool
 const MAX_RULE_CHARS = 400;
 const RULE_SOURCE: Record<PromptRule["source"], string> = {
   draft_edit: "from an edited draft", correction: "from a correction on a flagged chat", manual: "added by hand",
+  booker: "from the booker's chat",
 };
 const RULE_ENDED: Partial<Record<RuleStatus, string>> = {
   merged: "folded into the prompt", rejected: "rejected", retired: "retired",

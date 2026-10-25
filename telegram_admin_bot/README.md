@@ -644,21 +644,42 @@ the opening hours, the calendar link and AI usage.
   one request is open. When the owner proposes a time, the customer is asked;
   if they take it, it is confirmed (the owner wrote that time).
 - **Her own words** (`booking.owner_free_text`, on): anything that is not a
-  plain command is read by the model against the open bookings and what each
-  customer asked for. *yes I confirm* = YES; *I'm ready in 20 minutes* /
-  *I can meet in 1 hour* = YES when that is by the time he asked (5 min
-  slack), otherwise that time (next 5-minute mark) is proposed to him;
-  *can he come at 15:30?* = a new time; *I'm ready* / *in the taxi* = the
-  outcall steps. Which booking: the request she replies to, the one she
-  names, or the only one waiting. Unclear → she is asked again with the
-  commands; not about a booking → ordinary reply. The answer always says what
-  was done (*#8 confirmed ✅ …*, *#8: … proposed to Khan*). A strict command
-  costs no model call; a *yes* with words after it (*ok in 20 min*) is read
-  by the model, and stays a yes when the model can't be asked. To see how
-  well the real model reads her: `docker compose exec manager python
-  owner_check.py --tenant <id>` (the answers in
-  `replay_scenarios/owner-answers.json`, English, Russian and Latvian; one
-  small model call each on the account's own key; nothing is sent).
+  plain command is read by the model against the open bookings (when, how
+  long, the extras he asked for, what she already decided) and her last 30
+  messages with their times, in any language (EN/RU/LV/ES or a mix). One
+  message can answer several bookings (*yes 3, no 4*, *both fine*), and each
+  answer can carry:
+  - the change: *yes I confirm* = YES; *I'm ready in 20 minutes* / *I can
+    meet in 1 hour* = YES when that is by the time he asked (5 min slack),
+    otherwise that time is proposed to him; *can he come at 15:30?* /
+    *not today, tomorrow any time after 2* = a new time (tomorrow 14:00);
+    *I'm ready* / *in the taxi* = the outcall steps. A yes with a condition
+    (*yes if he comes alone*) is confirmed at once and the condition goes to him.
+  - what goes to him: words to tell him (*tell him to bring cash*, *I'm 10
+    min late*), a question for him (*ask him if he wants 2 hours* — his
+    answers then come to her word for word for 3 hours), the length (*1 hour
+    only*) and extras she accepts or refuses (*no anal*: never offered again
+    in that chat). His next reply says it in her voice, first person, also
+    while his time waits for her; it is kept in `bookings.booker_news` until
+    a reply carries it, so a restart loses nothing.
+  - her own question (*how long does he want?*, *is it outcall?*): answered
+    to her from the booking; nothing goes to him.
+  Remarks about him (*he didn't show last time*) stay private. An instruction
+  for every customer (*from now on cash only*) is saved as a proposed rule
+  for the admin (Finetune → Rules). Which booking: the request she replies
+  to, the one she names, or the only one that fits; several fit → she is
+  asked which one; no usable time → she is asked for it. Her messages are
+  handled one at a time, in order. The answer says back what was understood
+  (*#3 confirmed ✅ for Tue 20 Oct 2026, 21:00–22:00 (1 hour) — Khan will be
+  told. I'll tell him: bring cash; no anal.*). Small talk (*hi*, *thanks*)
+  gets no reply at all: her chat never gets a customer's reply. A strict
+  command costs no model call; a *yes* with words after it (*ok in 20 min*)
+  is read by the model, and stays a yes when the model can't be asked (then
+  anything else gets the commands to use). To see how well the real model
+  reads her: `docker compose exec manager python owner_check.py --tenant
+  <id>` (the answers in `replay_scenarios/owner-answers.json`, English,
+  Russian, Latvian and Spanish; one small model call each on the account's
+  own key; nothing is sent).
 - The customer can change the time before the owner answers (same number),
   ask to move a confirmed booking (the owner answers `YES 7` / `NO 7`), or
   cancel. Every change is in the booking's history and the audit log.

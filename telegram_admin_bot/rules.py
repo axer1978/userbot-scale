@@ -66,6 +66,9 @@ SETTABLE = (PROPOSED, ACTIVE, REJECTED, RETIRED)
 DRAFT_EDIT = "draft_edit"
 CORRECTION = "correction"
 MANUAL = "manual"
+# An instruction for every customer the booker wrote in her booking chat
+# (booking_flow.BookingFlow.save_standing).
+BOOKER = "booker"
 
 INDUSTRY = "industry"
 ACCOUNT = "account"

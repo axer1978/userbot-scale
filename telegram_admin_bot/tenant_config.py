@@ -261,10 +261,11 @@ class Booking(_Strict):
         "Her name: the 'Girl:' line of a booking request to the owner, and updates to the owner start with it "
         "(empty: the account's name). The customer is told it when the booking is confirmed and when they "
         "arrive (empty: no name)."))
-    # Read the owner's answers in her own words too ("I'm ready in 20
-    # minutes", "yes I confirm", "can he come at 15:30?"), against what the
-    # customer asked for: one small model call per message that is not a
-    # plain command, only while a booking is open. Off: commands only.
+    # Read the owner's answers in her own words too ("yes, tell him to bring
+    # cash", "yes 3, no 4", "I'm ready in 20 minutes"), against what each
+    # customer asked for: one small model call per message of hers that is
+    # not a plain command (her chat then never gets a customer's reply).
+    # Off: commands only, and anything else gets the ordinary reply.
     owner_free_text: bool = True
     # Where the e-mail record of each confirmation, change and cancellation
     # goes. Needs SMTP_* in .env; empty = no e-mail.
