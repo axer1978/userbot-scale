@@ -121,6 +121,8 @@ export type MediaItem = {
   send_on_arrival?: boolean;
   // Sent with the first reply in every new chat.
   greeting?: boolean;
+  // The girl she does threesomes with: sent when he asks about one, never as her.
+  threesome?: boolean;
 };
 
 export type OutreachItem = {
@@ -205,7 +207,9 @@ export type AiUsage = {
 
 /* ---------------------------------------------------------------- platform */
 
-export type TreeIndustry = { id: number; name: string };
+// A folder of clients: a top-level industry (parent_id null) or a sub-folder
+// of another folder, any levels deep. path: "escort › Tallinn".
+export type TreeIndustry = { id: number; name: string; parent_id: number | null; path: string };
 export type TreeTenant = { id: number; name: string; industry_id: number; status: string; session_id?: string | null };
 export type PlatformTree = { base_version: number; industries: TreeIndustry[]; tenants: TreeTenant[] };
 
@@ -238,7 +242,7 @@ export type PromptSection = {
 
 export type TenantView = {
   tenant: { id: number; name: string; status: string; session_id?: string | null; industry_id: number };
-  industry: { id: number; name: string; template_version: number };
+  industry: { id: number; name: string; path: string; parent_id: number | null; template_version: number };
   config: ConfigView;
   prompt: {
     sections: PromptSection[];
@@ -254,11 +258,19 @@ export type TenantView = {
 };
 
 export type IndustryView = {
-  industry: { id: number; name: string; template_version: number };
-  sections: { key: string; heading: string; text: string }[];
+  industry: { id: number; name: string; path: string; parent_id: number | null; template_version: number };
+  // The folders above it, the top-level industry first (none for that one).
+  parents: { id: number; name: string }[];
+  // text: what its clients get. In a sub-folder also what it inherits from
+  // the folder above and its own change, if any (as a client's layer).
+  sections: {
+    key: string; heading: string; text: string;
+    inherited?: string; override?: { mode: "override" | "append"; text: string } | null; append_only?: boolean;
+  }[];
   config: ConfigView;
   versions: Version[];
   tenants: { id: number; name: string; prompt_pin_version?: number | null }[];
+  folders: { id: number; name: string }[];
 };
 
 export type BaseView = {
@@ -602,8 +614,13 @@ export type BusinessLayer = {
 };
 
 export type FinetuneIndustry = {
-  industry: { id: number; name: string; template_version: number };
+  industry: { id: number; name: string; path: string; parent_id: number | null; template_version: number };
+  // This folder's own template ("" if it has none).
   template: string;
+  // Without one of its own, a sub-folder runs on the nearest folder's above
+  // it: that template, and the folder's name ("" if it has its own or none).
+  inherited_template: string;
+  template_from: string;
   // The shipped starting point for this industry ("" if none).
   default_template: string;
   placeholders: string[];
@@ -750,8 +767,9 @@ export type PromptRule = {
   section: string;
   text: string;
   // draft_edit: a draft an operator changed before approving it; correction:
-  // a correction on a flagged chat; manual: typed by the admin.
-  source: "draft_edit" | "correction" | "manual";
+  // a correction on a flagged chat; manual: typed by the admin; booker: an
+  // instruction for every customer the booker wrote in her booking chat.
+  source: "draft_edit" | "correction" | "manual" | "booker";
   source_ref: { tenant_id?: number; message_id?: number; example_id?: number };
   status: RuleStatus;
   // The prompt version tag that holds it, once merged ("b1/i1v3/c2").
@@ -936,4 +954,49 @@ export type ChatExampleView = {
   preview: string;
   // Messages written since it was flagged.
   newer: number;
+};
+
+/* ------------------------------------------------ messages to the booker */
+// GET/PUT /api/tenants/{id}/booker-messages (admin) and
+// /api/owner/booker-messages?tenant_id=N (owner): the language of the bot's
+// messages to the person who answers booking requests, and the account's
+// own wording for the main ones (booker_settings.py).
+
+export type BookerLanguage = "en" | "ru" | "lv" | "es";
+
+export type BookerBlank = { name: string; about: string };
+
+export type BookerTemplate = {
+  key: string;
+  label: string;
+  about: string;
+  blanks: BookerBlank[];
+  // The default text in every language.
+  defaults: Record<BookerLanguage, string>;
+  // Blanks added back automatically when the text leaves them out.
+  kept: string[];
+};
+
+export type BookerPreview = {
+  // Each message as the bot would send it, for a made-up booking.
+  preview: Record<string, string>;
+  // What is wrong with a text (that one then shows as its default).
+  problems: Record<string, string[]>;
+};
+
+export type BookerMessagesView = BookerPreview & {
+  language: BookerLanguage;
+  // The account's own texts; a missing one is the default.
+  messages: Record<string, string>;
+  languages: { key: BookerLanguage; label: string }[];
+  templates: BookerTemplate[];
+  max_length: number;
+  revision: number;
+};
+
+export type BookerMessagesBody = {
+  language: BookerLanguage;
+  messages: Record<string, string>;
+  expected_revision?: number;
+  reason?: string;
 };

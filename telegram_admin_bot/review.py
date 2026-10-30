@@ -355,7 +355,7 @@ async def decide_verification(pool: asyncpg.Pool, bus: Any, verification_id: int
                            reason or ("verified" if approve else "rejected"), {"verification_id": row["id"]})
     await _settle_alert(pool, actor)
     await sync_holds(pool, bus)
-    return dict(row)
+    return row
 
 
 async def request_verification(pool: asyncpg.Pool, bus: Any, owner_id: int, *, actor: str,
@@ -612,14 +612,20 @@ async def recheck_tenant(pool: asyncpg.Pool, data_root: Path, tenant_id: int, *,
 
 async def set_industry_review(pool: asyncpg.Pool, bus: Any, industry_id: int, requires_review: bool, *,
                               actor: str) -> dict[str, Any]:
+    """The industry and every folder inside it: a sub-folder is the same
+    trade (tenants.py, folders)."""
     async with pool.acquire() as con, con.transaction():
         row = await con.fetchrow(
-            "UPDATE industries SET requires_review = $2, updated_at = now() WHERE id = $1 "
-            "RETURNING id, name, requires_review",
-            industry_id, requires_review,
-        )
+            "SELECT id, name, requires_review FROM industries WHERE id = $1", industry_id)
         if row is None:
             raise ReviewError("Unknown industry", 404)
+        await con.execute(
+            "WITH RECURSIVE down AS (SELECT id, 0 AS depth FROM industries WHERE id = $1 UNION ALL "
+            "SELECT i.id, d.depth + 1 FROM industries i JOIN down d ON i.parent_id = d.id WHERE d.depth < 50) "
+            "UPDATE industries SET requires_review = $2, updated_at = now() WHERE id IN (SELECT id FROM down)",
+            industry_id, requires_review,
+        )
+        row = {**dict(row), "requires_review": requires_review}
         await audit.record(con, tenant_id=None, actor=actor, event=EVENT_INDUSTRY_REVIEW,
                            reason=f"{row['name']}: review {'required' if requires_review else 'not required'}",
                            payload={"industry_id": industry_id, "requires_review": requires_review})

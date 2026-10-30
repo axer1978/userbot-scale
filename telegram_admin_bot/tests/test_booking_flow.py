@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -19,7 +20,9 @@ import pytest_asyncio
 
 import ai_responder
 import audit
+import booking_flow
 import booking_states as bs
+import bookings
 import media
 import session_runtime
 import tenants
@@ -81,7 +84,9 @@ async def world(app, db, monkeypatch):
         answer, script["owner_answer"] = script["owner_answer"], None
         if isinstance(answer, Exception):
             raise answer
-        return answer
+        # The JSON the model wrote, read as the runtime reads it; nothing
+        # scripted is an answer that can't be used.
+        return bookings.parse_owner_answer(json.dumps(answer)) if answer is not None else None
 
     async def fake_reply(**kw):
         script["calls"] += 1
@@ -199,6 +204,28 @@ async def test_without_her_name_the_owner_sees_the_account_name_and_the_customer
 
     await owner(w, "YES 1")
     assert "Your name is" not in w.script["notes"][-1]
+
+
+async def test_the_accounts_own_confirmed_message_goes_to_the_owner(world):
+    w = world
+    w.app.config["booking"]["booker_messages"] = {"confirmed": "Done #{number}, {customer} {when}"}
+    await customer(w, "tomorrow at 15?", book())
+    # The request has no text of the account's: the default.
+    assert w.sent[OWNER][-1].startswith("📅 Booking request #1\n")
+
+    await owner(w, "YES 1")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1] == "Done #1, Anna Tue 05 Mar 2030, 15:00–16:00"
+
+
+async def test_an_own_message_that_cannot_be_used_falls_back_to_the_default(world):
+    w = world
+    # Stored without the panel's check: a blank the message does not have.
+    w.app.config["booking"]["booker_messages"] = {"confirmed": "Done #{number} {nope}"}
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1] == "#1 confirmed ✅ for Tue 05 Mar 2030, 15:00–16:00 (1 hour) — Anna will be told."
 
 
 async def test_the_address_follows_the_reply_that_says_it_is_confirmed(world):
@@ -611,7 +638,14 @@ async def test_with_the_taxi_steps_off_an_outcall_is_only_confirmed(world):
     sent = len(w.sent[OWNER])
     await customer(w, "https://bolt.eu/ride/abc")
     assert len(w.sent[OWNER]) == sent
-    # READY is then an ordinary message to the account (and gets a reply).
+    # READY is then no command: read as her own words it changes nothing,
+    # she is told so, and her chat gets no reply meant for a customer.
+    w.script["owner_answer"] = said("ready", 1)
+    await owner(w, "READY 1")
+    assert len(w.sent[OWNER]) == sent + 1 and (await only_booking(w))["ready_at"] is None
+    assert w.sent[OWNER][-1] == "#1 stays as it is: Mon 04 Mar 2030, 13:00–14:00."
+    # Without the reading of her words it is an ordinary message (and gets a reply).
+    w.app.config["booking"]["owner_free_text"] = False
     await owner(w, "READY 1")
     assert w.sent[OWNER][-1] == "ok" and (await only_booking(w))["ready_at"] is None
 
@@ -848,7 +882,20 @@ async def test_a_bare_yes_answers_the_only_open_request_or_asks_which(world):
 
 
 def said(action, number=None, start=None, in_minutes=None):
+    """The reader's answer in the shape from before there could be several."""
     return {"action": action, "number": number, "start": start, "in_minutes": in_minutes}
+
+
+def answer(number, action="none", **fields):
+    """One booking's part of a reading (tell_customer, ask_customer,
+    duration_minutes, extras_ok, extras_no, for_me, start, question)."""
+    return {"number": number, "action": action, **fields}
+
+
+def reading(*answers, standing=None):
+    """What the reader found in her message: an answer per booking, and an
+    instruction for every customer. Nothing given: about no booking."""
+    return {"answers": list(answers), "standing": standing}
 
 
 async def test_the_request_shows_the_extras_he_asked_for_and_keeps_them(world):
@@ -870,10 +917,11 @@ async def test_yes_i_confirm_in_her_words_confirms_the_request(world):
     assert w.sent[OWNER][-1].startswith("#1 confirmed")
     [call] = w.script["owner_calls"]
     assert call["latest"] == "yes i confirm" and call["usage_sink"] is not None
-    assert "#1 Anna: the customer asks for Tue 05 Mar 2030, 15:00–16:00" in call["state_note"]
-    assert "extras: domination +50" in call["state_note"]
-    # The model sees her chat, the request in it.
+    assert "#1 Anna: the customer asks for Tue 05 Mar 2030, 15:00–16:00 (1 hour)" in call["state_note"]
+    assert "extras he asked for: domination +50" in call["state_note"]
+    # The model sees her chat, the request in it, and when each message came.
     assert any("Booking request #1" in m["content"] for m in call["history"])
+    assert all(isinstance(m["at"], datetime) for m in call["history"])
 
 
 async def test_ready_in_20_minutes_for_a_now_request_proposes_that_time(world):
@@ -933,32 +981,58 @@ async def test_her_words_answer_the_request_she_replies_to(world):
     assert (await w.store.by_number(1))["state"] == bs.PENDING
 
 
-async def test_unclear_words_get_the_commands_back(world):
+async def test_unclear_words_get_one_short_question(world):
     w = world
     await customer(w, "tomorrow at 15?", book())
     w.script["owner_answer"] = said("unclear")
     await owner(w, "hmm maybe, who is he?")
-    assert w.sent[OWNER][-1].startswith("#1: I did not get that. Reply YES 1 or NO 1")
+    assert w.sent[OWNER][-1] == "#1 Anna, Tue 15:00: yes or no? Or give another time."
     assert (await only_booking(w))["state"] == bs.PENDING
+    # The reader's own question, when it has one.
+    w.script["owner_answer"] = reading(answer(1, "unclear", question="Should he come at 15 or later?"))
+    await owner(w, "hmm, later maybe")
+    assert w.sent[OWNER][-1] == "#1: Should he come at 15 or later?"
 
 
-async def test_words_not_about_a_booking_get_an_ordinary_reply(world):
+async def test_small_talk_from_her_gets_no_reply_at_all(world):
     w = world
     await customer(w, "tomorrow at 15?", book())
-    calls = w.script["calls"]
+    sent, calls = len(w.sent[OWNER]), w.script["calls"]
+    w.script["owner_answer"] = reading()
     await owner(w, "how are you?")
-    assert len(w.script["owner_calls"]) == 1 and w.script["calls"] == calls + 1
+    # Read, about no booking: nothing to her, and never a customer's reply.
+    assert len(w.script["owner_calls"]) == 1
+    assert len(w.sent[OWNER]) == sent and w.script["calls"] == calls
     assert (await only_booking(w))["state"] == bs.PENDING
 
 
-async def test_no_model_call_for_a_command_or_when_nothing_is_open(world):
+async def test_no_model_call_for_a_strict_command(world):
     w = world
-    await owner(w, "hi there")
-    assert w.script["owner_calls"] == []
     await customer(w, "tomorrow at 15?", book())
     await owner(w, "YES 1")
     assert w.script["owner_calls"] == []
     assert (await only_booking(w))["state"] == bs.CONFIRMED
+
+
+async def test_with_nothing_open_her_words_are_still_read_so_nothing_is_lost(world):
+    w = world
+    # Small talk: read, about nothing, so no answer at all.
+    w.script["owner_answer"] = reading()
+    await owner(w, "hi there")
+    assert len(w.script["owner_calls"]) == 1 and OWNER not in w.sent
+    assert w.script["owner_calls"][0]["state_note"] == ""
+    # An instruction for every customer, with no booking open: saved for the admin.
+    w.script["owner_answer"] = reading(standing="from now on cash only")
+    await owner(w, "from now on cash only")
+    assert w.sent[OWNER] == ['Saved for the admin to add to your rules: "from now on cash only". Nothing changes '
+                             "until they accept it."]
+    [rule] = await w.app.pool.fetch("SELECT source, status FROM prompt_rules")
+    assert (rule["source"], rule["status"]) == ("booker", "proposed")
+    # Words for "him" with no booking to put them on: she is asked which booking.
+    w.script["owner_answer"] = reading(answer(None, tell_customer="bring cash"))
+    await owner(w, "tell him to bring cash")
+    assert w.sent[OWNER][-1] == ("Which booking is that about? Send LIST to see them. With your answer: tell him "
+                                 "bring cash.")
 
 
 async def test_a_yes_with_words_stands_when_the_model_cannot_be_asked(world):
@@ -968,6 +1042,31 @@ async def test_a_yes_with_words_stands_when_the_model_cannot_be_asked(world):
     await owner(w, "ok see you")
     assert len(w.script["owner_calls"]) == 1
     assert (await only_booking(w))["state"] == bs.CONFIRMED
+
+
+async def test_words_that_cannot_be_read_get_the_commands_back(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "who is he? from where?")
+    assert w.sent[OWNER][-1] == "I couldn't read that just now — answer with YES 1 / NO 1, or a time like 1 15:30."
+    # An answer from the model that can't be used: the same.
+    sent = len(w.sent[OWNER])
+    await owner(w, "hmm where is he from")
+    assert len(w.sent[OWNER]) == sent + 1 and w.sent[OWNER][-1].startswith("I couldn't read that just now")
+    assert (await only_booking(w))["state"] == bs.PENDING
+
+    # Out of the AI budget: the model is not asked; a loose yes still stands.
+    async def limit():
+        return "the daily token limit is reached"
+
+    monkeypatch.setattr(w.app, "ai_limit_reason", limit)
+    calls = len(w.script["owner_calls"])
+    await owner(w, "who is he?")
+    assert w.sent[OWNER][-1].startswith("I couldn't read that just now")
+    await owner(w, "ok see you")
+    assert len(w.script["owner_calls"]) == calls
+    assert (await only_booking(w))["state"] == bs.CONFIRMED and w.sent[OWNER][-1].startswith("#1 confirmed")
 
 
 async def test_her_words_read_as_ok_in_20_are_not_a_plain_yes(world):
@@ -992,9 +1091,13 @@ async def test_reading_her_words_can_be_switched_off(world):
     w = world
     w.app.config["booking"]["owner_free_text"] = False
     await customer(w, "tomorrow at 15?", book())
+    # As before there was any reading: her words get an ordinary reply...
     await owner(w, "I'm ready in 20 minutes")
-    assert w.script["owner_calls"] == []
+    assert w.script["owner_calls"] == [] and w.sent[OWNER][-1] == "ok"
     assert (await only_booking(w))["proposed_by"] is None
+    # ...and a loose yes is a yes.
+    await owner(w, "ok see you")
+    assert w.script["owner_calls"] == [] and w.sent[OWNER][-1].startswith("#1 confirmed")
 
 
 async def test_her_ready_in_words_starts_the_outcall_taxi_steps(world):
@@ -1054,6 +1157,321 @@ async def test_outside_opening_hours_is_refused(world):
     assert OWNER not in w.sent
     assert "outside opening hours" in w.script["notes"][-1]
     assert "Tue 05 Mar 11:00" in w.script["notes"][-1]
+
+
+# ------------------------------------ her words: every part of her message
+
+
+async def test_several_bookings_in_one_message_get_one_answer(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 17?", book("2030-03-05T17:00"), chat=43)
+    sent = len(w.sent[OWNER])
+    w.script["owner_answer"] = reading(answer(1, "yes"), answer(2, "no"))
+    await owner(w, "yes 1, no 2")
+    assert (await w.store.by_number(1))["state"] == bs.CONFIRMED
+    assert (await w.store.by_number(2))["state"] == bs.CANCELLED
+    # One message back to her, a line for each booking, in her order.
+    assert len(w.sent[OWNER]) == sent + 1
+    assert w.sent[OWNER][-1].split("\n") == [
+        "#1 confirmed ✅ for Tue 05 Mar 2030, 15:00–16:00 (1 hour) — Anna will be told.",
+        "#2 declined ❌ — Anna will be told.",
+    ]
+    # Each customer hears his own news.
+    assert any("has just been CONFIRMED" in note for note in w.script["notes"])
+    assert "NOT available" in w.script["notes"][-1] or "NOT available" in w.script["notes"][-2]
+
+
+async def test_her_messages_are_read_one_at_a_time_in_order(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 17?", book("2030-03-05T17:00"), chat=43)
+    first_read, release, seen = asyncio.Event(), asyncio.Event(), []
+
+    async def slow_reader(**kw):
+        seen.append(kw)
+        if len(seen) == 1:
+            first_read.set()
+            await release.wait()
+            return bookings.parse_owner_answer(json.dumps(reading(answer(1, "yes"))))
+        return bookings.parse_owner_answer(json.dumps(reading(answer(2, "yes"))))
+
+    monkeypatch.setattr(ai_responder, "read_owner_answer", slow_reader)
+    first = asyncio.create_task(w.app.on_incoming(FakeEvent(OWNER, "the first one is fine")))
+    await first_read.wait()
+    second = asyncio.create_task(w.app.on_incoming(FakeEvent(OWNER, "the second one too")))
+    # While her first message is being read, the second waits its turn.
+    done, _ = await asyncio.wait({second}, timeout=0.5)
+    assert not done and len(seen) == 1
+    release.set()
+    await asyncio.gather(first, second)
+    await settle(w.app)
+    # The second was read knowing what the first did.
+    assert [kw["latest"] for kw in seen] == ["the first one is fine", "the second one too"]
+    assert "#1 Anna: confirmed for" in seen[1]["state_note"]
+    assert {(await w.store.by_number(n))["state"] for n in (1, 2)} == {bs.CONFIRMED}
+
+
+async def test_her_words_for_him_go_with_his_next_reply_once(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = reading(answer(1, "yes", tell_customer="bring cash, no cards"))
+    await owner(w, "yes, tell him to bring cash, no cards")
+    b = await only_booking(w)
+    assert b["state"] == bs.CONFIRMED
+    # She sees what he will be told, so she can catch a misreading.
+    assert w.sent[OWNER][-1] == ("#1 confirmed ✅ for Tue 05 Mar 2030, 15:00–16:00 (1 hour) — Anna will be told. "
+                                 "I'll tell him: bring cash, no cards.")
+    # His reply, started by her answer, carries the confirmation and her words.
+    note = w.script["notes"][-1]
+    assert "has just been CONFIRMED" in note
+    assert 'NEWS TO PASS ON IN THIS REPLY: tell them "bring cash, no cards"' in note
+    assert "never 'let me check'" in note
+    # Once: the reply that carried them cleared them.
+    assert b["booker_news"] == []
+    await customer(w, "great, see you")
+    assert "bring cash" not in w.script["notes"][-1]
+
+
+async def test_a_decline_with_words_passes_them_on(world):
+    w = world
+    await customer(w, "today at 15?", book("2030-03-04T15:00"))
+    w.script["owner_answer"] = reading(answer(1, "no", tell_customer="I'm busy today, maybe tomorrow"))
+    await owner(w, "no, tell him I'm busy today, maybe tomorrow")
+    assert (await only_booking(w))["state"] == bs.CANCELLED
+    assert w.sent[OWNER][-1] == "#1 declined ❌ — Anna will be told. I'll tell him: I'm busy today, maybe tomorrow."
+    note = w.script["notes"][-1]
+    assert "NOT available" in note and 'tell them "I\'m busy today, maybe tomorrow"' in note
+
+
+async def test_her_words_wait_for_his_next_reply_across_a_restart(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    # His chat is paused, so no reply can carry her words yet.
+    await w.db.set_paused(CUSTOMER, True)
+    calls = w.script["calls"]
+    w.script["owner_answer"] = reading(answer(1, "none", tell_customer="I'm 10 min late"))
+    await owner(w, "tell him I'm 10 min late")
+    # She is told it waits (and would be dropped if it can't go in time).
+    assert w.sent[OWNER][-1] == "#1 Anna: I'll tell him: I'm 10 min late. " + bookings.WORDS_WAIT
+    assert w.script["calls"] == calls
+
+    # A restarted process: the same database, a flow with nothing in memory.
+    async def owner_chat():
+        return OWNER
+
+    w.app.flow = booking_flow.BookingFlow(w.app)
+    w.app.flow.provider_chat_id = owner_chat
+    w.app.flow.calendar_client = lambda: None
+    await w.db.set_paused(CUSTOMER, False)
+    await customer(w, "ok?")
+    assert 'tell them "I\'m 10 min late"' in w.script["notes"][-1]
+    assert (await only_booking(w))["booker_news"] == []
+
+
+async def test_her_question_goes_to_him_and_his_answers_come_back_until_she_acts(world, his_photos):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = reading(answer(1, "none", ask_customer="does he want 2 hours"))
+    await owner(w, "ask him if he wants 2 hours")
+    assert w.sent[OWNER][-1] == "#1 Anna: I'll ask him: does he want 2 hours? His answer will come here."
+    assert 'ask them "does he want 2 hours"' in w.script["notes"][-1]
+    assert (await only_booking(w))["booker_asked_at"] == NOW
+
+    # What he writes goes on to her word for word, photos as photos; he is
+    # answered as usual.
+    calls = w.script["calls"]
+    await customer(w, "yes 2 hours please")
+    assert w.sent[OWNER][-1] == "💬 #1 Anna (@anna):\nyes 2 hours please"
+    await customer(w, "me", photo=True)
+    assert his_photos["files"] == [OWNER] and w.sent[OWNER][-1] == "📷 #1 Anna (@anna) sent a photo:\nme"
+    assert any(m["text"] == "me\n[photo]" for m in await w.db.get_messages(CUSTOMER))
+    assert w.script["calls"] == calls + 2
+
+    # Her yes ends it: what he writes after that stays in his chat.
+    await owner(w, "YES 1")
+    assert (await only_booking(w))["booker_asked_at"] is None
+    sent = len(w.sent[OWNER])
+    await customer(w, "see you then")
+    assert len(w.sent[OWNER]) == sent
+
+
+async def test_his_answers_stop_going_to_her_after_three_hours(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = reading(answer(1, "none", ask_customer="is he coming alone"))
+    await owner(w, "ask him if he comes alone")
+    w.clock["now"] = NOW + timedelta(hours=2, minutes=59)
+    await customer(w, "yes alone")
+    assert w.sent[OWNER][-1] == "💬 #1 Anna (@anna):\nyes alone"
+    sent = len(w.sent[OWNER])
+    w.clock["now"] = NOW + timedelta(hours=3)
+    await customer(w, "so?")
+    assert len(w.sent[OWNER]) == sent
+
+
+async def test_her_question_about_a_booking_is_answered_to_her_alone(world):
+    w = world
+    await customer(w, "tomorrow at 15 at my hotel, with domination?",
+                   book(extras="domination +50", outcall=True, notes="Hotel Bellevue"))
+    calls = w.script["calls"]
+    w.script["owner_answer"] = reading(answer(1, "none", for_me=True))
+    await owner(w, "what extras did he want? at his place?")
+    facts = w.sent[OWNER][-1].split("\n")
+    assert facts[:3] == ["#1 Anna (@anna) — Tue 05 Mar 2030, 15:00–16:00 (1 hour), outcall.",
+                         "Waiting for your answer.", "Extras he asked for: domination +50."]
+    # Nothing to him.
+    assert w.script["calls"] == calls and (await only_booking(w))["booker_news"] == []
+
+
+async def test_her_remarks_about_him_stay_with_her(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    # The reader keeps "he's weird, he didn't show last time" out of
+    # everything that goes to him.
+    w.script["owner_answer"] = reading(answer(1, "yes"))
+    await owner(w, "ok yes, but he is weird, he didn't show last time")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert "I'll tell him" not in w.sent[OWNER][-1]
+    note = w.script["notes"][-1]
+    assert "has just been CONFIRMED" in note and "tell them" not in note and "weird" not in note
+
+
+async def test_a_yes_for_a_shorter_time_confirms_that_length(world):
+    w = world
+    await customer(w, "tomorrow at 15 for 2 hours?", book(duration_minutes=120))
+    w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=60))
+    await owner(w, "yes but only 1 hour")
+    b = await only_booking(w)
+    assert b["state"] == bs.CONFIRMED and b["ends_at"].astimezone(RIGA).strftime("%H:%M") == "16:00"
+    assert b["blocked_until"] == b["ends_at"]
+    assert w.sent[OWNER][-1] == "#1 confirmed ✅ for Tue 05 Mar 2030, 15:00–16:00 (1 hour) — Anna will be told."
+    assert "the appointment on Tue 05 Mar 2030, 15:00–16:00 has just been CONFIRMED" in w.script["notes"][-1]
+
+
+async def test_a_yes_for_longer_than_is_free_confirms_nothing(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 16?", book("2030-03-05T16:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=120, tell_customer="bring cash"))
+    await owner(w, "yes 1, 2 hours, tell him bring cash")
+    b = await w.store.by_number(1)
+    assert b["state"] == bs.PENDING and b["booker_news"] == []
+    assert w.sent[OWNER][-1] == ("#1: Tue 05 Mar 2030, 15:00–17:00 (2 hours) is not possible (conflict). Nothing "
+                                 "confirmed; YES 1 takes it as he asked: Tue 05 Mar 2030, 15:00–16:00.")
+
+
+async def test_she_makes_a_confirmed_booking_longer_or_shorter(world):
+    w = world
+    await confirmed_booking(w)
+    w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=120))
+    await owner(w, "he can stay 2 hours")
+    b = await only_booking(w)
+    assert b["ends_at"].astimezone(RIGA).hour == 17 and b["blocked_until"] == b["ends_at"]
+    assert w.sent[OWNER][-1] == "#1 now Tue 05 Mar 2030, 15:00–17:00 (2 hours) ✅ — Anna will be told."
+    assert "now lasts a different time: it is Tue 05 Mar 2030, 15:00–17:00" in w.script["notes"][-1]
+    assert [e["action"] for e in await w.store.events(b["id"])][-1] == "change_length"
+
+    # Longer than is free: it stays.
+    await customer(w, "me at 18?", book("2030-03-05T18:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=240))
+    await owner(w, "make #1 4 hours")
+    assert w.sent[OWNER][-1] == ("#1: Tue 05 Mar 2030, 15:00–19:00 (4 hours) is not possible (conflict). It stays "
+                                 "Tue 05 Mar 2030, 15:00–17:00.")
+    # Shorter is always free.
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=30))
+    await owner(w, "only 30 min for #1 actually")
+    assert (await w.store.by_number(1))["ends_at"].astimezone(RIGA).strftime("%H:%M") == "15:30"
+
+
+async def test_an_extra_she_refuses_is_never_offered_to_him_again(world):
+    w = world
+    await customer(w, "tomorrow at 15, with anal?", book(extras="anal +100"))
+    w.script["owner_answer"] = reading(answer(1, "yes", extras_no=["anal"]))
+    await owner(w, "yes but no anal")
+    assert w.sent[OWNER][-1].endswith("— Anna will be told. I'll tell him: no anal.")
+    note = w.script["notes"][-1]
+    assert "these extras are NOT on offer for them: anal" in note
+    assert "Extras NOT on offer for them, whatever your lists say: anal." in note
+    b = await only_booking(w)
+    assert (b["extras_no"], b["booker_news"]) == ("anal", [])
+
+    # Every later reply in his chat knows; the news itself went once.
+    await customer(w, "what about anal then?")
+    assert "Extras NOT on offer for them" in w.script["notes"][-1]
+    assert "NEWS TO PASS ON" not in w.script["notes"][-1]
+    # Also for a new booking of his, after this one is over.
+    await customer(w, "can't come, sorry", {"intent": "cancel"})
+    await customer(w, "thursday at 15?", book("2030-03-07T15:00"))
+    assert "Extras NOT on offer for them, whatever your lists say: anal." in w.script["notes"][-1]
+    # Never in anyone else's chat.
+    await customer(w, "hi", chat=43)
+    assert "NOT on offer" not in w.script["notes"][-1]
+
+
+async def test_with_quiet_until_answered_her_words_still_go_while_his_time_waits(world):
+    w = world
+    w.app.config["booking"]["quiet_until_answered"] = True
+    w.script["reply"] = "hi love, prices"
+    await customer(w, "hi")
+    await customer(w, "tomorrow at 15?", book())
+    assert w.sent[CUSTOMER] == ["hi love, prices"]
+
+    w.script["owner_answer"] = reading(answer(1, "none", tell_customer="I'm in the shower, 10 minutes"))
+    w.script["reply"] = "give me 10 min love, I'm in the shower"
+    await owner(w, "tell him I'm in the shower, 10 min")
+    assert w.sent[CUSTOMER][-1] == "give me 10 min love, I'm in the shower"
+    note = w.script["notes"][-1]
+    assert 'tell them "I\'m in the shower, 10 minutes"' in note and "Say nothing about that time now" in note
+    assert (await only_booking(w))["state"] == bs.PENDING
+
+    # His next message waits for her answer again.
+    calls = w.script["calls"]
+    await customer(w, "??")
+    assert w.script["calls"] == calls
+
+
+async def test_a_time_she_names_with_a_length_is_proposed_for_that_long(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = reading(answer(1, "time", start="2030-03-05T18:00", duration_minutes=30))
+    await owner(w, "not at 15, 18:00 for half an hour")
+    b = await only_booking(w)
+    assert b["proposed_by"] == bs.OWNER
+    assert [t.astimezone(RIGA).strftime("%H:%M") for t in (b["proposed_starts_at"], b["proposed_ends_at"])] == \
+        ["18:00", "18:30"]
+
+
+async def test_words_that_fit_two_requests_get_asked_which_one(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 17?", book("2030-03-05T17:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(None, "yes"))
+    await owner(w, "ok fine")
+    assert w.sent[OWNER][-1] == "Which one: #1 Anna, Tue 15:00, or #2 Anna, Tue 17:00? Answer with the number."
+    assert {(await w.store.by_number(n))["state"] for n in (1, 2)} == {bs.PENDING}
+
+
+async def test_a_standing_instruction_is_proposed_as_a_rule(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = reading(standing="from now on cash only")
+    await owner(w, "from now on cash only, for everyone")
+    assert w.sent[OWNER][-1] == ('Saved for the admin to add to your rules: "from now on cash only". Nothing '
+                                 "changes until they accept it.")
+    [rule] = await w.app.pool.fetch("SELECT * FROM prompt_rules")
+    assert (rule["source"], rule["status"], rule["created_by"], rule["tenant_id"], rule["section"], rule["text"]) == \
+        ("booker", "proposed", "booker", w.app.tenant_id, "booking", "from now on cash only")
+    assert json.loads(rule["source_ref"]) == {"tenant_id": w.app.tenant_id, "chat_id": OWNER}
+    assert (await only_booking(w))["state"] == bs.PENDING
+
+    # One that can't be saved is told to her, and the rest still happens.
+    w.script["owner_answer"] = reading(answer(1, "yes"), standing="cash")
+    await owner(w, "yes. and cash")
+    assert w.sent[OWNER][-1].split("\n")[1] == \
+        'I couldn\'t save "cash" for the admin just now — please tell them yourself.'
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
 
 
 # ------------------------------------------------- cancel, move, waitlist
@@ -1453,9 +1871,763 @@ async def test_the_no_reply_instruction_lets_the_model_stay_silent(world, pg_poo
     assert any(e["event"] == audit.REPLY_SKIPPED for e in await audit.list_events(pg_pool, tenant_id=w.app.tenant_id))
 
 
-async def test_the_owners_ordinary_message_gets_an_ordinary_reply(world):
+async def test_the_owners_ordinary_message_gets_no_customer_reply(world):
     w = world
+    # Her chat is for bookings: "hi" (read as about nothing) gets nothing,
+    # a command its answer.
+    w.script["owner_answer"] = reading()
     await owner(w, "hi, how is it going?")
-    assert w.sent[OWNER] == ["ok"]
+    assert OWNER not in w.sent and w.script["calls"] == 0
     await owner(w, "LIST")
-    assert w.sent[OWNER][-1] == "Nothing is waiting for your answer right now."
+    assert w.sent[OWNER] == ["Nothing is waiting for your answer right now."]
+    # Without the reading of her words, it is answered like anyone's.
+    w.app.config["booking"]["owner_free_text"] = False
+    await owner(w, "hi, how is it going?")
+    assert w.sent[OWNER][-1] == "ok"
+
+
+# ------------------------------------- nothing she writes is lost (review)
+
+
+async def test_her_length_and_refusal_survive_until_her_plain_yes(world):
+    w = world
+    await customer(w, "tomorrow at 15 for 2 hours, with anal?", book(duration_minutes=120, extras="anal"))
+    # "max 1 hour and no anal": not a yes yet, so she is asked — with what
+    # she said repeated — and the refusal holds at once.
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=60, extras_no=["anal"]))
+    await owner(w, "max 1 hour and no anal")
+    assert w.sent[OWNER][-1] == ("#1 Anna, Tue 15:00: yes or no? Or give another time. With your answer: "
+                                 "for 1 hour; no anal.")
+    held = await only_booking(w)
+    assert (held["state"], held["extras_no"]) == (bs.PENDING, "anal")
+    # Her plain YES answers that question: it is read together with it.
+    w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=60, extras_no=["anal"]))
+    await owner(w, "YES 1")
+    assert len(w.script["owner_calls"]) == 2
+    b = await only_booking(w)
+    assert (b["state"], b["ends_at"] - b["starts_at"], b["extras_no"]) == (bs.CONFIRMED, timedelta(hours=1), "anal")
+    assert w.sent[OWNER][-1].endswith("I'll tell him: no anal.")
+    # The question is answered: the next plain command costs no model call.
+    await customer(w, "and next week?", book("2030-03-11T15:00"), chat=43)
+    await owner(w, "YES 2")
+    assert len(w.script["owner_calls"]) == 2
+
+
+async def test_a_plain_yes_after_a_question_still_counts_when_her_words_cannot_be_read(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 17?", book("2030-03-05T17:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(None, "yes", tell_customer="bring cash"))
+    await owner(w, "yes, tell him to bring cash")
+    assert w.sent[OWNER][-1].startswith("Which one: #1 Anna, Tue 15:00, or #2 Anna, Tue 17:00?")
+    assert w.sent[OWNER][-1].endswith("With your answer: tell him bring cash.")
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "YES 1")
+    assert (await w.store.by_number(1))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1].split("\n")[-1] == bookings.READ_EARLIER_FAILED
+    assert (await w.store.by_number(1))["booker_news"] == []
+
+
+async def test_words_for_the_other_one_never_land_on_the_quoted_request(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 17?", book("2030-03-05T17:00"), chat=43)
+    first = await w.store.by_number(1)
+    w.script["owner_answer"] = reading(answer(1, "yes"), answer(None, "none", tell_customer="I'm 10 min late"))
+    await owner(w, "yes. tell the other one I'm 10 min late", reply_to=first["provider_message_id"])
+    assert (await w.store.by_number(1))["state"] == bs.CONFIRMED
+    assert (await w.store.by_number(1))["booker_news"] == [] and (await w.store.by_number(2))["booker_news"] == []
+    assert not any("10 min late" in note for note in w.script["notes"])
+    assert w.sent[OWNER][-1].split("\n")[-1].startswith("Which one: #1 Anna")
+
+
+async def test_a_cancel_with_words_passes_the_words_on(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    w.script["owner_answer"] = reading(answer(1, "cancel", tell_customer="sorry, I'm sick"))
+    await owner(w, "CANCEL 1 tell him sorry I'm sick")
+    b = await only_booking(w)
+    assert b["state"] == bs.CANCELLED and len(w.script["owner_calls"]) == 1
+    assert w.sent[OWNER][-1].endswith("I'll tell him: sorry, I'm sick.")
+    assert 'tell them "sorry, I\'m sick"' in w.script["notes"][-1]
+
+
+async def test_a_cancel_with_words_stands_when_they_cannot_be_read_and_she_is_told(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "CANCEL 1 tell him sorry I'm sick")
+    assert (await only_booking(w))["state"] == bs.CANCELLED
+    assert w.sent[OWNER][-1].split("\n")[-1] == bookings.READ_REST_FAILED
+
+
+@pytest.mark.parametrize("text, confirmed", [("yes, see you", True), ("yes, no anal", False),
+                                             ("ok, not today", False), ("claro que no", False),
+                                             ("yes 1 at 18:00", False)])
+async def test_when_her_words_cannot_be_read_a_yes_stands_only_when_nothing_can_turn_it(world, text, confirmed):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, text)
+    state = (await only_booking(w))["state"]
+    assert (state == bs.CONFIRMED) is confirmed
+    if confirmed:
+        assert w.sent[OWNER][-1].split("\n")[-1] == bookings.READ_REST_FAILED
+    else:
+        assert state == bs.PENDING and w.sent[OWNER][-1] == bookings.read_failed([1])
+
+
+async def test_a_loose_no_without_its_number_never_declines_unread(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "no problem babe")
+    assert (await only_booking(w))["state"] == bs.PENDING
+    assert w.sent[OWNER][-1] == bookings.read_failed([1])
+
+
+async def test_a_loose_yes_or_no_read_as_nothing_gets_her_a_question_while_a_request_waits(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = reading()
+    await owner(w, "no problem babe")
+    assert (await only_booking(w))["state"] == bs.PENDING
+    assert w.sent[OWNER][-1] == "#1 Anna, Tue 15:00: yes or no? Or give another time."
+
+
+async def test_a_number_she_typed_that_the_reading_misses_is_asked_about(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 17?", book("2030-03-05T17:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(2, "yes", tell_customer="bring cash"))
+    await owner(w, "YES 1 and tell him to bring cash")
+    assert (await w.store.by_number(1))["state"] == bs.PENDING
+    assert (await w.store.by_number(2))["state"] == bs.PENDING
+    assert w.sent[OWNER][-1] == "#1 Anna, Tue 15:00: yes or no? Or give another time."
+
+
+async def test_the_models_other_word_for_yes_still_confirms(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = {"answers": [{"number": 1, "action": "confirm"}], "standing": None}
+    await owner(w, "ok thanks, confirm")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+
+
+async def test_his_entrance_photo_while_arriving_goes_to_the_arrival_check_not_to_her(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = reading(answer(1, "yes", ask_customer="is he coming alone"))
+    await owner(w, "yes, ask him if he comes alone")
+    to_her = []
+
+    async def passed(booking, photo, caption, *, proof=False):
+        to_her.append(booking["number"])
+        return True
+
+    monkeypatch.setattr(w.app.flow, "pass_on_photo", passed)
+    booking_id = (await only_booking(w))["id"]
+    # Three hours before: his photo is his answer to her.
+    w.clock["now"] = datetime(2030, 3, 5, 12, 0, tzinfo=RIGA)
+    await w.store.set_fields(booking_id, booker_asked_at=w.clock["now"])
+    assert await w.app.flow.pass_on(CUSTOMER, "me", photo=object()) == "[photo]"
+    assert to_her == [1]
+    # At the door with no photo check set up: still his answer to her.
+    w.clock["now"] = datetime(2030, 3, 5, 14, 55, tzinfo=RIGA)
+    await w.store.set_fields(booking_id, booker_asked_at=w.clock["now"])
+    assert await w.app.flow.pass_on(CUSTOMER, "", photo=object()) == "[photo]"
+    assert to_her == [1, 1]
+    # With the check set up, it is the entrance photo for the way in.
+    monkeypatch.setattr(w.app.flow, "photo_check_ready", lambda: True)
+    assert await w.app.flow.pass_on(CUSTOMER, "", photo=object()) is None
+    assert to_her == [1, 1]
+
+
+async def test_a_photo_that_did_not_reach_her_is_not_stored_as_passed_on(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = reading(answer(1, "none", ask_customer="send a photo"))
+    await owner(w, "ask him for a photo first")
+
+    async def failed(booking, photo, caption, *, proof=False):
+        return False
+
+    monkeypatch.setattr(w.app.flow, "pass_on_photo", failed)
+    assert await w.app.flow.pass_on(CUSTOMER, "", photo=object()) is None
+
+
+async def test_a_panel_decision_ends_her_question_to_him(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = reading(answer(1, "none", ask_customer="is he coming alone"))
+    await owner(w, "ask him if he comes alone")
+    b = await only_booking(w)
+    assert b["booker_asked_at"] is not None
+    await w.app.flow.admin_action(b["id"], "confirm", {})
+    assert (await only_booking(w))["booker_asked_at"] is None
+
+
+# ------------------------------------------- round 2: what she quotes, says, means
+
+
+async def _asked_about_length(w):
+    """#1 (chat 42) confirmed, #2 (chat 43) waiting; she asked #1 about 2
+    hours and his answer came to her. Returns the id of that message."""
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    await customer(w, "and me at 18?", book("2030-03-05T18:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(1, "none", ask_customer="does he want 2 hours"))
+    await owner(w, "ask the 15:00 guy if he wants 2 hours")
+    await customer(w, "yes 2 hours please")
+    assert w.sent[OWNER][-1] == "💬 #1 Anna (@anna):\nyes 2 hours please"
+    return next(m for m in reversed(await w.db.get_messages(OWNER)) if m["direction"] == "out")
+
+
+async def test_ok_to_his_answer_she_quoted_is_about_his_booking_never_another_request(world):
+    w = world
+    his_answer = await _asked_about_length(w)
+    calls = len(w.script["owner_calls"])
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=120))
+    await owner(w, "ok", reply_to=his_answer["telegram_id"])
+    # Read with the model (not a strict yes to the only waiting request).
+    assert len(w.script["owner_calls"]) == calls + 1
+    assert w.script["owner_calls"][-1]["replying_to"] == 1
+    assert (await w.store.by_number(2))["state"] == bs.PENDING
+    first = await w.store.by_number(1)
+    assert first["ends_at"] - first["starts_at"] == timedelta(hours=2)
+
+
+async def test_a_quoted_ok_never_confirms_another_request_when_her_words_cannot_be_read(world):
+    w = world
+    his_answer = await _asked_about_length(w)
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "ok", reply_to=his_answer["telegram_id"])
+    assert (await w.store.by_number(2))["state"] == bs.PENDING
+
+
+async def test_a_bare_ok_right_after_his_answer_is_read_not_taken_for_the_waiting_request(world):
+    w = world
+    await _asked_about_length(w)
+    calls = len(w.script["owner_calls"])
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=120))
+    await owner(w, "ok")
+    assert len(w.script["owner_calls"]) == calls + 1
+    assert (await w.store.by_number(2))["state"] == bs.PENDING
+
+
+async def test_a_bare_yes_right_after_the_request_costs_no_model_call(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "yes")
+    assert w.script["owner_calls"] == [] and (await only_booking(w))["state"] == bs.CONFIRMED
+
+
+async def test_a_length_after_yes_is_her_length_not_booking_number_two(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 18?", book("2030-03-05T18:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=120))
+    await owner(w, "yes 2 hours", reply_to=(await w.store.by_number(1))["provider_message_id"])
+    first, second = await w.store.by_number(1), await w.store.by_number(2)
+    assert first["state"] == bs.CONFIRMED and first["ends_at"] - first["starts_at"] == timedelta(hours=2)
+    assert second["state"] == bs.PENDING
+
+
+@pytest.mark.parametrize("text", ["yes at 9", "ok 9pm", "yes but at 21", "ok, half an hour later",
+                                  "да, через полчаса"])
+async def test_model_down_a_yes_naming_another_time_never_confirms_his(world, text):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, text)
+    assert (await only_booking(w))["state"] == bs.PENDING
+    assert w.sent[OWNER][-1] == bookings.read_failed([1])
+
+
+async def test_model_down_a_no_with_another_time_after_it_never_declines(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "NO 1 tomorrow at 18:00 instead")
+    assert (await only_booking(w))["state"] == bs.PENDING
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "NO 1 sorry not today")
+    assert (await only_booking(w))["state"] == bs.CANCELLED
+
+
+async def test_the_model_answering_nonsense_never_lets_a_loose_yes_stand(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.script["owner_answer"] = None  # an answer that can't be used
+    await owner(w, "ok see you")
+    assert (await only_booking(w))["state"] == bs.PENDING
+    assert w.sent[OWNER][-1] == bookings.read_failed([1])
+
+
+async def test_model_down_with_nothing_open_she_is_told_nothing_was_done(world):
+    w = world
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "from now on cash only")
+    assert w.sent[OWNER] == [bookings.READ_NOTHING_FAILED]
+
+
+async def test_a_slow_model_never_holds_her_messages_past_the_budget(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    monkeypatch.setattr(booking_flow, "OWNER_READ_BUDGET", 0.05)
+    never = asyncio.Event()
+
+    async def stuck(**kw):
+        w.script["owner_calls"].append(kw)
+        await never.wait()
+
+    monkeypatch.setattr(ai_responder, "read_owner_answer", stuck)
+    await owner(w, "ok see you")
+    # Read as "down": the loose yes stands, and she is told the rest did nothing.
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1].split("\n")[-1] == bookings.READ_REST_FAILED
+
+
+async def test_her_later_messages_are_not_in_the_reading_of_an_earlier_one(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    first = await w.db.record_message(OWNER, "in", "received", "fine by me")
+    await w.db.record_message(OWNER, "in", "received", "and tell him to bring cash")
+    history = await w.db.get_history_for_ai(OWNER, limit=30, upto_id=first["id"])
+    assert [m["content"] for m in history if m["role"] == "user"][-1] == "fine by me"
+    # The bot's own lines after it stay.
+    await w.db.record_message(OWNER, "out", "sent", "#1 confirmed")
+    history = await w.db.get_history_for_ai(OWNER, limit=30, upto_id=first["id"])
+    assert history[-1] == {"role": "assistant", "content": "#1 confirmed"}
+
+
+async def test_her_question_after_he_cancelled_still_brings_his_answer(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    await customer(w, "sorry I cancel", {"intent": "cancel"})
+    assert (await only_booking(w))["state"] == bs.CANCELLED
+    w.script["owner_answer"] = reading(answer(1, "none", ask_customer="why did you cancel"))
+    await owner(w, "ask him why he cancelled")
+    assert w.sent[OWNER][-1] == "#1 Anna: I'll ask him: why did you cancel? His answer will come here."
+    await customer(w, "my wife came home")
+    assert w.sent[OWNER][-1] == "💬 #1 Anna (@anna):\nmy wife came home"
+
+
+async def test_her_words_no_reply_carried_in_time_are_dropped_and_she_is_told(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    await w.db.set_paused(CUSTOMER, True)
+    w.script["owner_answer"] = reading(answer(1, "none", tell_customer="I'm in the shower, 10 min"))
+    await owner(w, "tell him I'm in the shower, 10 min")
+    assert w.sent[OWNER][-1].endswith(bookings.WORDS_WAIT)
+    # A day later, never told: dropped, and she hears which words.
+    w.clock["now"] = NOW + timedelta(hours=25)
+    await w.app.flow.tick()
+    assert (await only_booking(w))["booker_news"] == []
+    assert w.sent[OWNER][-1] == ('#1 Anna: this did not reach him in time and was dropped: "I\'m in the shower, '
+                                 '10 min". Tell him yourself if it still matters.')
+    await w.db.set_paused(CUSTOMER, False)
+    await customer(w, "hello?")
+    assert "shower" not in w.script["notes"][-1]
+
+
+async def test_the_same_words_twice_go_to_him_once(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    await w.db.set_paused(CUSTOMER, True)
+    for _ in range(2):
+        w.script["owner_answer"] = reading(answer(1, "none", tell_customer="bring cash"))
+        await owner(w, "tell him to bring cash")
+    assert len((await only_booking(w))["booker_news"]) == 1
+
+
+async def test_a_question_stays_open_through_small_talk_until_she_answers_it(world):
+    w = world
+    await customer(w, "tomorrow at 15 for 2 hours?", book(duration_minutes=120))
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=60, tell_customer="bring cash"))
+    await owner(w, "max 1 hour, and tell him to bring cash")
+    w.script["owner_answer"] = reading()
+    await owner(w, "brb")
+    # Her plain YES 1 still answers the question: read with what she said.
+    w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=60, tell_customer="bring cash"))
+    await owner(w, "YES 1")
+    b = await only_booking(w)
+    assert b["state"] == bs.CONFIRMED and b["ends_at"] - b["starts_at"] == timedelta(hours=1)
+    assert w.sent[OWNER][-1].endswith("I'll tell him: bring cash.")
+
+
+async def test_her_typed_no_answering_the_question_never_becomes_a_yes(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 18?", book("2030-03-05T18:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(None, "yes", tell_customer="bring cash"))
+    await owner(w, "yes, tell him to bring cash")
+    assert w.sent[OWNER][-1].startswith("Which one:")
+    # The reading (with her earlier yes) says yes #2; she typed NO 2.
+    w.script["owner_answer"] = reading(answer(2, "yes", tell_customer="bring cash"))
+    await owner(w, "NO 2")
+    assert (await w.store.by_number(2))["state"] == bs.CANCELLED
+    assert (await w.store.by_number(2))["booker_news"] == []
+    assert w.sent[OWNER][-1].split("\n")[-1] == bookings.EARLIER_NOT_APPLIED
+
+
+async def test_the_yes_the_bot_offers_after_a_length_that_is_not_free_is_taken_as_typed(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 16?", book("2030-03-05T16:00"), chat=43)
+    await owner(w, "YES 2")
+    w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=120))
+    await owner(w, "yes, 2 hours", reply_to=(await w.store.by_number(1))["provider_message_id"])
+    assert "Nothing confirmed; YES 1 takes it as he asked" in w.sent[OWNER][-1]
+    calls = len(w.script["owner_calls"])
+    await owner(w, "YES 1")
+    assert len(w.script["owner_calls"]) == calls  # not read again: no loop
+    assert (await w.store.by_number(1))["state"] == bs.CONFIRMED
+
+
+async def test_a_length_change_keeps_the_confirmation_he_has_not_heard_yet(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await w.db.set_paused(CUSTOMER, True)
+    await owner(w, "YES 1")
+    assert (await only_booking(w))["customer_notice"] == bs.NOTICE_CONFIRMED
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=120))
+    await owner(w, "make it 2 hours")
+    b = await only_booking(w)
+    assert b["customer_notice"] == bs.NOTICE_CONFIRMED and b["ends_at"] - b["starts_at"] == timedelta(hours=2)
+
+
+async def test_her_words_go_even_when_the_longer_length_is_not_free(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    await customer(w, "and me at 16?", book("2030-03-05T16:00"), chat=43)
+    await owner(w, "YES 2")
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=120, tell_customer="bring cash"))
+    await owner(w, "make it 2 hours, and tell him to bring cash")
+    line = w.sent[OWNER][-1]
+    assert "is not possible" in line and line.endswith("I'll tell him: bring cash.")
+    assert 'tell them "bring cash"' in w.script["notes"][-1]
+    assert (await w.store.by_number(1))["ends_at"].astimezone(RIGA).hour == 16
+
+
+async def test_a_longer_length_into_another_bookings_buffer_is_refused_by_the_check(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    first = await only_booking(w)
+    await w.store.set_fields(first["id"], blocked_until=first["ends_at"] + timedelta(minutes=15))
+    await customer(w, "and me at 16:20?", book("2030-03-05T16:20"), chat=43)
+    await owner(w, "YES 2")
+    # 15:00-16:10 plus its 15 min buffer runs into 16:20.
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=70))
+    await owner(w, "make it 70 min")
+    assert "is not possible (conflict)" in w.sent[OWNER][-1]
+
+
+async def test_a_notice_set_while_his_reply_went_out_is_not_cleared_by_it(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    b = await only_booking(w)
+    await w.store.set_fields(b["id"], customer_notice=bs.NOTICE_CONFIRMED)
+    told = {key: b.get(key) for key in ("starts_at", "ends_at", "proposed_starts_at", "proposed_ends_at")}
+    await w.store.clear_notice(b["id"], {**told, "customer_notice": bs.NOTICE_REQUESTED})
+    assert (await only_booking(w))["customer_notice"] == bs.NOTICE_CONFIRMED
+    # The same notice, but about other times than the reply told ("make it
+    # 2 hours" while "it's booked" went out): kept for the next reply.
+    await w.store.set_fields(b["id"], ends_at=b["ends_at"] + timedelta(hours=1),
+                             blocked_until=b["blocked_until"] + timedelta(hours=1))
+    await w.store.clear_notice(b["id"], {**told, "customer_notice": bs.NOTICE_CONFIRMED})
+    assert (await only_booking(w))["customer_notice"] == bs.NOTICE_CONFIRMED
+    await w.store.clear_notice(b["id"], {**told, "customer_notice": bs.NOTICE_CONFIRMED,
+                                         "ends_at": b["ends_at"] + timedelta(hours=1)})
+    assert (await only_booking(w))["customer_notice"] is None
+
+
+async def test_a_new_reply_waits_for_one_still_going_out(world):
+    w = world
+    w.app.begin_sending(CUSTOMER)
+    await w.app.on_incoming(FakeEvent(CUSTOMER, "hi"))
+    tasks = [t for t in w.app.draft_tasks.values() if not t.done()]
+    done, _ = await asyncio.wait(tasks, timeout=0.2)
+    assert not done and CUSTOMER not in w.sent
+    w.app.end_sending(CUSTOMER)
+    await settle(w.app)
+    assert w.sent[CUSTOMER] == ["ok"]
+
+
+async def test_ready_with_a_length_does_both(world):
+    w = world
+    await confirmed_outcall(w)
+    w.script["owner_answer"] = reading(answer(1, "ready", duration_minutes=120))
+    await owner(w, "ready, and make it 2 hours")
+    b = await only_booking(w)
+    assert b["ready_at"] is not None and b["ends_at"] - b["starts_at"] == timedelta(hours=2)
+
+
+# ------------------------------------------- round 3: the second review
+
+
+async def _two_waiting(w):
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 18?", book("2030-03-05T18:00"), chat=43)
+
+
+async def test_ok_after_a_panel_notice_never_confirms_the_waiting_request(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 18?", book("2030-03-05T18:00"), chat=43)
+    await w.app.flow.admin_action((await w.store.by_number(1))["id"], "confirm", {})
+    assert "(from the panel)" in w.sent[OWNER][-1] or "confirmed" in w.sent[OWNER][-1]
+    calls = len(w.script["owner_calls"])
+    w.script["owner_answer"] = reading()
+    await owner(w, "ok")
+    # Read (the last message was not #2's request), about nothing: asked.
+    assert len(w.script["owner_calls"]) == calls + 1
+    assert (await w.store.by_number(2))["state"] == bs.PENDING
+    assert w.sent[OWNER][-1] == "#2 Anna, Tue 18:00: yes or no? Or give another time."
+
+
+async def test_after_a_restart_a_bare_ok_after_his_answer_is_read_not_guessed(world):
+    w = world
+    await _asked_about_length(w)
+
+    async def owner_chat():
+        return OWNER
+
+    w.app.flow = booking_flow.BookingFlow(w.app)
+    w.app.flow.provider_chat_id = owner_chat
+    w.app.flow.calendar_client = lambda: None
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "ok")
+    # Model down and its booking in doubt: nothing is put on #2.
+    assert (await w.store.by_number(2))["state"] == bs.PENDING
+    assert w.sent[OWNER][-1] == bookings.read_failed([2])
+
+
+async def test_the_yes_n_the_bot_offers_after_a_held_question_is_not_read_again(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 16?", book("2030-03-05T16:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(None, "yes", duration_minutes=120))
+    await owner(w, "yes, 2 hours")
+    assert w.sent[OWNER][-1].startswith("Which one:")
+    w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=120))
+    await owner(w, "YES 1")
+    assert "Nothing confirmed; YES 1 takes it as he asked" in w.sent[OWNER][-1]
+    calls = len(w.script["owner_calls"])
+    await owner(w, "YES 1")
+    assert len(w.script["owner_calls"]) == calls
+    first = await w.store.by_number(1)
+    assert first["state"] == bs.CONFIRMED and first["ends_at"] - first["starts_at"] == timedelta(hours=1)
+
+
+async def test_two_questions_in_one_answer_close_one_by_one(world):
+    w = world
+    flow = w.app.flow
+    flow._held = {1: booking_flow._Held(NOW, 9, (1,)), 2: booking_flow._Held(NOW, 9, (2,))}
+    flow._close_held(1)
+    assert set(flow._held) == {2}
+    flow._held = {1: booking_flow._Held(NOW, 9, (1, 2)), 2: booking_flow._Held(NOW, 9, (1, 2))}
+    flow._close_held(1)
+    assert flow._held == {}
+
+
+async def test_ok_thanks_to_the_bots_confirmation_gets_no_reply(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    ack = next(m for m in reversed(await w.db.get_messages(OWNER)) if m["direction"] == "out")
+    sent = len(w.sent[OWNER])
+    w.script["owner_answer"] = reading()
+    await owner(w, "ok thanks", reply_to=ack["telegram_id"])
+    assert len(w.sent[OWNER]) == sent
+
+
+async def test_with_commands_only_a_quote_changes_nothing_of_the_old_behaviour(world):
+    w = world
+    w.app.config["booking"]["owner_free_text"] = False
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    ack = next(m for m in reversed(await w.db.get_messages(OWNER)) if m["direction"] == "out")
+    await owner(w, "CANCEL", reply_to=ack["telegram_id"])
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1].startswith("Which booking?")
+
+
+async def test_her_words_held_by_a_question_she_answers_too_late_are_flagged(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "and me at 18?", book("2030-03-05T18:00"), chat=43)
+    w.script["owner_answer"] = reading(answer(None, "yes", tell_customer="bring cash"))
+    await owner(w, "yes, tell him to bring cash")
+    w.clock["now"] = NOW + timedelta(minutes=31)
+    await owner(w, "YES 1")
+    assert (await w.store.by_number(1))["state"] == bs.CONFIRMED
+    assert w.sent[OWNER][-1].split("\n")[-1] == bookings.format_held_lost(
+        1, bookings.OwnerCommand("yes", tell="bring cash"))
+
+
+async def test_asked_again_her_held_words_are_repeated_and_kept(world):
+    w = world
+    await customer(w, "tomorrow at 15 for 2 hours, with anal?", book(duration_minutes=120, extras="anal"))
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=60, extras_no=["anal"]))
+    await owner(w, "max 1 hour and no anal")
+    w.script["owner_answer"] = reading()
+    await owner(w, "YES")
+    assert w.sent[OWNER][-1] == ("#1 Anna, Tue 15:00: yes or no? Or give another time. With your answer: "
+                                 "for 1 hour; no anal.")
+
+
+async def test_a_length_change_while_his_taxi_step_is_untold_also_tells_the_new_end(world):
+    w = world
+    await confirmed_outcall(w)
+    await w.db.set_paused(CUSTOMER, True)
+    await owner(w, "READY 1")
+    assert (await only_booking(w))["customer_notice"] == bs.NOTICE_READY
+    w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=120))
+    await owner(w, "make it 2 hours")
+    b = await only_booking(w)
+    assert b["customer_notice"] == bs.NOTICE_READY
+    assert b["booker_news"][-1]["tell"].startswith("it is now Mon 04 Mar 2030, 13:00–15:00 (2 hours)")
+
+
+async def test_old_words_are_never_dropped_while_sending_is_off(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    await w.db.set_paused(CUSTOMER, True)
+    w.script["owner_answer"] = reading(answer(1, "none", tell_customer="bring cash"))
+    await owner(w, "tell him to bring cash")
+    w.clock["now"] = NOW + timedelta(hours=25)
+    monkeypatch.setattr(w.app, "paused", lambda: True)
+    await w.app.flow.tick()
+    assert len((await only_booking(w))["booker_news"]) == 1
+    monkeypatch.setattr(w.app, "paused", lambda: False)
+    await w.app.flow.tick()
+    assert (await only_booking(w))["booker_news"] == []
+    assert "did not reach him in time" in w.sent[OWNER][-1]
+
+
+async def test_telling_her_old_words_are_dropped_is_retried_not_repeated_every_tick(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    await w.db.set_paused(CUSTOMER, True)
+    w.script["owner_answer"] = reading(answer(1, "none", tell_customer="bring cash"))
+    await owner(w, "tell him to bring cash")
+    errors = []
+
+    async def push_error(chat_id, text):
+        errors.append(text)
+
+    async def unreachable(text, *, reason):
+        return None
+
+    reachable = w.app.flow.send_owner
+    monkeypatch.setattr(w.app, "push_error", push_error)
+    monkeypatch.setattr(w.app.flow, "send_owner", unreachable)
+    w.clock["now"] = NOW + timedelta(hours=25)
+    await w.app.flow.tick()
+    w.clock["now"] = NOW + timedelta(hours=25, minutes=1)
+    await w.app.flow.tick()
+    # Her chat out of reach: kept, and the admin told once.
+    assert len((await only_booking(w))["booker_news"]) == 1
+    assert len(errors) == 1 and "could not reach the owner" in errors[0]
+    w.clock["now"] = NOW + timedelta(hours=25, minutes=31)
+    await w.app.flow.tick()
+    assert len((await only_booking(w))["booker_news"]) == 1 and len(errors) == 1
+    monkeypatch.setattr(w.app.flow, "send_owner", reachable)
+    w.clock["now"] = NOW + timedelta(hours=26, minutes=2)
+    await w.app.flow.tick()
+    # Reachable again: told, then dropped.
+    assert (await only_booking(w))["booker_news"] == []
+    assert "did not reach him in time" in w.sent[OWNER][-1]
+
+
+async def test_old_words_she_cant_be_told_about_for_a_day_are_dropped_anyway(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    await w.db.set_paused(CUSTOMER, True)
+    w.script["owner_answer"] = reading(answer(1, "none", tell_customer="bring cash"))
+    await owner(w, "tell him to bring cash")
+
+    async def unreachable(text, *, reason):
+        return None
+
+    monkeypatch.setattr(w.app.flow, "send_owner", unreachable)
+    w.clock["now"] = NOW + timedelta(hours=25)
+    await w.app.flow.tick()
+    assert len((await only_booking(w))["booker_news"]) == 1
+    w.clock["now"] = NOW + timedelta(hours=49, minutes=1)
+    await w.app.flow.tick()
+    assert (await only_booking(w))["booker_news"] == []
+    assert w.app.flow._drop_failed == {}
+
+
+async def test_her_words_during_quiet_hours_say_when_they_go(world, monkeypatch):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "YES 1")
+    monkeypatch.setattr(w.app, "quiet_seconds_left", lambda *a, **k: 3600)
+    w.script["owner_answer"] = reading(answer(1, "none", tell_customer="bring cash"))
+    await owner(w, "tell him to bring cash")
+    assert w.sent[OWNER][-1].endswith("His replies wait for the quiet hours to end (about 13:00), so this goes to "
+                                      "him then.")
+
+
+async def test_words_with_a_decline_are_kept_past_the_time_he_had_asked_for(world):
+    w = world
+    await customer(w, "today at 13?", book("2030-03-04T13:00"))
+    await w.db.set_paused(CUSTOMER, True)
+    w.script["owner_answer"] = reading(answer(1, "no", tell_customer="I'm away this week, next week is fine"))
+    await owner(w, "no, tell him I'm away this week, next week is fine")
+    assert (await only_booking(w))["state"] == bs.CANCELLED
+    w.clock["now"] = datetime(2030, 3, 4, 15, 0, tzinfo=RIGA)  # past 13:00-14:00 + 30 min
+    await w.app.flow.tick()
+    assert len((await only_booking(w))["booker_news"]) == 1
+
+
+async def test_a_stale_question_dropped_keeps_her_newer_one_open(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book("2030-03-06T15:00"))
+    await owner(w, "YES 1")
+    await w.db.set_paused(CUSTOMER, True)
+    w.script["owner_answer"] = reading(answer(1, "none", ask_customer="does he want 2 hours"))
+    await owner(w, "ask him if he wants 2 hours")
+    w.clock["now"] = NOW + timedelta(hours=23)
+    w.script["owner_answer"] = reading(answer(1, "none", ask_customer="is he coming by car"))
+    await owner(w, "ask him if he comes by car")
+    w.clock["now"] = NOW + timedelta(hours=24, minutes=1)
+    await w.app.flow.tick()
+    b = await only_booking(w)
+    assert [i["ask"] for i in b["booker_news"]] == ["is he coming by car"]
+    assert b["booker_asked_at"] == NOW + timedelta(hours=23)
+
+
+async def test_a_draft_only_waiting_for_a_send_is_replaced_not_doubled(world):
+    w = world
+    w.app.begin_sending(CUSTOMER)
+    await w.app.on_incoming(FakeEvent(CUSTOMER, "hi"))
+    first = w.app.draft_tasks[CUSTOMER]
+    await w.app.on_incoming(FakeEvent(CUSTOMER, "you there?"))
+    await asyncio.wait([first], timeout=0.5)
+    assert first.cancelled()
+    w.app.end_sending(CUSTOMER)
+    await settle(w.app)
+    assert w.sent[CUSTOMER] == ["ok"]
+
+
+async def test_model_down_with_only_finished_bookings_she_is_told_nothing_was_done(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "NO 1")
+    w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
+    await owner(w, "tell him sorry")
+    assert w.sent[OWNER][-1] == bookings.READ_NOTHING_FAILED

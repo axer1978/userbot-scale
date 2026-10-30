@@ -451,6 +451,26 @@ How a client's bot behaves comes from three layers, lowest first:
 | Industry | **Clients → the industry folder** | A prompt template (one text per section) and default settings for every client in it |
 | Client | **Clients → the client** | Only what differs for this business: its own settings, and per prompt section *override* or *append* |
 
+### Folders inside folders
+
+An industry can hold **sub-folders**, any levels deep (*escort › Tallinn ›
+Old town*), so a group of clients can have its own tuning while the rest of
+the industry keeps the shared one. Open a folder and press **+ Sub-folder**;
+move a client into it with the **Folder** list on the client.
+
+A sub-folder holds only what it changes. In its **Template** tab each section
+is *Inherit* (the folder above's text, which keeps following it), *Override*
+or *Append*, the way a client's prompt is; **What not to do** can only be
+appended to. Its **Default config** sets only its own rows, on top of the
+folder above's. Its clients get every level: the top industry, each folder
+down to theirs, then their own layer. Rules made for a folder reach every
+client under it. A **Finetune** run's industry standard is saved into the
+client's own folder (only what differs from the folder above), and a folder
+without a finetune template of its own uses the nearest one above it.
+Verification is switched per top-level industry and covers the folders inside
+it. **Rename** works on any folder; **Delete** only on an empty sub-folder
+with no finetune runs or rules of its own.
+
 In a client's **Config** tab, greyed rows are inherited and highlighted rows are
 set for this client. **Override** sets a value here, **Inherit** removes it.
 Every value is checked when you save; nothing is silently clamped, and an
@@ -644,24 +664,70 @@ the opening hours, the calendar link and AI usage.
   one request is open. When the owner proposes a time, the customer is asked;
   if they take it, it is confirmed (the owner wrote that time).
 - **Her own words** (`booking.owner_free_text`, on): anything that is not a
-  plain command is read by the model against the open bookings and what each
-  customer asked for. *yes I confirm* = YES; *I'm ready in 20 minutes* /
-  *I can meet in 1 hour* = YES when that is by the time he asked (5 min
-  slack), otherwise that time (next 5-minute mark) is proposed to him;
-  *can he come at 15:30?* = a new time; *I'm ready* / *in the taxi* = the
-  outcall steps. Which booking: the request she replies to, the one she
-  names, or the only one waiting. Unclear → she is asked again with the
-  commands; not about a booking → ordinary reply. The answer always says what
-  was done (*#8 confirmed ✅ …*, *#8: … proposed to Khan*). A strict command
-  costs no model call; a *yes* with words after it (*ok in 20 min*) is read
-  by the model, and stays a yes when the model can't be asked. To see how
-  well the real model reads her: `docker compose exec manager python
-  owner_check.py --tenant <id>` (the answers in
-  `replay_scenarios/owner-answers.json`, English, Russian and Latvian; one
-  small model call each on the account's own key; nothing is sent).
+  plain command is read by the model against the open bookings (when, how
+  long, the extras he asked for, what she already decided) and her last 30
+  messages with their times, in any language (EN/RU/LV/ES or a mix). One
+  message can answer several bookings (*yes 3, no 4*, *both fine*), and each
+  answer can carry:
+  - the change: *yes I confirm* = YES; *I'm ready in 20 minutes* / *I can
+    meet in 1 hour* = YES when that is by the time he asked (5 min slack),
+    otherwise that time is proposed to him; *can he come at 15:30?* /
+    *not today, tomorrow any time after 2* = a new time (tomorrow 14:00);
+    *I'm ready* / *in the taxi* = the outcall steps. A yes with a condition
+    (*yes if he comes alone*) is confirmed at once and the condition goes to him.
+  - what goes to him: words to tell him (*tell him to bring cash*, *I'm 10
+    min late*), a question for him (*ask him if he wants 2 hours* — his
+    answers then come to her word for word for 3 hours), the length (*1 hour
+    only*) and extras she accepts or refuses (*no anal*: never offered again
+    in that chat). His next reply says it in her voice, first person, also
+    while his time waits for her; it is kept in `bookings.booker_news` until
+    a reply carries it, so a restart loses nothing.
+  - her own question (*how long does he want?*, *is it outcall?*): answered
+    to her from the booking; nothing goes to him.
+  Remarks about him (*he didn't show last time*) stay private. An instruction
+  for every customer (*from now on cash only*) is saved as a proposed rule
+  for the admin (Finetune → Rules). Which booking: the request she replies
+  to — or any other message the bot sent her about a booking (his answer, his
+  photo): a quoted *ok* to his *yes 2 hours please* is about his booking,
+  never a yes to someone else's request — the one she names, or the only one
+  that fits; several fit → she is asked which one; no usable time → she is
+  asked for it; a yes with another time than his (*yes but at 15:00*) → she
+  is asked which. A bare *ok* / *no* is read by the model (not taken for the
+  one request waiting) when the last thing the bot told her was about
+  something else — his answer, a panel notice, anything it can't place, also
+  after a restart — or when nothing waits; with several requests waiting and
+  no question open she is asked which. Her messages are handled one at a
+  time, in order, each read with her chat up to it. Words that can't reach
+  him (his chat paused or taken over, quiet hours) wait — she is told, with
+  when — and after a day, or once the meeting is over, are dropped and she is
+  told which (never while sending is off; if her chat can't be reached then,
+  that is tried every 30 minutes, the admin is told once, and after another day
+  they are dropped anyway). The answer says back what was understood
+  (*#3 confirmed ✅ for Tue 20 Oct 2026, 21:00–22:00 (1 hour) — Khan will be
+  told. I'll tell him: bring cash; no anal.*). Small talk (*hi*, *thanks*)
+  gets no reply at all: her chat never gets a customer's reply. A strict
+  command costs no model call; a *yes* with words after it (*ok in 20 min*)
+  is read by the model, and stays a yes when the model can't be asked (then
+  anything else gets the commands to use). To see how well the real model
+  reads her: `docker compose exec manager python owner_check.py --tenant
+  <id>` (the answers in `replay_scenarios/owner-answers.json`, English,
+  Russian, Latvian and Spanish; one small model call each on the account's
+  own key; nothing is sent).
 - The customer can change the time before the owner answers (same number),
   ask to move a confirmed booking (the owner answers `YES 7` / `NO 7`), or
   cancel. Every change is in the booking's history and the audit log.
+- **How her messages look** (`booking.booker_language`, `booking.booker_messages`;
+  panel: Clients → the client → *Booker messages*, and the owner's own page
+  *Booking messages*): everything the bot sends her is in English, Russian,
+  Latvian or Spanish, commands included in words she can type back (*ДА 3*,
+  *JĀ 3*, *SÍ 3*). The ten main messages (new request, he wants to move it,
+  confirmed, declined, new time offered, moved, cancelled, cancelled by him,
+  he has arrived, the outcall READY reminder) can be rewritten with blanks
+  (`{number}`, `{customer}`, `{when}`, `{length}`, `{extras}`, …) and a live
+  preview; a line whose blanks are all empty is left out, the booking number
+  and the commands line are always kept, a text with an unknown blank can't be
+  saved, and one that fails anyway falls back to the default. Staff need
+  *bookings.messages* to save. Model and panel texts stay English.
 - **Reminders** (`booking.reminders`): a list of `{minutes_before,
   instruction}`, by default 24 h and 2 h before. The instruction says what
   that reminder should say. The customer can reply `1` (coming) or `2`

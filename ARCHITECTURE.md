@@ -56,7 +56,7 @@ Migrations: `migrations/0001_init.sql` (fleet), `0002_tenants.sql` (platform), `
 
 | Table | Key columns | Notes |
 |---|---|---|
-| `industries` | id, name, template_version, default_config, config_revision | `template_version` points at the live industry prompt version |
+| `industries` | id, name, parent_id, template_version, default_config, own_config, config_revision, requires_review | `template_version` points at the live industry prompt version; `parent_id` makes it a sub-folder (see Folders below) |
 | `tenants` | id, name, industry_id, status (active/grace/suspended), channel (telegram/whatsapp), session_id, config_json, config_revision, prompt_version, prompt_pin_version, billing_next_due, grace_until, billing_notice_sent_at | `config_json` = client-layer config overrides; `prompt_version` = client prompt version in use; `prompt_pin_version` pins an industry template version. Billing: see "Safety and control" |
 | `tenant_holds` | tenant_id, kind (manual/billing/spend_cap/anomaly/telegram/whatsapp), reason, created_by | Soft-off: the tenant sends nothing on its own while it has any hold. One row per cause, each lifted on its own |
 | `prompt_versions` | layer (base/industry/client), ref_id, tenant_id (client rows), version, content, note, created_by, created_at | Immutable; unique (layer, ref_id, version) |
@@ -145,6 +145,7 @@ platform defaults (field defaults + hard limits in the schema)
 
 - A list may be replaced, or appended to with `{"append": [...]}`.
 - A save is refused, never clamped, if any value is invalid. An industry change is refused if it would leave any of its clients with an invalid config.
+- **Folders.** An industry can sit inside another (`industries.parent_id`, any depth; migration 0023). `industries.own_config` is what a folder sets itself; `industries.default_config` is what its clients inherit, the parent's `default_config` with `own_config` on top (`tenant_config.merge`). `TenantStore.save_industry_config` recomputes it for the folder and every folder under it and checks every client there, so every reader of `default_config` sees the whole chain. For a top-level industry the two columns are equal.
 - Every save writes an audit row with a field-by-field diff.
 - The runtime reads only the effective config. The LLM never decides timing, routing or whether to reply.
 
@@ -166,7 +167,8 @@ PRECEDENCE: … follow the PLATFORM RULES.
 
 - Only the named sections exist. No industry or client key can reach the platform rules.
 - Every layer is versioned in `prompt_versions`. Which version is in use is a pointer: `platform_settings.base_prompt_version`, `industries.template_version` and `tenants.prompt_version`. Rollback moves the pointer and never rewrites history.
-- `tenants.prompt_pin_version` fixes one client to one industry template version.
+- `tenants.prompt_pin_version` fixes one client to one industry template version (its own folder's; the folders above stay live).
+- **Folders.** A sub-folder's prompt versions (layer `industry`, its id) hold only its changes, in the client layer's shape: `{"overrides": {"<section>": {"mode", "text"}}}` (`prompt_layers.validate_folder`; boundaries append-only). `TenantStore.folder_sections` applies them top-down (`apply_folder`) and `render()` gets the result as the industry text. The version tag names every level: `b1/i2v10/i5v3/c4`. A whole standard written into a sub-folder (a finetune run, a fold, the unanswered queue) keeps only what differs from the parent's (`save_folder_standard` → `folder_changes`). Industry rules reach every account under their folder (`rules._FOLDERS`); a fold folds only the account's own folder's.
 - The prompt is not the defence against contradictory instructions. The policy layer is.
 
 ## Message flow

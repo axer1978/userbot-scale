@@ -4,7 +4,8 @@
 // the platform's) and a client's overrides (over its industry's). Rows the
 // layer does not set are greyed and read-only until "Override" is pressed;
 // rows it sets are highlighted and can be reset to inherit. Values are
-// checked by the schema on save; nothing is clamped.
+// checked by the schema on save; nothing is clamped. A sub-folder's settings
+// use the client's part (over the folder above's), labelled "folder".
 
 import { useState } from "react";
 import { useToast } from "@/components/feedback";
@@ -108,10 +109,12 @@ function FieldInput({ field, value, disabled, onChange }: {
   );
 }
 
-export function ConfigEditor({ fields, overrides, layer, inheritedLabel, revision, save }: {
+export function ConfigEditor({ fields, overrides, layer, layerLabel, inheritedLabel, revision, save }: {
   fields: ConfigField[];
   overrides: Record<string, unknown>;
   layer: "client" | "industry";
+  // What a row set here is called, if not the layer's name.
+  layerLabel?: string;
   inheritedLabel: string;
   revision: number;
   save: ConfigSave;
@@ -173,7 +176,7 @@ export function ConfigEditor({ fields, overrides, layer, inheritedLabel, revisio
     }
     const row = rows[i];
     const srcClass = row.set ? layer : field.source === layer ? "platform" : field.source;
-    const srcText = row.set ? (row.dirty ? "changed" : layer) : field.source === layer ? "inherit" : field.source;
+    const srcText = row.set ? (row.dirty ? "changed" : layerLabel ?? layer) : field.source === layer ? "inherit" : field.source;
     body.push(
       <tr key={field.path} className={cx("cfg-row", row.set ? "overridden" : "inherited", row.dirty && "dirty")}>
         <td className="path">{field.path}</td>

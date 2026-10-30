@@ -30,6 +30,8 @@ from typing import Any, Literal, Optional, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+import booker_texts
+
 try:
     from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover
@@ -261,10 +263,11 @@ class Booking(_Strict):
         "Her name: the 'Girl:' line of a booking request to the owner, and updates to the owner start with it "
         "(empty: the account's name). The customer is told it when the booking is confirmed and when they "
         "arrive (empty: no name)."))
-    # Read the owner's answers in her own words too ("I'm ready in 20
-    # minutes", "yes I confirm", "can he come at 15:30?"), against what the
-    # customer asked for: one small model call per message that is not a
-    # plain command, only while a booking is open. Off: commands only.
+    # Read the owner's answers in her own words too ("yes, tell him to bring
+    # cash", "yes 3, no 4", "I'm ready in 20 minutes"), against what each
+    # customer asked for: one small model call per message of hers that is
+    # not a plain command (her chat then never gets a customer's reply).
+    # Off: commands only, and anything else gets the ordinary reply.
     owner_free_text: bool = True
     # Where the e-mail record of each confirmation, change and cancellation
     # goes. Needs SMTP_* in .env; empty = no e-mail.
@@ -337,6 +340,20 @@ class Booking(_Strict):
     # No IN n this long after his taxi link reached her: he is told she is
     # in the taxi anyway. 0 = as soon as the link comes.
     outcall_in_taxi_minutes: int = Field(5, ge=0, le=120)
+    # The language of everything the bot sends the booker (booker_texts),
+    # and the account's own text for the main messages to her, by message
+    # (booker_texts.TEMPLATES); a message not set, or empty, is the default.
+    booker_language: Literal["en", "ru", "lv", "es"] = "en"
+    booker_messages: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("booker_messages")
+    @classmethod
+    def _booker_messages(cls, value: dict[str, str]) -> dict[str, str]:
+        problems = booker_texts.check_all(value)
+        if problems:
+            raise ValueError("; ".join(f"{key}: {problem}" for key, problem in problems))
+        # An empty text is the default: not kept.
+        return {key: text for key, text in value.items() if text.strip()}
 
     @field_validator("reminders")
     @classmethod
@@ -712,6 +729,36 @@ def resolve(industry: Optional[dict[str, Any]] = None, client: Optional[dict[str
     return Resolved(config, sources)
 
 
+def merge(parent: Optional[dict[str, Any]], child: Optional[dict[str, Any]],
+          model: type[BaseModel] = TenantConfig) -> dict[str, Any]:
+    """Two partial overrides as one: `child` on top of `parent`, the way
+    resolve() would apply them one after the other. A folder's settings on
+    top of its parent folder's (tenants.py). Nothing is validated here:
+    resolve() reports whatever the result gets wrong."""
+    out = copy.deepcopy(parent) if isinstance(parent, dict) else {}
+    if not isinstance(child, dict):
+        return out
+    for key, value in child.items():
+        field = model.model_fields.get(key)
+        sub = _submodel(field.annotation) if field is not None else None
+        before = out.get(key)
+        if sub is not None and isinstance(value, dict) and isinstance(before, dict):
+            out[key] = merge(before, value, sub)
+        elif (field is not None and _is_list(field.annotation) and isinstance(value, dict)
+              and set(value) == {"append"} and isinstance(value["append"], list) and before is not None):
+            # An append on top of a list makes a list; on top of an append,
+            # one longer append, still added to whatever is above both.
+            if isinstance(before, list):
+                out[key] = before + [v for v in value["append"] if v not in before]
+            elif isinstance(before, dict) and isinstance(before.get("append"), list):
+                out[key] = {"append": before["append"] + [v for v in value["append"] if v not in before["append"]]}
+            else:
+                out[key] = copy.deepcopy(value)
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
 def get_path(data: dict[str, Any], path: str) -> Any:
     node: Any = data
     for part in path.split("."):
@@ -772,7 +819,9 @@ def _kind(annotation: Any, field: Any = None) -> str:
         (item,) = get_args(annotation) or (str,)
         return "json" if _submodel(item) is not None else "list"
     if get_origin(annotation) is dict:
-        return "map"
+        # Texts by name (booking.booker_messages) are edited as JSON; numbers
+        # by name (price_floors) as lines.
+        return "json" if get_args(annotation)[1:] == (str,) else "map"
     if field is not None and any((getattr(m, "max_length", 0) or 0) > 256 for m in field.metadata):
         return "longtext"
     return "text"

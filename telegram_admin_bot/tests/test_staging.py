@@ -109,8 +109,14 @@ async def test_anyone_else_is_stored_noted_and_queued_not_answered(w):
 
 
 async def test_the_owner_chat_is_not_held_back_by_staging(w):
+    # A booking command of hers is answered...
+    await say(w, OWNER, "LIST", "owner")
+    assert w.sent[OWNER] == ["Nothing is waiting for your answer right now."]
+    # ...and with her words not read as booking answers (booking.owner_free_text
+    # off), an ordinary message of hers gets the ordinary reply.
+    w.app.config["booking"]["owner_free_text"] = False
     await say(w, OWNER, "Just checking in", "owner")
-    assert w.sent[OWNER] == ["Hello from the bot."]
+    assert w.sent[OWNER][-1] == "Hello from the bot."
     assert await unanswered.list_items(w.pool, [w.app.tenant_id]) == []
 
 

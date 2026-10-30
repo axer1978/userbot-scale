@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 import audit
+import booker_settings
 import commands
 import config_assist
 import llm_usage
@@ -101,6 +102,7 @@ def _tenant_view(bundle: tenants.Bundle) -> dict[str, Any]:
     return {
         "tenant": bundle.tenant,
         "industry": {"id": bundle.industry["id"], "name": bundle.industry["name"],
+                     "path": bundle.industry["path"], "parent_id": bundle.industry["parent_id"],
                      "template_version": bundle.industry["template_version"]},
         "config": {
             "effective": bundle.config,
@@ -145,21 +147,41 @@ async def api_base() -> dict[str, Any]:
 
 @router.get("/api/industries/{industry_id}")
 async def api_industry(industry_id: int) -> dict[str, Any]:
+    """A top-level industry: its sections, its settings. A sub-folder: per
+    section what it inherits from the folder above and what it changes
+    (`override`, as a client's layer does), and its own settings on top of
+    the folder above's."""
     s = store()
-    industry = await guarded(s.get_industry(industry_id))
-    live = await s.version(tenants.INDUSTRY, industry_id, industry["template_version"])
-    resolved = tenant_config.resolve(industry["default_config"], None)
-    defaults = tenant_config.resolve(None, None).as_dict()
+    chain = await guarded(s.chain(industry_id))
+    industry = {**chain[-1], "path": tenants.PATH_SEPARATOR.join(f["name"] for f in chain)}
+    live = (await s.version(tenants.INDUSTRY, industry_id, industry["template_version"]))["content"]
+    if industry["parent_id"] is None:
+        sections = [{"key": key, "heading": heading, "text": live["sections"].get(key, "")}
+                    for key, heading in prompt_layers.SECTIONS]
+        resolved = tenant_config.resolve(industry["default_config"], None)
+        inherited = tenant_config.resolve(None, None).as_dict()
+    else:
+        above = await s.folder_sections(industry["parent_id"], chain=chain[:-1])
+        own = prompt_layers.validate_folder(live, strict=False)["overrides"]
+        handed = prompt_layers.apply_folder(above, live)
+        sections = [{"key": key, "heading": heading, "text": handed.get(key, ""), "inherited": above.get(key, ""),
+                     "override": own.get(key), "append_only": key in prompt_layers.APPEND_ONLY_SECTIONS}
+                    for key, heading in prompt_layers.SECTIONS]
+        # The folder above plays the industry's part, this one the client's,
+        # so the editor shows which rows this folder sets.
+        parent_config = chain[-2]["default_config"]
+        resolved = tenant_config.resolve(parent_config, industry["own_config"])
+        inherited = tenant_config.resolve(parent_config, None).as_dict()
     return {
         "industry": industry,
-        "sections": [
-            {"key": key, "heading": heading, "text": live["content"]["sections"].get(key, "")}
-            for key, heading in prompt_layers.SECTIONS
-        ],
+        "parents": [{"id": f["id"], "name": f["name"]} for f in chain[:-1]],
+        "sections": sections,
         "versions": await s.versions(tenants.INDUSTRY, industry_id),
-        "config": {"overrides": industry["default_config"], "revision": industry["config_revision"],
-                   "fields": tenant_config.field_catalog(resolved, defaults)},
+        "config": {"overrides": industry["own_config"], "revision": industry["config_revision"],
+                   "fields": tenant_config.field_catalog(resolved, inherited)},
         "tenants": await s.tenants_in_industry(industry_id),
+        "folders": [{"id": f["id"], "name": f["name"]} for f in (await s.subtree(industry_id))
+                    if f["parent_id"] == industry_id],
     }
 
 
@@ -212,8 +234,18 @@ class NameBody(BaseModel):
     reason: str = ""
 
 
+class FolderBody(BaseModel):
+    name: str
+    # Set: a sub-folder of this folder; unset: a new top-level industry.
+    parent_id: Optional[int] = None
+    reason: str = ""
+
+
 class TemplateBody(BaseModel):
+    # A top-level industry's template: every section's text.
     sections: dict[str, str] = Field(default_factory=dict)
+    # A sub-folder's: only what it changes, {"<section>": {"mode", "text"}}.
+    overrides: Optional[dict[str, Any]] = None
     note: str = ""
 
 
@@ -244,7 +276,9 @@ async def _reload_all() -> None:
 
 
 async def _reload_industry(industry_id: int) -> None:
-    await reload_accounts([t["session_id"] for t in await store().tenants_in_industry(industry_id)])
+    """Every account a change to this folder reaches: its own clients and
+    those of the folders under it."""
+    await reload_accounts([t["session_id"] for t in await store().tenants_in_subtree(industry_id)])
 
 
 @router.put("/api/platform/base")
@@ -301,14 +335,26 @@ async def put_prices(body: PricesBody) -> dict[str, Any]:
 
 
 @router.post("/api/industries")
-async def api_create_industry(body: NameBody) -> dict[str, Any]:
-    return await guarded(store().create_industry(body.name, actor=ACTOR, reason=body.reason))
+async def api_create_industry(body: FolderBody) -> dict[str, Any]:
+    return await guarded(store().create_industry(body.name, parent_id=body.parent_id, actor=ACTOR,
+                                                 reason=body.reason))
+
+
+@router.patch("/api/industries/{industry_id}")
+async def api_rename_industry(industry_id: int, body: NameBody) -> dict[str, Any]:
+    return await guarded(store().rename_industry(industry_id, body.name, actor=ACTOR, reason=body.reason))
+
+
+@router.delete("/api/industries/{industry_id}")
+async def api_delete_industry(industry_id: int, reason: str = "") -> dict[str, Any]:
+    await guarded(store().delete_industry(industry_id, actor=ACTOR, reason=reason))
+    return {"deleted": industry_id}
 
 
 @router.put("/api/industries/{industry_id}/template")
 async def api_save_template(industry_id: int, body: TemplateBody) -> dict[str, Any]:
-    saved = await guarded(store().save_industry_template(
-        industry_id, {"sections": body.sections}, actor=ACTOR, note=body.note))
+    content = {"overrides": body.overrides} if body.overrides is not None else {"sections": body.sections}
+    saved = await guarded(store().save_industry_template(industry_id, content, actor=ACTOR, note=body.note))
     await _reload_industry(industry_id)
     return saved
 
@@ -354,6 +400,28 @@ async def api_save_tenant_config(tenant_id: int, body: ConfigBody) -> dict[str, 
         except commands.CommandError:
             pass
     return await api_tenant(tenant_id)
+
+
+# --------------------------------------------- the messages to the booker
+
+
+@router.get("/api/tenants/{tenant_id}/booker-messages")
+async def api_booker_messages(tenant_id: int) -> dict[str, Any]:
+    return booker_settings.view(await guarded(store().bundle(tenant_id)))
+
+
+@router.post("/api/tenants/{tenant_id}/booker-messages/preview")
+async def api_booker_messages_preview(tenant_id: int, body: booker_settings.MessagesBody) -> dict[str, Any]:
+    """The page's live preview: nothing is saved."""
+    bundle = await guarded(store().bundle(tenant_id))
+    return booker_settings.preview(bundle, body.language, body.messages)
+
+
+@router.put("/api/tenants/{tenant_id}/booker-messages")
+async def api_save_booker_messages(tenant_id: int, body: booker_settings.MessagesBody) -> dict[str, Any]:
+    bundle = await guarded(booker_settings.save(store(), tenant_id, body, actor=ACTOR))
+    await reload_accounts([bundle.tenant["session_id"]], bundle)
+    return booker_settings.view(bundle)
 
 
 @router.put("/api/tenants/{tenant_id}/prompt")

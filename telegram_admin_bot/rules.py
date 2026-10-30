@@ -66,6 +66,9 @@ SETTABLE = (PROPOSED, ACTIVE, REJECTED, RETIRED)
 DRAFT_EDIT = "draft_edit"
 CORRECTION = "correction"
 MANUAL = "manual"
+# An instruction for every customer the booker wrote in her booking chat
+# (booking_flow.BookingFlow.save_standing).
+BOOKER = "booker"
 
 INDUSTRY = "industry"
 ACCOUNT = "account"
@@ -143,11 +146,19 @@ async def get(pool: Any, rule_id: int) -> dict[str, Any]:
     return _rule(row)
 
 
+# The account's folder ($2) and the folders above it: an industry rule made
+# in a folder reaches every account under it (tenants.py, folders).
+_FOLDERS = ("WITH RECURSIVE folders AS (SELECT id, parent_id, 0 AS depth FROM industries WHERE id = $2 "
+            "UNION ALL SELECT i.id, i.parent_id, f.depth + 1 FROM industries i JOIN folders f ON i.id = f.parent_id "
+            "WHERE f.depth < 50) ")
+_REACHES = "((tenant_id IS NULL AND industry_id IN (SELECT id FROM folders)) OR tenant_id = $1)"
+
+
 async def list_for(pool: Any, tenant_id: int, industry_id: int) -> list[dict[str, Any]]:
     """The rules that reach this account, in every status: its industry's
-    and its own, oldest first."""
+    (its folder's and those above it) and its own, oldest first."""
     rows = await pool.fetch(
-        "SELECT * FROM prompt_rules WHERE (tenant_id IS NULL AND industry_id = $2) OR tenant_id = $1 ORDER BY id",
+        _FOLDERS + f"SELECT * FROM prompt_rules WHERE {_REACHES} ORDER BY id",
         tenant_id, industry_id)
     return [_rule(r) for r in rows]
 
@@ -157,15 +168,15 @@ async def active_for(pool: Any, tenant_id: int, industry_id: int) -> list[str]:
     prompt: the industry's first, then its own, each oldest first, so the
     order (and the version tag's hash) only changes when the rules do."""
     rows = await pool.fetch(
-        "SELECT text FROM prompt_rules WHERE status = 'active' "
-        "AND ((tenant_id IS NULL AND industry_id = $2) OR tenant_id = $1) "
+        _FOLDERS + f"SELECT text FROM prompt_rules WHERE status = 'active' AND {_REACHES} "
         "ORDER BY (tenant_id IS NOT NULL), id",
         tenant_id, industry_id)
     return [r["text"] for r in rows]
 
 
 async def counts(pool: Any, tenant_id: int, industry_id: int) -> dict[str, dict[str, int]]:
-    """Active and proposed rules per scope, for the cap."""
+    """Active and proposed rules per scope, for the cap. The industry's are
+    its own folder's: the cap is per folder."""
     rows = await pool.fetch(
         "SELECT (tenant_id IS NOT NULL) AS own, status, count(*) AS n FROM prompt_rules "
         "WHERE ((tenant_id IS NULL AND industry_id = $2) OR tenant_id = $1) AND status IN ('active', 'proposed') "
@@ -253,8 +264,13 @@ async def update(pool: Any, rule_id: int, *, actor: str, text: Optional[str] = N
                 owner = tenant_id if tenant_id is not None else before["source_ref"].get("tenant_id")
                 if owner is None:
                     raise RuleError("Say which account the rule is for.")
-                industry_of = await con.fetchval("SELECT industry_id FROM tenants WHERE id = $1", owner)
-                if industry_of != before["industry_id"]:
+                # Its folder is the rule's, or one under it.
+                inside = await con.fetchval(
+                    "WITH RECURSIVE down AS (SELECT id, 0 AS depth FROM industries WHERE id = $2 UNION ALL "
+                    "SELECT i.id, d.depth + 1 FROM industries i JOIN down d ON i.parent_id = d.id WHERE d.depth < 50) "
+                    "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND industry_id IN (SELECT id FROM down))",
+                    owner, before["industry_id"])
+                if not inside:
                     raise RuleError("That account is not in this rule's industry.")
                 changes["tenant_id"] = owner
         if not changes:
@@ -532,7 +548,7 @@ async def suggest(pool: Any, tenant_id: int, *, api_key: str, actor: str) -> dic
     if readable:
         known = [r["text"] for r in await list_for(pool, tenant_id, bundle.industry["id"])
                  if r["status"] in (ACTIVE, PROPOSED)]
-        prompt = suggestion_prompt(bundle.industry["name"], readable, known)
+        prompt = suggestion_prompt(bundle.industry["root_name"], readable, known)
         raw = await complete(prompt, api_key=api_key, model=finetune.text_model(), max_tokens=SUGGEST_MAX_TOKENS,
                              usage_sink=_meter(pool))
         proposals = parse_suggestions(raw, len(readable))
@@ -645,20 +661,23 @@ async def plan_fold(pool: Any, tenant_id: int, *, industry_wide: bool = True) ->
     layer and, with `industry_wide`, its industry's into the standard."""
     store = tenants.TenantStore(pool)
     tenant = await store.get(tenant_id)
-    industry = await store.get_industry(tenant["industry_id"])
-    live = await store.version(tenants.INDUSTRY, industry["id"], industry["template_version"])
+    chain = await store.chain(tenant["industry_id"])
+    industry = {**chain[-1], "root_name": chain[0]["name"]}
     client: dict[str, Any] = {"overrides": {}, "addendum": ""}
     if tenant["prompt_version"]:
         stored = (await store.version(tenants.CLIENT, tenant_id, tenant["prompt_version"]))["content"]
         client = prompt_layers.validate_client(stored, strict=False)
     listed = [r for r in await list_for(pool, tenant_id, industry["id"]) if r["status"] == ACTIVE]
-    industry_rules = [r for r in listed if r["scope"] == INDUSTRY] if industry_wide else []
+    # Only its own folder's: the fold writes them into this folder's
+    # template, and a folder above it has other accounts they must reach.
+    industry_rules = ([r for r in listed if r["scope"] == INDUSTRY and r["industry_id"] == industry["id"]]
+                      if industry_wide else [])
     account_rules = [r for r in listed if r["scope"] == ACCOUNT]
     last_change = await pool.fetchval("SELECT max(updated_at) FROM prompt_rules WHERE id = ANY($1::bigint[])",
                                       [r["id"] for r in industry_rules + account_rules])
     return FoldPlan(
         tenant=tenant, industry=industry, base_rules=(await store.base())["content"]["rules"],
-        sections=dict(live["content"].get("sections") or {}), client=client,
+        sections=await store.folder_sections(industry["id"], chain=chain), client=client,
         industry_rules=industry_rules, account_rules=account_rules, last_change=last_change,
     )
 
@@ -671,7 +690,7 @@ def fold_prompt(plan: FoldPlan) -> str:
     business = plan.tenant["name"].strip() or "this business"
     filled = {
         "BUSINESS": business,
-        "INDUSTRY": plan.industry["name"].strip() or "this",
+        "INDUSTRY": (plan.industry.get("root_name") or plan.industry["name"]).strip() or "this",
         "BASE": plan.base_rules,
         "INDUSTRY_JSON": json.dumps({"sections": plan.sections}, ensure_ascii=False, indent=2),
         "CLIENT_JSON": json.dumps(plan.client, ensure_ascii=False, indent=2),
@@ -840,10 +859,12 @@ async def on_applied(pool: Any, run: dict[str, Any], applied: dict[str, Any], *,
         return []
     store = tenants.TenantStore(pool)
     tenant = await store.get(run["tenant_id"])
-    industry = await store.get_industry(run["industry_id"])
+    chain = await store.chain(run["industry_id"])
+    industry = chain[-1]
     tag = prompt_layers.layers_tag((await store.base_version(), industry["id"],
                                     applied.get("industry_version", industry["template_version"]),
-                                    applied.get("client_version", tenant["prompt_version"])))
+                                    applied.get("client_version", tenant["prompt_version"])),
+                                   [(f["id"], f["template_version"]) for f in chain[:-1]])
     async with pool.acquire() as con, con.transaction():
         merged = [r["id"] for r in await con.fetch(
             "UPDATE prompt_rules SET status = 'merged', merged_into = $2, updated_at = now() "

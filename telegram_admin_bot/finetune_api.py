@@ -3,7 +3,9 @@
 Mounted by panel.py behind the admin login.
 
 - One finetune template per industry, in platform_settings under
-  'finetune_template:<industry id>'.
+  'finetune_template:<industry id>'. A sub-folder without one of its own
+  uses the nearest folder's above it; a run's industry standard is the
+  client's own folder's (tenants.save_folder_standard).
 - A run is started with the screenshots (read by the vision model) or with
   chats the admin transcribed (read by DeepSeek on the platform key), and
   works in the background; the page polls it. The chats stay in memory for
@@ -83,26 +85,43 @@ def _template_key(industry_id: int) -> str:
     return f"finetune_template:{industry_id}"
 
 
-async def load_template(industry_id: int) -> str:
+async def _own_template(industry_id: int) -> str:
     value = await _get_pool().fetchval("SELECT value FROM platform_settings WHERE key = $1",
                                        _template_key(industry_id))
     value = tenants._json(value) if value is not None else None
     return value.get("template", "") if isinstance(value, dict) else ""
 
 
+async def _template_and_source(industry_id: int) -> tuple[str, Optional[dict[str, Any]]]:
+    """The template a run in this folder uses: its own, else the nearest
+    folder's above it; with the folder it comes from (None: none at all)."""
+    for folder in reversed(await platform_api.store().chain(industry_id)):
+        template = await _own_template(folder["id"])
+        if template:
+            return template, folder
+    return "", None
+
+
+async def load_template(industry_id: int) -> str:
+    return (await _template_and_source(industry_id))[0]
+
+
 async def businesses_so_far(industry_id: int) -> int:
-    """Businesses whose run updated this industry's standard. A fold of the
+    """Businesses whose run updated this industry's standard, in this folder
+    or one above it (a sub-folder starts from its parent's). A fold of the
     operator's rules learned nothing from a business's chats: not counted."""
+    folders = [f["id"] for f in await platform_api.store().chain(industry_id)]
     return await _get_pool().fetchval(
         "SELECT count(DISTINCT tenant_id) FROM finetune_runs "
-        "WHERE industry_id = $1 AND status = 'applied' AND applied ? 'industry_version' AND source <> $2",
-        industry_id, RULES_SOURCE,
+        "WHERE industry_id = ANY($1::int[]) AND status = 'applied' AND applied ? 'industry_version' AND source <> $2",
+        folders, RULES_SOURCE,
     )
 
 
 async def _live_sections(industry: dict[str, Any]) -> dict[str, str]:
-    live = await platform_api.store().version(tenants.INDUSTRY, industry["id"], industry["template_version"])
-    return live["content"].get("sections") or {}
+    """The standard this folder hands its clients now, with what the
+    folders above it hand down."""
+    return await platform_api.store().folder_sections(industry["id"])
 
 
 def _run(row: Any, *, full: bool = True) -> dict[str, Any]:
@@ -145,13 +164,23 @@ class TemplateBody(BaseModel):
 
 @router.get("/api/finetune/industries/{industry_id}")
 async def api_industry(industry_id: int) -> dict[str, Any]:
-    industry = await platform_api.guarded(platform_api.store().get_industry(industry_id))
+    chain = await platform_api.guarded(platform_api.store().chain(industry_id))
+    industry = chain[-1]
+    template = await _own_template(industry_id)
+    used, source = (template, industry) if template else await _template_and_source(industry_id)
     return {
         "industry": {"id": industry["id"], "name": industry["name"],
+                     "path": tenants.PATH_SEPARATOR.join(f["name"] for f in chain),
+                     "parent_id": industry["parent_id"],
                      "template_version": industry["template_version"]},
-        "template": await load_template(industry_id),
+        "template": template,
+        # A sub-folder without a template of its own runs on this one, from
+        # the nearest folder above it that has one.
+        "inherited_template": used if source is not None and source["id"] != industry_id else "",
+        "template_from": source["name"] if source is not None and source["id"] != industry_id else "",
         # Loaded into the editor on request; nothing runs on it until saved.
-        "default_template": finetune.default_template(industry["name"]),
+        # The top-level industry's name picks it: a sub-folder is the same trade.
+        "default_template": finetune.default_template(chain[0]["name"]),
         "placeholders": list(finetune.PLACEHOLDERS),
         "businesses_so_far": await businesses_so_far(industry_id),
         "has_standard": bool(await _live_sections(industry)),
@@ -413,8 +442,8 @@ async def api_apply(run_id: int, body: ApplyBody) -> dict[str, Any]:
     applied: dict[str, Any] = {}
     try:
         if sections is not None:
-            saved = await platform_api.guarded(s.save_industry_template(
-                industry["id"], {"sections": sections}, actor=ACTOR, note=note))
+            saved = await platform_api.guarded(s.save_folder_standard(
+                industry["id"], sections, actor=ACTOR, note=note))
             applied["industry_version"] = saved["template_version"]
         if layer is not None:
             bundle = await platform_api.guarded(s.save_client_prompt(tenant["id"], layer, actor=ACTOR, note=note))

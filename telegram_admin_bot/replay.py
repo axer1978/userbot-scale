@@ -39,6 +39,9 @@ and per step, optionally:
                   the first fixed message sent.
     "address":    true: the address goes out after this reply ([address],
                   or after a confirmation / for her taxi); false: it does not
+    "threesome":  true: the threesome girl's photo or video goes with this
+                  reply; false: none of hers does (in a file with
+                  "threesome_girl": true)
 
 A scenario with "outcall": true is an outcall from the start (else it
 becomes one when the extractor reads the request as one, or at a taxi step).
@@ -53,7 +56,9 @@ not in the chat yet (not for an outcall), or for her taxi on
 outcall_ready_news / outcall_proof_news; a file with "greeting_video": true
 has a video marked greeting in the library, sent with the first reply; a
 file with "outcall_proof": true / false runs its outcalls with / without the
-photo of the place (else as booking.outcall_proof says); and
+photo of the place (else as booking.outcall_proof says); a file with
+"threesome_girl": true has TEST_THREESOME in the library, sent by the system
+when the threesome check reads his message as about a threesome or her; and
 on "arrived" the way in
 (booking.arrival_instructions) is the whole answer: the arrival check must
 read the message as arrival, and no reply is written. Later steps are
@@ -151,6 +156,11 @@ TEST_PHOTOS = [
 # Marked "greeting": goes out with the first reply (files with "greeting_video": true).
 TEST_GREETING = {"id": 9, "kind": media.VIDEO, "file": "hi.mp4", "description": "short video of me saying hi",
                  "greeting": True}
+# Marked "threesome": the girl she does threesomes with (files with "threesome_girl": true).
+TEST_THREESOME = [
+    {"id": 7, "kind": media.PHOTO, "file": "lina.jpg", "description": "my friend Lina, blonde", "threesome": True},
+    {"id": 8, "kind": media.VIDEO, "file": "lina.mp4", "description": "Lina in a black dress", "threesome": True},
+]
 
 
 # ------------------------------------------------------------- scenarios
@@ -161,6 +171,7 @@ def load(path: Path) -> dict[str, Any]:
     for scenario in data.get("scenarios", []):
         scenario.setdefault("first_reply_address", data.get("first_reply_address", True))
         scenario.setdefault("greeting_video", data.get("greeting_video", False))
+        scenario.setdefault("threesome_girl", data.get("threesome_girl", False))
         if "outcall_proof" in data:
             scenario.setdefault("outcall_proof", data["outcall_proof"])
     problems = validate(data)
@@ -210,6 +221,8 @@ def validate(data: dict[str, Any]) -> list[str]:
                 problems.append(f"{sid}: details is true or false")
             if "address" in step and not isinstance(step["address"], bool):
                 problems.append(f"{sid}: address is true or false")
+            if "threesome" in step and not isinstance(step["threesome"], bool):
+                problems.append(f"{sid}: threesome is true or false")
             if step.get("booking") == "arrived" and ("customer" not in step or step.get("expect")
                                                       or step.get("intent")):
                 problems.append(f"{sid}: an arrived step is a customer message with no expect or intent "
@@ -433,9 +446,13 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
     taxi = bool(ctx.config["booking"].get("outcall_taxi", True))
     proof = taxi and bool(scenario.get("outcall_proof", ctx.config["booking"].get("outcall_proof", True)))
     timing = ctx.config["booking"].get("address_timing", "with_prices")
-    # The library of this chat: the test photos, and the greeting video.
+    # The library of this chat: the test photos, the greeting video, and
+    # the threesome girl's (kept out of her own, as in the runtime).
     library = [*ctx.photos, *([TEST_GREETING] if scenario.get("greeting_video") else [])]
+    girl = list(TEST_THREESOME) if scenario.get("threesome_girl") else []
     library_note = ctx.library_note(library)
+    if library_note and girl:
+        library_note += "\n" + media.THREESOME_RULE
     ready_minutes = int(ctx.config["booking"].get("outcall_ready_minutes", 20))
     name = (ctx.config["booking"].get("name") or "").strip()
     for step in scenario["steps"]:
@@ -514,8 +531,16 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
         # As in the runtime: the greeting files go with the first reply.
         greeting = ([item for item in library if item.get("greeting")]
                     if library_note and not any(m["role"] == "assistant" for m in history) else [])
+        # As in the runtime: the threesome check, and her files with the reply.
+        threesome, threesome_line = [], ""
+        if library_note and girl and media.threesome_may_come_up(history):
+            show = await ai_responder.extract_threesome_request(
+                api_key=ctx.key, history=[dict(m) for m in history], ai_config=ctx.config["ai"], client=ctx.http)
+            picked = media.threesome_pick(girl, history, show) if show else None
+            if picked is not None:
+                threesome, threesome_line = picked, media.threesome_line(picked, show)
         media_note = "\n".join(filter(None, [library_note, library_note and media.sent_line(library, history),
-                                             greeting and media.greeting_line(greeting)]))
+                                             greeting and media.greeting_line(greeting), threesome_line]))
         text = await ai_responder.generate_reply(
             api_key=ctx.key, history=[dict(m) for m in history], persona={}, ai_config=ctx.config["ai"],
             client=ctx.http, adaptive_style=ctx.config["human"]["adaptive_style"],
@@ -530,7 +555,13 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
             burst_keep_together=burst.get("keep_together", True))
         known = {item["id"]: item for item in library}
         text, ids = media.split_attachments(ai_responder.without_no_reply(text))
-        files = [*greeting, *(known[i] for i in ids if i in known and known[i] not in greeting)]
+        system = [*greeting, *threesome]
+        files = [*system, *(known[i] for i in ids if i in known and known[i] not in system)]
+        files = files[:media.MAX_ATTACHMENTS_PER_REPLY]
+        if step.get("threesome") is True and not any(item in girl for item in files):
+            failed.append("sent nothing of the threesome girl")
+        if step.get("threesome") is False and any(item in girl for item in files):
+            failed.append("sent the threesome girl")
         # The address the reply asked for goes in as a message of its own
         # (shown as sent by the system); the reply is checked without it.
         text, tagged = bookings.take_address_tag(text)
@@ -561,7 +592,7 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
         # messages (rates, extras), whose words would match anything.
         fixed = {_norm(t) for t in ctx.must_send.values()}
         failed += check_reply("\n".join(p for p in parts if _norm(p) not in fixed), step, state, ctx.never_says,
-                              files=len(files) - len(greeting))
+                              files=len([item for item in files if item not in system]))
         verdict = policy.check_outbound(sent, ctx.config, ctx.prompt.business_text)
         suspends = ctx.config["anomaly"]["tripwire_suspend"]
         failed += [("policy would hold it AND SWITCH THE ACCOUNT OFF (trip-wire): " if r in verdict.tripwire and suspends

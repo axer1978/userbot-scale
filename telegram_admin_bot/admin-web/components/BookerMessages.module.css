@@ -1,0 +1,69 @@
+/* The "messages to the booker" editor, shared by the admin panel (global
+   styles, 14px) and the owner pages (owner.module.css, 16px, phones first).
+   Only the tokens both declare are used (--bg, --bg-raised, --border, --text,
+   --muted, --accent, --accent-dim, --danger, --ok, --radius); buttons get
+   the host's own classes. Nothing here may be wider than its column. Some
+   rules start with .wrap to beat owner.module.css's `.root p` and
+   `.root button`. */
+
+.wrap { display: flex; flex-direction: column; gap: 14px; min-width: 0; max-width: 100%; }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.top { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-end; }
+.langField { display: flex; flex-direction: column; gap: 4px; flex: 0 1 260px; min-width: 0;
+  font-size: 13px; color: var(--muted); }
+.langField select { width: 100%; }
+.wrap .note { color: var(--muted); font-size: 13px; margin: 0; overflow-wrap: anywhere; }
+.readOnly { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 13px;
+  color: var(--muted); background: var(--bg); }
+.loading { color: var(--muted); padding: 20px 0; text-align: center; }
+
+.card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised);
+  padding: 12px 14px; min-width: 0; }
+.own { border-color: var(--accent); }
+.bad { border-color: var(--danger); }
+.cardHead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.cardHead .title { flex: 1; min-width: 0; margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--bg); color: var(--muted);
+  border: 1px solid var(--border); white-space: nowrap; }
+.tagOwn { background: var(--accent-dim); color: var(--text); border-color: var(--accent); }
+.wrap .about { color: var(--muted); font-size: 13px; margin: 4px 0 8px; overflow-wrap: anywhere; }
+
+.area { display: block; width: 100%; max-width: 100%; line-height: 1.45; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+.chipsLabel { font-size: 12px; color: var(--muted); align-self: center; }
+.wrap .chip { font: 12px/1.2 ui-monospace, Consolas, Menlo, monospace; min-height: 32px; padding: 4px 9px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  cursor: pointer; max-width: 100%; overflow-wrap: anywhere; }
+.chip:hover:not(:disabled) { border-color: var(--accent); }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chip:disabled { opacity: .6; cursor: default; }
+
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.count { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.over { color: var(--danger); font-weight: 600; }
+.wrap .kept { color: var(--muted); font-size: 12px; margin: 6px 0 0; overflow-wrap: anywhere; }
+.wrap .problems { color: var(--danger); font-size: 13px; margin: 8px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
+.problems li { margin-bottom: 2px; }
+
+.previewLabel { font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
+.preview { margin: 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+  font: inherit; font-size: 14px; line-height: 1.45; color: var(--text); max-width: 100%;
+  transition: opacity .15s; }
+.stale { opacity: .55; }
+.empty { color: var(--muted); font-style: italic; }
+
+/* Save, stuck to the bottom of whatever scrolls. */
+.bar { position: sticky; bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 12px; }
+.barRow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.barRow input { flex: 1 1 200px; min-width: 0; width: auto; }
+.dirty { font-size: 13px; color: var(--muted); }
+.outcome { font-size: 13px; border-radius: 8px; padding: 8px 12px; overflow-wrap: anywhere; }
+.outcome ul { margin: 4px 0 0; padding-left: 18px; }
+.ok { background: rgba(70, 185, 120, .15); border: 1px solid var(--ok); color: var(--text); }
+.err { background: rgba(242, 86, 90, .12); border: 1px solid var(--danger); color: var(--text); }
+.outcomeRow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }

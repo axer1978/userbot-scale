@@ -257,6 +257,41 @@ async def test_prices_without_the_address_and_an_unasked_extras_list_fail(monkey
     assert any(f.startswith("sent the fixed message starting 'domination +50") for f in second)
 
 
+def test_the_threesome_chats_load():
+    data = replay.load_all(["new-flow", "threesome"])
+    chats = [s for s in data["scenarios"] if s["id"].startswith("ts-")]
+    assert len(chats) >= 10 and all(s["threesome_girl"] for s in chats)
+    assert not any(s["threesome_girl"] for s in data["scenarios"] if s["id"].startswith("nf-"))
+    assert replay.validate({"scenarios": [{"id": "a", "steps": [{"customer": "x", "threesome": "yes"}]}]}) == [
+        "a: threesome is true or false"]
+
+
+@pytest.mark.asyncio
+async def test_the_threesome_girl_goes_with_the_reply_as_in_the_runtime(monkeypatch, tmp_path):
+    asked = []
+
+    async def check(**kw):
+        asked.append(kw["history"][-1]["content"])
+        return "any"
+
+    monkeypatch.setattr(ai_responder, "extract_threesome_request", check)
+    result, seen = await _replay(monkeypatch, tmp_path, [
+        {"customer": "threesome?", "threesome": True},
+        {"customer": "22:00", "threesome": False},
+        {"customer": "how much with both?", "threesome": False},
+        {"customer": "pics?", "threesome": False, "photos": True},
+    ], ["yes love with my friend 😘", "ok", "+250 love", "here love [send 1] [send 7]"],
+        first_reply_address=False, threesome_girl=True)
+    assert result.ok, result.turns
+    first = result.turns[0]
+    assert first["media"] == ["photo #7 (threesome girl): my friend Lina, blonde",
+                              "video #8 (threesome girl): Lina in a black dress"]
+    assert "the system sends photo #7 (threesome girl)" in seen[0]["media_note"]
+    # No word for it, no check; asked again, she has been seen; her tag is the model's to lose.
+    assert asked == ["threesome?", "how much with both?"]
+    assert result.turns[3]["media"] == ["photo #1: me in a red dress"]
+
+
 @pytest.mark.asyncio
 async def test_the_old_flow_still_wants_the_address_in_the_first_reply(monkeypatch, tmp_path):
     result, _ = await _replay(monkeypatch, tmp_path, [{"customer": "hi"}], ["hi love 😘 what time?"])

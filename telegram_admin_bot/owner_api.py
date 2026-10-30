@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 import audit
+import booker_settings
 import booking_states as bs
 import booking_store
 import controls
@@ -39,7 +40,9 @@ import owner_auth
 import stats
 import alerts
 import owner_admin_api
+import platform_api
 import tenant_config
+import tenants
 import terms
 import totp
 import unanswered
@@ -529,6 +532,38 @@ async def api_unanswered(tenant_id: Optional[int] = None, status: str = "open",
         raise HTTPException(status_code=404, detail="Unknown business")
     items = await unanswered.list_items(_get_pool(), ids, status=_STATUS_FILTER[status])
     return {"items": items}
+
+
+# ------------------------------------- how the messages to the booker look
+
+
+async def _bundle(owner: dict[str, Any], tenant_id: int) -> tenants.Bundle:
+    await _tenant(owner, tenant_id)
+    return await tenants.TenantStore(_get_pool()).bundle(tenant_id)
+
+
+@router.get("/api/owner/booker-messages")
+async def api_booker_messages(tenant_id: int, owner: dict = Depends(owner_auth.current_owner)) -> dict[str, Any]:
+    """The language and wording of the bot's messages to the person who
+    books, for one of their businesses (the same page as the admin's)."""
+    return booker_settings.view(await _bundle(owner, tenant_id))
+
+
+@router.post("/api/owner/booker-messages/preview")
+async def api_booker_messages_preview(tenant_id: int, body: booker_settings.MessagesBody,
+                                      owner: dict = Depends(owner_auth.current_owner)) -> dict[str, Any]:
+    bundle = await _bundle(owner, tenant_id)
+    return booker_settings.preview(bundle, body.language, body.messages)
+
+
+@router.put("/api/owner/booker-messages")
+async def api_save_booker_messages(tenant_id: int, body: booker_settings.MessagesBody,
+                                   owner: dict = Depends(owner_auth.current_owner)) -> dict[str, Any]:
+    await _tenant(owner, tenant_id)
+    bundle = await platform_api.guarded(booker_settings.save(
+        tenants.TenantStore(_get_pool()), tenant_id, body, actor=owner_auth.actor(owner)))
+    await platform_api.reload_accounts([bundle.tenant["session_id"]], bundle)
+    return booker_settings.view(bundle)
 
 
 # Postgres ids are int4: a bigger number is refused here (422) instead of

@@ -257,6 +257,12 @@ class SessionRuntime:
         self.offline_timer: Optional[asyncio.Task] = None
         self.active_chats: set[int] = set()
         self.sending_chats: set[int] = set()
+        # chat -> the tasks sending to it now (begin_sending), each with how
+        # many of its sends are under way (sends inside sends): those a newer
+        # draft never cuts short — a draft only waiting can be cancelled.
+        # And the signal a newer draft waits on until they are all done.
+        self._sending: dict[int, dict[Optional[asyncio.Task], int]] = {}
+        self._send_idle: dict[int, asyncio.Event] = {}
 
         self.flow = booking_flow.BookingFlow(self)
         self.REMINDER_TICK_SECONDS = 60
@@ -726,7 +732,9 @@ class SessionRuntime:
             dropped: set[int] = set()
             for chat_id, task in list(self.draft_tasks.items()):
                 if task is not current:
-                    if not task.done() and chat_id not in self.sending_chats:
+                    # Every draft but the one sending (waiting ones too) is
+                    # cut short, and its customer queued as unanswered.
+                    if not task.done() and not self.is_sending(chat_id, task):
                         dropped.add(chat_id)
                     self.cancel_draft(chat_id)
             dropped.update(await scheduler.clear_all_deferred(self.pool, self.tenant_id))
@@ -885,8 +893,7 @@ class SessionRuntime:
         await self.clear_deferred(chat_id)
         excerpt = text if len(text) <= 300 else text[:299] + "…"
         row = await self.flow.send_owner(
-            f"⚠️ {name} needs a person: their message contains “{keyword}”. The bot has stopped answering "
-            f"them until the chat is switched back on in the panel.\n\n“{excerpt}”",
+            self.flow.texts().say("escalation", name=name, keyword=keyword, excerpt=excerpt),
             reason="escalation to the owner",
         )
         told = row is not None
@@ -1212,13 +1219,19 @@ class SessionRuntime:
             return await self.db.find_by_wa_message_id(chat_id, value)
         return await self.db.find_by_telegram_id(chat_id, value)
 
+    def media_on(self) -> bool:
+        return bool(self.config["media"].get("enabled", True) and self.transport.can_send_files)
+
     def media_prompt(self) -> str:
-        if not self.config["media"].get("enabled", True) or not self.transport.can_send_files:
+        if not self.media_on():
             return ""
         self.media_library.refresh()
-        return media.prompt_section(
+        note = media.prompt_section(
             self.media_library.for_ai(), ask_before_video=self.config["media"].get("ask_before_video", True)
         )
+        if self.media_library.threesome_items():
+            note = "\n".join(filter(None, [note, media.THREESOME_RULE]))
+        return note
 
     def greeting_media(self, history: list[dict[str, Any]]) -> list[int]:
         """The files marked "greeting" that go out with the first reply in a
@@ -1242,6 +1255,35 @@ class SessionRuntime:
                 client=self.http_client, usage_sink=self.usage_sink("photo_check"),
             )
         return unsent if asked else []
+
+    async def threesome_media(self, history: list[dict[str, Any]]) -> Optional[tuple[list[int], str]]:
+        """The threesome girl's files to send with this reply, and the line
+        that tells the reply so, when he asks about a threesome or to see
+        her; None when he does not, or there is nothing to say about them.
+        A cheap word sieve first, then the threesome check."""
+        if not self.media_on():
+            return None
+        self.media_library.refresh()
+        items = self.media_library.threesome_items()
+        if not items or not media.threesome_may_come_up(history):
+            return None
+        try:
+            async with self.ai_gate():
+                show = await ai_responder.extract_threesome_request(
+                    api_key=self.deepseek_key, history=history, ai_config=self.config["ai"],
+                    client=self.http_client, usage_sink=self.usage_sink("threesome_check"),
+                )
+        except ai_responder.AIResponderError as exc:
+            # The reply still goes out, without her files.
+            log.warning("[%s]   the threesome check failed: %s", self.session_id, exc)
+            return None
+        if show is None:
+            return None
+        picked = media.threesome_pick(items, history, show)
+        if picked is None:
+            return None
+        log.info("[%s]   he asks about a threesome (%s).", self.session_id, show)
+        return [item["id"] for item in picked], media.threesome_line(picked, show)
 
     def contact_overrides(self, chat_id: Optional[int]) -> dict[str, Any]:
         if chat_id is None:
@@ -1604,11 +1646,50 @@ class SessionRuntime:
         except Exception as exc:
             log.warning("[%s] Could not %s: %s: %s", self.session_id, what, type(exc).__name__, exc)
 
+    def begin_sending(self, chat_id: int) -> None:
+        """A send to this chat starts (a reply and the marking of what it
+        told, the address, the way in): a newer draft does not cut it short
+        (cancel_draft), and waits for it before it reads the chat
+        (wait_while_sending), so news it carries is never said twice. Sends
+        inside sends are counted, and sends from several tasks at once (a
+        reply, and the way in sent when his photo comes): each one sending
+        is safe, whichever started first. Ended by end_sending in the same
+        task."""
+        task = asyncio.current_task()
+        senders = self._sending.setdefault(chat_id, {})
+        senders[task] = senders.get(task, 0) + 1
+        self.sending_chats.add(chat_id)
+        self._send_idle.setdefault(chat_id, asyncio.Event()).clear()
+
+    def end_sending(self, chat_id: int) -> None:
+        task = asyncio.current_task()
+        senders = self._sending.get(chat_id, {})
+        left = senders.get(task, 1) - 1
+        if left > 0:
+            senders[task] = left
+            return
+        senders.pop(task, None)
+        if senders:
+            return
+        self._sending.pop(chat_id, None)
+        self.sending_chats.discard(chat_id)
+        self._send_idle.setdefault(chat_id, asyncio.Event()).set()
+
+    def is_sending(self, chat_id: int, task: Optional[asyncio.Task]) -> bool:
+        """`task` is inside a send to this chat (begin_sending)."""
+        return task in self._sending.get(chat_id, {})
+
+    async def wait_while_sending(self, chat_id: int) -> None:
+        """Until no send to this chat is under way (begin_sending)."""
+        while chat_id in self.sending_chats:
+            await self._send_idle.setdefault(chat_id, asyncio.Event()).wait()
+
     def cancel_draft(self, chat_id: int) -> None:
         task = self.draft_tasks.pop(chat_id, None)
         if task is None or task.done():
             return
-        if chat_id in self.sending_chats:
+        if self.is_sending(chat_id, task):
+            # One sending: it finishes, and marks what it told as told.
             return
         task.cancel()
 
@@ -1642,6 +1723,10 @@ class SessionRuntime:
             await self.hub.broadcast({"type": "drafting", "chat_id": chat_id, "delay_seconds": round(delay, 1)})
             log.info("[%s]   drafting a reply for chat %s in %.0fs…", self.session_id, chat_id, delay)
             await asyncio.sleep(delay)
+            # A reply still going out in this chat first: what it told is
+            # marked as told before this one reads the chat and its news —
+            # and the checks below see how things stand once it may go.
+            await self.wait_while_sending(chat_id)
             # Quiet hours may have been switched on or moved while waiting.
             if (left := self.quiet_seconds_left()) > 0:
                 await self.defer_reply(chat_id, left + humanlike.sample_reply_delay(self.config["reply_delay"]))
@@ -1677,9 +1762,10 @@ class SessionRuntime:
             note = await self.flow.reply_note(chat_id)
             # While their time waits for the owner nothing is said — except
             # that photos they ask to see still go out: those they have not
-            # had, on their own, with no text.
+            # had, on their own, with no text. The owner's own words for
+            # them always go out.
             photos_only: list[dict[str, Any]] = []
-            if await self.flow.quiet_until_answered(chat_id, history):
+            if not note.her_words and await self.flow.quiet_until_answered(chat_id, history):
                 photos_only = await self.photos_they_asked_for(history)
                 if not photos_only:
                     await self.skip_reply(chat_id, OWNER_SKIP)
@@ -1706,9 +1792,13 @@ class SessionRuntime:
 
             if note.has_news:
                 log.info("[%s]   this reply carries booking news.", self.session_id)
+            # The threesome girl's photo and video, when he asks about a
+            # threesome or to see her: (their ids, the line for the reply).
+            threesome = None if photos_only else await self.threesome_media(history)
             # The tenant's "when not to answer" instruction is only offered
             # when there is nothing the reply must pass on.
-            no_reply = "" if note.has_news or photos_only else self.config["replies"]["no_reply_instruction"]
+            no_reply = ("" if note.has_news or photos_only or threesome
+                        else self.config["replies"]["no_reply_instruction"])
 
             media_note = self.media_prompt()
             if media_note and (had := media.sent_line(self.media_library.for_ai(), history)):
@@ -1717,6 +1807,10 @@ class SessionRuntime:
             greeting = [] if photos_only or not media_note else self.greeting_media(history)
             if greeting:
                 media_note += "\n" + media.greeting_line([self.media_library.get(i) for i in greeting])
+            if threesome:
+                media_note = "\n".join(filter(None, [media_note, threesome[1]]))
+            # What the system sends by itself, whatever the reply says.
+            system_files = [*greeting, *(i for i in (threesome[0] if threesome else []) if i not in greeting)]
             prompt = self.bundle.prompt if self.bundle is not None else None
             # Earlier moments like this one, with the business's real replies
             # (config retrieval): the note, and the replies in it for the
@@ -1773,13 +1867,15 @@ class SessionRuntime:
             # Before the policy check and the draft: what goes out (or waits
             # for approval) is the varied text. The address is a block by now.
             text = self.vary(text)
-            # Only what the AI was offered: never an arrival item (the way in).
+            # Only what the AI was offered: never an arrival item (the way
+            # in), never the threesome girl's (the system sends hers).
             attachments = [i for i in attachments
-                           if (item := self.media_library.get(i)) is not None and not item.get("send_on_arrival")]
+                           if (item := self.media_library.get(i)) is not None
+                           and not item.get("send_on_arrival") and not item.get(media.THREESOME)]
             if not media_note:
                 attachments = []
-            if greeting:
-                attachments = [*greeting, *(i for i in attachments if i not in greeting)]
+            if system_files:
+                attachments = [*system_files, *(i for i in attachments if i not in system_files)]
                 attachments = attachments[:media.MAX_ATTACHMENTS_PER_REPLY]
             parts = self.burst_parts(text)
             if not parts and not attachments:
@@ -1789,9 +1885,11 @@ class SessionRuntime:
                     media.label(self.media_library.get(i)) for i in attachments
                 ))
 
-            # The greeting video is the business's own choice, not the AI's.
+            # The greeting video and the threesome girl's are the business's
+            # own choice, not the AI's.
             holds_video = any(
-                (self.media_library.get(i) or {}).get("kind") == media.VIDEO for i in attachments if i not in greeting
+                (self.media_library.get(i) or {}).get("kind") == media.VIDEO
+                for i in attachments if i not in system_files
             )
             hold = holds_video and self.config["media"]["videos_need_approval"]
             verdict = await self.check_policy(chat_id, text, prompt)
@@ -1800,38 +1898,41 @@ class SessionRuntime:
             # The fallback phrase was found before sending (above), queued
             # after: the reply still goes out (or is drafted) as normal.
 
-            if self.config["auto_send"] and self.transport.can_send and not hold and verdict.ok:
-                self.sending_chats.add(chat_id)
-                try:
+            # From here a newer draft does not cut this one short (cancel_draft):
+            # once the reply is out or saved, the news it carried must be marked
+            # as told (flow.delivered), or it would be said twice.
+            self.begin_sending(chat_id)
+            try:
+                if self.config["auto_send"] and self.transport.can_send and not hold and verdict.ok:
                     await self.send_burst(
                         chat_id, parts, typing=True, attachments=attachments,
                         actor=audit.BOT, reason="automatic reply", llm_model=model, prompt_version=version,
                     )
-                finally:
-                    self.sending_chats.discard(chat_id)
-                log.info(
-                    "[%s] Auto-sent AI reply to chat %s%s.", self.session_id, chat_id,
-                    f" as {len(parts)} messages" if len(parts) > 1 else "",
-                )
-            else:
-                if hold and self.config["auto_send"]:
-                    log.info("[%s]   reply carries a video — held for approval in the panel.", self.session_id)
-                row = await self.db.record_message(
-                    chat_id, DIR_OUT, STATUS_PENDING, text, bump_preview=False, attachments=attachments,
-                    llm_model=model, prompt_version=version,
-                )
-                if row is not None:
-                    await self.push_message(row)
-                log.info("[%s] Draft awaiting approval for chat %s.", self.session_id, chat_id)
-                # Waiting for approval because auto_send is off or for a
-                # video is a normal draft; held by policy is unanswered.
-                if not verdict.ok:
-                    await self.queue_unanswered(chat_id, unanswered.POLICY_HOLD, "; ".join(verdict.reasons))
-            if fallback:
-                await self.queue_unanswered(chat_id, unanswered.FALLBACK, f"the reply contains “{fallback}”")
-            if not photos_only:
-                # Photos alone pass on no booking news.
-                await self.flow.delivered(chat_id, note)
+                    log.info(
+                        "[%s] Auto-sent AI reply to chat %s%s.", self.session_id, chat_id,
+                        f" as {len(parts)} messages" if len(parts) > 1 else "",
+                    )
+                else:
+                    if hold and self.config["auto_send"]:
+                        log.info("[%s]   reply carries a video — held for approval in the panel.", self.session_id)
+                    row = await self.db.record_message(
+                        chat_id, DIR_OUT, STATUS_PENDING, text, bump_preview=False, attachments=attachments,
+                        llm_model=model, prompt_version=version,
+                    )
+                    if row is not None:
+                        await self.push_message(row)
+                    log.info("[%s] Draft awaiting approval for chat %s.", self.session_id, chat_id)
+                    # Waiting for approval because auto_send is off or for a
+                    # video is a normal draft; held by policy is unanswered.
+                    if not verdict.ok:
+                        await self.queue_unanswered(chat_id, unanswered.POLICY_HOLD, "; ".join(verdict.reasons))
+                if fallback:
+                    await self.queue_unanswered(chat_id, unanswered.FALLBACK, f"the reply contains “{fallback}”")
+                if not photos_only:
+                    # Photos alone pass on no booking news.
+                    await self.flow.delivered(chat_id, note)
+            finally:
+                self.end_sending(chat_id)
             await scheduler.clear_deferred(self.pool, self.tenant_id, chat_id)
             self.schedule_go_offline(chat_id)
 
@@ -2273,8 +2374,11 @@ class SessionRuntime:
         if is_provider:
             if has_photo and await self.save_owner_photo(message, text):
                 return
-            if has_text and await self.flow.on_owner_message(chat_id, text, message.reply_to):
-                log.info("[%s]   booking command from the owner — handled.", self.session_id)
+            # A command, or (booking.owner_free_text) anything she writes:
+            # read and answered by the booking flow, never with a reply
+            # meant for a customer.
+            if has_text and await self.flow.on_owner_message(chat_id, text, message.reply_to, message_id):
+                log.info("[%s]   message from the booking owner — handled by the booking flow.", self.session_id)
                 return
             log.info("[%s]   message from the booking owner; replying as usual.", self.session_id)
 

@@ -132,6 +132,47 @@ async def test_a_row_cannot_carry_one_tenants_id_and_anothers_account(stores, pg
         )
 
 
+def news(tell, item_id):
+    return {"id": item_id, "at": NOW.isoformat(), "tell": tell, "ask": "", "extras_ok": [], "extras_no": []}
+
+
+async def test_the_bookers_words_wait_on_the_booking_until_a_reply_carries_them(stores):
+    a, b = stores
+    booking = await make(a)
+    assert booking["booker_news"] == [] and (booking["extras_ok"], booking["extras_no"]) == ("", "")
+    # Added in the statement itself: two at once both stay, in order.
+    await asyncio.gather(a.add_booker_news(booking["id"], news("bring cash", "n1")),
+                         a.add_booker_news(booking["id"], news("come alone", "n2")))
+    updated = await a.add_booker_news(booking["id"], news("I'm late", "n3"), extras_no="anal",
+                                      booker_asked_at=NOW)
+    assert {i["id"] for i in updated["booker_news"][:2]} == {"n1", "n2"} and updated["booker_news"][2]["id"] == "n3"
+    assert (updated["extras_no"], updated["booker_asked_at"]) == ("anal", NOW)
+    assert [x["id"] for x in await a.with_news(42)] == [booking["id"]] and await a.with_news(43) == []
+    # A reply carried the first two: the one added meanwhile stays.
+    await a.clear_booker_news(booking["id"], ["n1", "n2"])
+    assert [i["tell"] for i in (await a.get(booking["id"]))["booker_news"]] == ["I'm late"]
+    await a.clear_booker_news(booking["id"], ["n3"])
+    assert (await a.get(booking["id"]))["booker_news"] == [] and await a.with_news(42) == []
+    # Only for its own tenant, and the row goes to the panel as JSON.
+    with pytest.raises(booking_store.BookingNotFound):
+        await b.add_booker_news(booking["id"], news("x", "n4"))
+    with pytest.raises(ValueError):
+        await a.add_booker_news(booking["id"], news("x", "n5"), booker_news="[]")
+    json.dumps(booking_store.public(updated))
+
+
+async def test_the_extras_she_refused_hold_for_every_booking_of_the_chat(stores):
+    a, b = stores
+    first = await make(a)
+    await a.set_fields(first["id"], extras_no="anal, Domination", extras_ok="kissing")
+    await a.apply(first, bs.cancel(first, actor=bs.CUSTOMER, now=NOW), actor=bs.CUSTOMER)
+    # A later booking: her latest word on an extra counts.
+    second = await make(a, T0 + timedelta(days=1))
+    await a.set_fields(second["id"], extras_ok="domination", extras_no="kissing")
+    assert await a.refused_extras(42) == ["anal", "kissing"]
+    assert await a.refused_extras(43) == [] and await b.refused_extras(42) == []
+
+
 async def test_customer_refs_differ_per_tenant(stores):
     a, b = stores
     assert (await make(a))["customer_ref"] != (await make(b))["customer_ref"]
