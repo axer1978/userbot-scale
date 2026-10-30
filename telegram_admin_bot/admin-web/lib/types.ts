@@ -207,7 +207,9 @@ export type AiUsage = {
 
 /* ---------------------------------------------------------------- platform */
 
-export type TreeIndustry = { id: number; name: string };
+// A folder of clients: a top-level industry (parent_id null) or a sub-folder
+// of another folder, any levels deep. path: "escort › Tallinn".
+export type TreeIndustry = { id: number; name: string; parent_id: number | null; path: string };
 export type TreeTenant = { id: number; name: string; industry_id: number; status: string; session_id?: string | null };
 export type PlatformTree = { base_version: number; industries: TreeIndustry[]; tenants: TreeTenant[] };
 
@@ -240,7 +242,7 @@ export type PromptSection = {
 
 export type TenantView = {
   tenant: { id: number; name: string; status: string; session_id?: string | null; industry_id: number };
-  industry: { id: number; name: string; template_version: number };
+  industry: { id: number; name: string; path: string; parent_id: number | null; template_version: number };
   config: ConfigView;
   prompt: {
     sections: PromptSection[];
@@ -256,11 +258,19 @@ export type TenantView = {
 };
 
 export type IndustryView = {
-  industry: { id: number; name: string; template_version: number };
-  sections: { key: string; heading: string; text: string }[];
+  industry: { id: number; name: string; path: string; parent_id: number | null; template_version: number };
+  // The folders above it, the top-level industry first (none for that one).
+  parents: { id: number; name: string }[];
+  // text: what its clients get. In a sub-folder also what it inherits from
+  // the folder above and its own change, if any (as a client's layer).
+  sections: {
+    key: string; heading: string; text: string;
+    inherited?: string; override?: { mode: "override" | "append"; text: string } | null; append_only?: boolean;
+  }[];
   config: ConfigView;
   versions: Version[];
   tenants: { id: number; name: string; prompt_pin_version?: number | null }[];
+  folders: { id: number; name: string }[];
 };
 
 export type BaseView = {
@@ -604,8 +614,13 @@ export type BusinessLayer = {
 };
 
 export type FinetuneIndustry = {
-  industry: { id: number; name: string; template_version: number };
+  industry: { id: number; name: string; path: string; parent_id: number | null; template_version: number };
+  // This folder's own template ("" if it has none).
   template: string;
+  // Without one of its own, a sub-folder runs on the nearest folder's above
+  // it: that template, and the folder's name ("" if it has its own or none).
+  inherited_template: string;
+  template_from: string;
   // The shipped starting point for this industry ("" if none).
   default_template: string;
   placeholders: string[];

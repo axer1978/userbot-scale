@@ -451,6 +451,26 @@ How a client's bot behaves comes from three layers, lowest first:
 | Industry | **Clients → the industry folder** | A prompt template (one text per section) and default settings for every client in it |
 | Client | **Clients → the client** | Only what differs for this business: its own settings, and per prompt section *override* or *append* |
 
+### Folders inside folders
+
+An industry can hold **sub-folders**, any levels deep (*escort › Tallinn ›
+Old town*), so a group of clients can have its own tuning while the rest of
+the industry keeps the shared one. Open a folder and press **+ Sub-folder**;
+move a client into it with the **Folder** list on the client.
+
+A sub-folder holds only what it changes. In its **Template** tab each section
+is *Inherit* (the folder above's text, which keeps following it), *Override*
+or *Append*, the way a client's prompt is; **What not to do** can only be
+appended to. Its **Default config** sets only its own rows, on top of the
+folder above's. Its clients get every level: the top industry, each folder
+down to theirs, then their own layer. Rules made for a folder reach every
+client under it. A **Finetune** run's industry standard is saved into the
+client's own folder (only what differs from the folder above), and a folder
+without a finetune template of its own uses the nearest one above it.
+Verification is switched per top-level industry and covers the folders inside
+it. **Rename** works on any folder; **Delete** only on an empty sub-folder
+with no finetune runs or rules of its own.
+
 In a client's **Config** tab, greyed rows are inherited and highlighted rows are
 set for this client. **Override** sets a value here, **Inherit** removes it.
 Every value is checked when you save; nothing is silently clamped, and an

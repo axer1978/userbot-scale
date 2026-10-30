@@ -327,9 +327,9 @@ function BusinessStep({ status, onSave }: { status: OnboardingStatus; onSave: (n
         <input type="text" maxLength={200} placeholder="The business name customers know" value={name}
                onChange={(ev) => setName(ev.target.value)} />
       </Field>
-      <Field label="Industry" hint="Decides the default settings and the prompt template it starts from.">
+      <Field label="Industry or folder" hint="Decides the default settings and the prompt template it starts from.">
         <select value={industry} onChange={(ev) => setIndustry(ev.target.value)}>
-          {industries.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+          {industries.map((i) => <option key={i.id} value={i.id}>{i.path}</option>)}
         </select>
       </Field>
       <div className="pf-errors">{error}</div>

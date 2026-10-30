@@ -74,7 +74,7 @@ async def _reload(*changed: dict[str, Any]) -> None:
     s = platform_api.store()
     sessions: set[Optional[str]] = set()
     for industry_id in {r["industry_id"] for r in changed if r["tenant_id"] is None}:
-        sessions |= {t["session_id"] for t in await s.tenants_in_industry(industry_id)}
+        sessions |= {t["session_id"] for t in await s.tenants_in_subtree(industry_id)}
     for tenant_id in {r["tenant_id"] for r in changed if r["tenant_id"] is not None}:
         sessions.add((await s.get(tenant_id))["session_id"])
     await platform_api.reload_accounts(sorted(session for session in sessions if session))

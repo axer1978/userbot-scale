@@ -729,6 +729,36 @@ def resolve(industry: Optional[dict[str, Any]] = None, client: Optional[dict[str
     return Resolved(config, sources)
 
 
+def merge(parent: Optional[dict[str, Any]], child: Optional[dict[str, Any]],
+          model: type[BaseModel] = TenantConfig) -> dict[str, Any]:
+    """Two partial overrides as one: `child` on top of `parent`, the way
+    resolve() would apply them one after the other. A folder's settings on
+    top of its parent folder's (tenants.py). Nothing is validated here:
+    resolve() reports whatever the result gets wrong."""
+    out = copy.deepcopy(parent) if isinstance(parent, dict) else {}
+    if not isinstance(child, dict):
+        return out
+    for key, value in child.items():
+        field = model.model_fields.get(key)
+        sub = _submodel(field.annotation) if field is not None else None
+        before = out.get(key)
+        if sub is not None and isinstance(value, dict) and isinstance(before, dict):
+            out[key] = merge(before, value, sub)
+        elif (field is not None and _is_list(field.annotation) and isinstance(value, dict)
+              and set(value) == {"append"} and isinstance(value["append"], list) and before is not None):
+            # An append on top of a list makes a list; on top of an append,
+            # one longer append, still added to whatever is above both.
+            if isinstance(before, list):
+                out[key] = before + [v for v in value["append"] if v not in before]
+            elif isinstance(before, dict) and isinstance(before.get("append"), list):
+                out[key] = {"append": before["append"] + [v for v in value["append"] if v not in before["append"]]}
+            else:
+                out[key] = copy.deepcopy(value)
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
 def get_path(data: dict[str, Any], path: str) -> Any:
     node: Any = data
     for part in path.split("."):

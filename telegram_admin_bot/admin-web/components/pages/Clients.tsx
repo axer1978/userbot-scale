@@ -4,6 +4,8 @@
 // client's bot behaves (config), what it knows (prompt), and the version
 // history of both are edited here, against platform_api.py. The account's
 // pause switch and per-contact styles stay in the top bar and Style dialog.
+// A folder can hold sub-folders, any levels deep: a sub-folder changes only
+// what it needs in the template and settings of the folder above it.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookerMessagesEditor, type BookerMessagesClient, type BookerUi } from "@/components/BookerMessagesEditor";
@@ -15,7 +17,7 @@ import { cx, fmtTime } from "@/lib/format";
 import { usePanel } from "@/lib/panel";
 import type {
   AuditEvent, BaseView, BookerMessagesView, BookerPreview, ConfigProposal, IndustryView, PlatformTree, TenantView,
-  Version,
+  TreeIndustry, Version,
 } from "@/lib/types";
 import { useLoader } from "@/lib/useLoader";
 
@@ -322,6 +324,60 @@ function IndustryTemplate({ v, id, reload }: { v: IndustryView; id: number; relo
   );
 }
 
+/** A sub-folder's template: per section, what it inherits from the folder
+ *  above and what it changes, the way a client's prompt does. */
+function FolderTemplate({ v, id, reload }: { v: IndustryView; id: number; reload: () => Promise<void> }) {
+  const toast = useToast();
+  const above = v.parents[v.parents.length - 1]?.name ?? "";
+  const [editors, setEditors] = useState(() => v.sections.map((s) => ({
+    key: s.key, mode: (s.override ? s.override.mode : "inherit") as "inherit" | "override" | "append",
+    text: s.override ? s.override.text : "",
+  })));
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <>
+      <p className="pf-note">Each section comes from {above}. Override replaces it for every client in {v.industry.name}
+        {" "}and the folders inside it, append adds to it. Saving makes a new version and puts it live for them; a change
+        in {above} still reaches every section left on inherit.</p>
+      {v.sections.map((section, i) => {
+        const ed = editors[i];
+        return (
+          <div key={section.key} className={cx("pf-section", ed.mode !== "inherit" && "overridden")}>
+            <div className="title">
+              {section.heading}
+              <select value={ed.mode} onChange={(ev) => setEditors((list) => list.map((e, n) =>
+                n === i ? { ...e, mode: ev.target.value as typeof e.mode } : e))}>
+                <option value="inherit">Inherit from {above}</option>
+                {!section.append_only && <option value="override">Override</option>}
+                <option value="append">Append</option>
+              </select>
+            </div>
+            <div className="inherited-text">{section.inherited || `(${above} leaves this empty)`}</div>
+            {ed.mode !== "inherit" && (
+              <textarea rows={3} placeholder={`${v.industry.name}'s text`} value={ed.text}
+                        onChange={(ev) => setEditors((list) => list.map((e, n) => (n === i ? { ...e, text: ev.target.value } : e)))} />
+            )}
+          </div>
+        );
+      })}
+      <div className="pf-actions">
+        <input placeholder="What changed (saved with the new version)" value={note} onChange={(ev) => setNote(ev.target.value)} />
+        <button type="button" className="btn primary" disabled={busy} onClick={async () => {
+          const overrides: Record<string, { mode: string; text: string }> = {};
+          for (const e of editors) if (e.mode !== "inherit" && e.text.trim()) overrides[e.key] = { mode: e.mode, text: e.text };
+          setBusy(true);
+          try {
+            const saved = await api<{ template_version: number }>("PUT", `/api/industries/${id}/template`, { overrides, note: note.trim() });
+            toast(`Template v${saved.template_version} is live.`, "info");
+            await reload();
+          } catch (err) { toast(errorText(err)); } finally { setBusy(false); }
+        }}>Save as new version</button>
+      </div>
+    </>
+  );
+}
+
 /* -------------------------------------------------------------------- base */
 
 function BaseRules({ v, reload }: { v: BaseView; reload: () => Promise<void> }) {
@@ -453,31 +509,40 @@ export function Clients({ initialNode, initialTab }: { initialNode: TreeNode | n
 
   /* ---------------------------------------------------------- the tree */
 
+  // A folder, then the folders inside it, then its own clients; each level
+  // indented one step more.
+  const folderNode = (industry: TreeIndustry, depth: number): React.ReactNode => {
+    if (!tree) return null;
+    const clients = tree.tenants.filter((c) => c.industry_id === industry.id);
+    const inside = tree.industries.filter((i) => i.parent_id === industry.id);
+    return (
+      <div key={industry.id}>
+        <button type="button" className={cx("pf-node folder", sameNode(node, { kind: "industry", id: industry.id }) && "active")}
+                style={depth ? { paddingLeft: 16 + depth * 16 } : undefined}
+                onClick={() => select({ kind: "industry", id: industry.id })}>
+          📁 {industry.name} <span className="count">{clients.length}</span>
+        </button>
+        {inside.map((child) => folderNode(child, depth + 1))}
+        {clients.map((client) => (
+          <button key={client.id} type="button"
+                  className={cx("pf-node client", sameNode(node, { kind: "tenant", id: client.id }) && "active")}
+                  style={depth ? { paddingLeft: 32 + depth * 16 } : undefined}
+                  onClick={() => select({ kind: "tenant", id: client.id })}>
+            {client.name}
+            {client.status !== "active" && <span className="count">{client.status}</span>}
+          </button>
+        ))}
+      </div>
+    );
+  };
+
   const nav = tree && (
     <nav id="pf-tree">
       <button type="button" className={cx("pf-node folder", sameNode(node, { kind: "base", id: 0 }) && "active")}
               onClick={() => select({ kind: "base", id: 0 })}>
         Platform rules <span className="count">v{tree.base_version}</span>
       </button>
-      {tree.industries.map((industry) => {
-        const clients = tree.tenants.filter((c) => c.industry_id === industry.id);
-        return (
-          <div key={industry.id}>
-            <button type="button" className={cx("pf-node folder", sameNode(node, { kind: "industry", id: industry.id }) && "active")}
-                    onClick={() => select({ kind: "industry", id: industry.id })}>
-              📁 {industry.name} <span className="count">{clients.length}</span>
-            </button>
-            {clients.map((client) => (
-              <button key={client.id} type="button"
-                      className={cx("pf-node client", sameNode(node, { kind: "tenant", id: client.id }) && "active")}
-                      onClick={() => select({ kind: "tenant", id: client.id })}>
-                {client.name}
-                {client.status !== "active" && <span className="count">{client.status}</span>}
-              </button>
-            ))}
-          </div>
-        );
-      })}
+      {tree.industries.filter((industry) => industry.parent_id === null).map((industry) => folderNode(industry, 0))}
       <div className="pf-tree-actions">
         <button type="button" className="btn small" onClick={async () => {
           const name = ((await prompt("Name of the new industry:")) || "").trim();
@@ -505,7 +570,7 @@ export function Clients({ initialNode, initialTab }: { initialNode: TreeNode | n
 
     if (node.kind === "tenant" && "tenant" in view) {
       const v = view;
-      crumb = `${v.industry.name} › ${v.tenant.name}`;
+      crumb = `${v.industry.path} › ${v.tenant.name}`;
       const props: TenantProps = { v, id: node.id, setView: setTenantView, reload: () => loadDetail() };
       head = (
         <div className="pf-head">
@@ -521,24 +586,24 @@ export function Clients({ initialNode, initialTab }: { initialNode: TreeNode | n
           <select value={String(v.tenant.industry_id)} onChange={async (ev) => {
             const target = tree.industries.find((i) => String(i.id) === ev.target.value);
             if (!target) return;
-            if (!(await confirm(`Move ${v.tenant.name} to ${target.name}? It will inherit that industry's template and ` +
+            if (!(await confirm(`Move ${v.tenant.name} to ${target.path}? It will inherit that folder's template and ` +
                                 "defaults, and any pinned template version is released."))) return;
-            await patchTenant(node.id, { industry_id: target.id, reason: "moved to " + target.name });
+            await patchTenant(node.id, { industry_id: target.id, reason: "moved to " + target.path });
           }}>
-            {tree.industries.map((i) => <option key={i.id} value={String(i.id)}>Industry: {i.name}</option>)}
+            {tree.industries.map((i) => <option key={i.id} value={String(i.id)}>Folder: {i.path}</option>)}
           </select>
         </div>
       );
       body = {
         config: <ConfigEditor key={generation} fields={v.config.fields} overrides={v.config.overrides} layer="client"
-                              inheritedLabel={`the ${v.industry.name} industry or the platform defaults`}
+                              inheritedLabel={`the ${v.industry.path} folder or the platform defaults`}
                               revision={v.config.revision}
                               save={async (b) => setTenantView(await api<TenantView>("PUT", `/api/tenants/${node.id}/config`, b))} />,
         prompt: <TenantPrompt key={generation} {...props} />,
         versions: <TenantVersions key={generation} {...props} />,
         preview: <>
           <p className="pf-note">Exactly what the model is given before the conversation, as {v.prompt.version_tag} (platform
-            rules / industry template / client version). Per-reply notes (appointments, media, style) are added at runtime.</p>
+            rules / each folder&apos;s template, top first / client version). Per-reply notes (appointments, media, style) are added at runtime.</p>
           <pre className="pf-rendered">{v.prompt.rendered}</pre>
         </>,
         booker: <TenantBookerMessages key={node.id} id={node.id} onDirtyChange={setBookerDirty} />,
@@ -547,17 +612,57 @@ export function Clients({ initialNode, initialTab }: { initialNode: TreeNode | n
       }[tab];
     } else if (node.kind === "industry" && "sections" in view) {
       const v = view;
-      crumb = v.industry.name;
+      const sub = v.industry.parent_id !== null;
+      const above = v.parents[v.parents.length - 1];
+      crumb = v.industry.path;
       head = (
         <div className="pf-head">
           <h3>{v.industry.name}</h3>
-          <span className="muted">live template v{v.industry.template_version} · {v.tenants.length} client(s)</span>
+          <span className="muted">
+            {sub && <>inside {v.parents.map((p) => p.name).join(" › ")} · </>}
+            live template v{v.industry.template_version} · {v.tenants.length} client(s)
+            {v.folders.length > 0 && <> · {v.folders.length} folder(s)</>}
+          </span>
+          <span className="spacer" />
+          <button type="button" className="btn small" onClick={async () => {
+            const name = ((await prompt(`Name of the new folder inside ${v.industry.name}:`)) || "").trim();
+            if (!name) return;
+            try {
+              const created = await api<{ id: number }>("POST", "/api/industries", { name, parent_id: node.id });
+              await loadTree();
+              select({ kind: "industry", id: created.id });
+            } catch (err) { toast(errorText(err)); }
+          }}>+ Sub-folder</button>
+          <button type="button" className="btn small" onClick={async () => {
+            const name = ((await prompt("New name for this folder:", v.industry.name)) || "").trim();
+            if (!name || name === v.industry.name) return;
+            try {
+              await api("PATCH", `/api/industries/${node.id}`, { name, reason: "renamed" });
+              await reload();
+              toast("Renamed.", "info");
+            } catch (err) { toast(errorText(err)); }
+          }}>Rename</button>
+          {sub && (
+            <button type="button" className="btn small" onClick={async () => {
+              const reason = await askReason(`deleting the folder ${v.industry.path}`);
+              if (reason === null) return;
+              try {
+                await api("DELETE", `/api/industries/${node.id}?reason=${encodeURIComponent(reason)}`);
+                await loadTree();
+                if (above) select({ kind: "industry", id: above.id });
+                toast("Folder deleted.", "info");
+              } catch (err) { toast(errorText(err)); }
+            }}>Delete</button>
+          )}
         </div>
       );
       body = {
-        template: <IndustryTemplate key={generation} v={v} id={node.id} reload={() => loadDetail()} />,
-        config: <ConfigEditor key={generation} fields={v.config.fields} overrides={v.config.overrides} layer="industry"
-                              inheritedLabel="the platform defaults" revision={v.config.revision}
+        template: sub ? <FolderTemplate key={generation} v={v} id={node.id} reload={() => loadDetail()} />
+          : <IndustryTemplate key={generation} v={v} id={node.id} reload={() => loadDetail()} />,
+        config: <ConfigEditor key={generation} fields={v.config.fields} overrides={v.config.overrides}
+                              layer={sub ? "client" : "industry"} layerLabel={sub ? "folder" : undefined}
+                              inheritedLabel={sub && above ? `${above.name} or the platform defaults` : "the platform defaults"}
+                              revision={v.config.revision}
                               save={async (b) => { await api("PUT", `/api/industries/${node.id}/config`, b); await loadDetail(); }} />,
         versions: <VersionList versions={v.versions} current={v.industry.template_version} actionLabel="Make live"
                                onPick={async (version) => {
@@ -570,7 +675,14 @@ export function Clients({ initialNode, initialTab }: { initialNode: TreeNode | n
                                }} />,
         clients: (
           <div className="pf-list">
-            {!v.tenants.length && <p className="pf-note">No clients in this industry.</p>}
+            {v.folders.map((f) => (
+              <div key={`folder-${f.id}`} className="v">
+                <div className="grow">📁 {f.name}</div>
+                <span className="muted">sub-folder</span>
+                <button type="button" className="btn small" onClick={() => select({ kind: "industry", id: f.id })}>Open</button>
+              </div>
+            ))}
+            {!v.tenants.length && <p className="pf-note">No clients in this folder itself.</p>}
             {v.tenants.map((t) => (
               <div key={t.id} className="v">
                 <div className="grow">{t.name}</div>
