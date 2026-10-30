@@ -49,6 +49,7 @@ import prompt_layers
 import stats
 import tenants
 import vision
+import wa_store
 
 log = logging.getLogger("finetune_api")
 
@@ -485,7 +486,8 @@ async def _chat(con: Any, tenant_id: int, chat_id: int,
     """The conversation row and the chat's lines (finetune.chat_lines), up to
     message `upto` when given."""
     conversation = await con.fetchrow(
-        "SELECT display_name, username FROM conversations WHERE tenant_id = $1 AND chat_id = $2", tenant_id, chat_id)
+        f"SELECT display_name, username, {wa_store.push_name_sql('c')} AS person_name FROM conversations c "
+        "WHERE tenant_id = $1 AND chat_id = $2", tenant_id, chat_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Unknown conversation")
     rows = await con.fetch(
@@ -498,6 +500,7 @@ async def _chat(con: Any, tenant_id: int, chat_id: int,
 def _masks(bundle: tenants.Bundle, conversation: Any) -> list[tuple[str, str]]:
     booking = bundle.config.get("booking") or {}
     return finetune.masks_for(display_name=conversation["display_name"] or "",
+                              person_name=conversation.get("person_name") or "",
                               username=conversation["username"] or "",
                               address=booking.get("address", ""), way_in=booking.get("arrival_instructions", ""))
 
@@ -733,8 +736,8 @@ async def _hand_chats(tenant_id: int, also: list[int]) -> tuple[tenants.Bundle, 
         rows = await con.fetch(_HAND_MESSAGES, list(bundles), audit.MESSAGE_SENT, _MACHINE_ACTORS, _RAW_ROWS)
         keys = sorted({(r["tenant_id"], r["chat_id"]) for r in rows})
         people = await con.fetch(
-            "SELECT tenant_id, chat_id, display_name, username FROM conversations "
-            "WHERE (tenant_id, chat_id) IN (SELECT * FROM unnest($1::int[], $2::bigint[]))",
+            f"SELECT tenant_id, chat_id, display_name, username, {wa_store.push_name_sql('c')} AS person_name "
+            "FROM conversations c WHERE (tenant_id, chat_id) IN (SELECT * FROM unnest($1::int[], $2::bigint[]))",
             [k[0] for k in keys], [k[1] for k in keys])
     conversations = {(p["tenant_id"], p["chat_id"]): p for p in people}
     messages: dict[tuple[int, int], list[dict[str, Any]]] = {}

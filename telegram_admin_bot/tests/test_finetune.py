@@ -384,6 +384,13 @@ def test_personal_data_and_the_way_in_are_masked():
     assert finetune.mask("Hi my love, Love", finetune.masks_for(display_name="Love")) == "Hi my love, [client]"
 
 
+def test_a_whatsapp_chat_labelled_with_the_number_still_hides_his_name():
+    masks = finetune.masks_for(display_name="+37126123456", person_name="Toms Berzins")
+    assert finetune.mask("Hi Toms, this is +37126123456? Toms Berzins here", masks) == \
+        "Hi [client], this is [number]? [client] here"
+    assert ("+37126123456", "[client]") not in masks
+
+
 def test_a_flagged_chat_carries_the_operators_judgement_and_corrections():
     from zoneinfo import ZoneInfo
 

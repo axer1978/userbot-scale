@@ -244,6 +244,8 @@ customer's phone ─▶ WhatsApp ─▶ wa-gateway socket (messages.upsert, noti
         │
         ▼ WhatsAppTransport.drain (on the event, on connect, every 15 s)
    wa_store.chat_for(phone_jid, lid, push_name) ─▶ chat_id (wa_peers; created or completed)
+   label (display_name, booking customer_name) = the person's number; the push name only
+        when WhatsApp hides the number (finetune still masks the push name)
    messages.wa_message_id already there? ─▶ delete the row, done
    from_me (typed on the phone) ─▶ handle_own_echo: stored, human takeover
    otherwise ─▶ SessionRuntime.handle_inbound ─▶ the same path as "Message flow" above

@@ -435,6 +435,53 @@ def test_jid_helpers():
     assert wa_store.phone_jid_for("+34 600 12 34 56") == "34600123456@s.whatsapp.net"
     with pytest.raises(ValueError):
         wa_store.phone_jid_for("hello")
+    # A chat is labelled with the number; the name only when WhatsApp hides the number.
+    assert wa_store.display_name({"chat_id": 5, "phone_jid": ANNA_PN, "push_name": "Anna"}) == "+34600123456"
+    assert wa_store.display_name({"chat_id": 5, "phone_jid": None, "lid": ANNA_LID, "push_name": "Anna"}) == "Anna"
+    assert wa_store.display_name({"chat_id": 5, "phone_jid": None, "lid": ANNA_LID, "push_name": ""}) ==         "WhatsApp chat 5"
+
+
+@pytest.mark.asyncio
+async def test_a_chat_without_a_known_number_keeps_the_name(wa, pg_pool):
+    await put_inbox(pg_pool, "3EB0AA10", jid=ANNA_LID, phone_jid=None, lid=ANNA_LID, push_name="Anna")
+    await wa.transport.drain()
+    chat_id, _ = await wa_store.chat_for(pg_pool, SID, lid=ANNA_LID)
+    assert (await wa.db.get_conversation(chat_id))["display_name"] == "Anna"
+    # Later WhatsApp tells the number: the next message labels the chat with it.
+    await put_inbox(pg_pool, "3EB0AA11", jid=ANNA_LID, phone_jid=ANNA_PN, lid=ANNA_LID, push_name="Anna")
+    await wa.transport.drain()
+    assert (await wa.db.get_conversation(chat_id))["display_name"] == "+34600123456"
+
+
+@pytest.mark.asyncio
+async def test_chats_and_bookings_stored_by_name_are_relabelled_at_start(wa, pg_pool):
+    from datetime import datetime, timedelta, timezone
+
+    anna, _ = await wa_store.chat_for(pg_pool, SID, phone_jid="34600123456:12@s.whatsapp.net", push_name="Anna")
+    hidden, _ = await wa_store.chat_for(pg_pool, SID, lid="999888777@lid", push_name="Bea")
+    await wa.db.upsert_conversation(anna, "Anna", None, False, None)
+    await wa.db.upsert_conversation(hidden, "Bea", None, False, None)
+    start = datetime(2030, 1, 7, 18, tzinfo=timezone.utc)
+    await wa.booking_store.create(chat_id=anna, customer_name="Anna", customer_username=None, starts_at=start,
+                                  ends_at=start + timedelta(hours=1), buffer_minutes=0, tz="Europe/Riga")
+    await wa.booking_store.add_waitlist(chat_id=anna, customer_name="Anna", wanted_from=start,
+                                        wanted_to=start + timedelta(hours=2))
+    # Another account's chat with the same chat_id is not this account's to change.
+    other = "wa34600999000"
+    await seed_session(pg_pool, other)
+    await pg_pool.execute("INSERT INTO wa_peers (session_id, chat_id, jid, phone_jid, push_name) "
+                          "VALUES ($1, $2, $3, $3, 'Carl')", other, anna, "34600777888@s.whatsapp.net")
+    await pg_pool.execute("INSERT INTO conversations (session_id, chat_id, display_name) VALUES ($1, $2, 'Carl')",
+                          other, anna)
+
+    await pair(pg_pool)
+    await wa.transport.prepare()
+    assert (await wa.db.get_conversation(anna))["display_name"] == "+34600123456"
+    assert (await wa.db.get_conversation(hidden))["display_name"] == "Bea"   # no number known
+    assert await pg_pool.fetchval("SELECT customer_name FROM bookings WHERE session_id = $1", SID) == "+34600123456"
+    assert await pg_pool.fetchval("SELECT customer_name FROM waitlist WHERE session_id = $1", SID) == "+34600123456"
+    assert await pg_pool.fetchval("SELECT display_name FROM conversations WHERE session_id = $1", other) == "Carl"
+    assert await wa_store.relabel(pg_pool, SID) == 0      # nothing left the second time
 
 
 # ------------------------------------------------------------------ inbox
@@ -450,7 +497,7 @@ async def test_inbox_message_is_stored_acked_and_drafted(wa, pg_pool):
     assert (row["status"], row["text"], row["wa_message_id"], row["telegram_id"]) == \
         (STATUS_RECEIVED, "Are you open today?", "3EB0AA01", None)
     conversation = await wa.db.get_conversation(chat_id)
-    assert conversation["display_name"] == "Anna"
+    assert conversation["display_name"] == "+34600123456"     # her number, not her name
     ref = await pg_pool.fetchval("SELECT customer_ref FROM conversations WHERE session_id = $1 AND chat_id = $2",
                                  SID, chat_id)
     assert ref == crypto.customer_ref(wa.tenant_id, "whatsapp", chat_id)
@@ -493,7 +540,8 @@ async def test_typed_on_the_phone_is_stored_and_takes_over(wa, pg_pool):
     sent = [m for m in await wa.db.get_messages(chat_id) if m["direction"] == DIR_OUT]
     assert [(m["status"], m["wa_message_id"]) for m in sent] == [(STATUS_SENT, "3EB0AA05")]
     conversation = await wa.db.get_conversation(chat_id)
-    assert conversation["display_name"] == "Anna"          # our own push name never renames the chat
+    assert conversation["display_name"] == "+34600123456"
+    assert (await wa_store.peer(pg_pool, SID, chat_id))["push_name"] == "Anna"   # our own name never renames her
     assert wa.takeover_until(conversation) is not None
 
 

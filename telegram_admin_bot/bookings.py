@@ -330,16 +330,19 @@ def format_which(kind: str, *, t: booker_texts.Texts = booker_texts.ENGLISH) -> 
     return t.say("which", kind=t.command(kind))
 
 
-def preview_messages(t: booker_texts.Texts, *, tz: str, now: datetime, name: str = "Mia") -> dict[str, str]:
+def preview_messages(t: booker_texts.Texts, *, tz: str, now: datetime, name: str = "Mia",
+                     whatsapp: bool = False) -> dict[str, str]:
     """Each main message (booker_texts.TEMPLATES) as the bot would send it
     for a made-up booking, through the same functions as the real ones: for
-    the panel's live preview."""
+    the panel's live preview. On WhatsApp the customer is his number, as in
+    the real messages."""
     zone = tzinfo_for(tz)
     today = now.astimezone(zone).date()
     start = datetime.combine(today + timedelta(days=1), dtime(21, 0), tzinfo=zone)
     to = datetime.combine(today + timedelta(days=2), dtime(20, 0), tzinfo=zone)
     booking = {
-        "number": 3, "state": bs.PENDING, "customer_name": "Alex", "customer_username": "alex_m",
+        "number": 3, "state": bs.PENDING, "customer_name": "+37126123456" if whatsapp else "Alex",
+        "customer_username": None if whatsapp else "alex_m",
         "extras": "kissing, shower together", "service": "", "notes": "", "tz": tz,
         "starts_at": start, "ends_at": plus_minutes(start, 60), "proposed_by": None,
         "proposed_starts_at": None, "proposed_ends_at": None,
@@ -607,7 +610,8 @@ OWNER_ANSWER_SYSTEM_PROMPT = (
     "or ask the customer, extras, or a question for me.\n"
     "The fields of an answer:\n"
     "- number: the booking it is about: the one their message replies to (when given below), the "
-    "one they name by number or by the customer's name, else the only booking it can be about; "
+    "one they name by number or by the customer (his name, or his phone number — whole or without "
+    "the country code — when that is how the booking shows him), else the only booking it can be about; "
     "null when you cannot tell. A yes or no that names no booking while several wait for their "
     "answer is ONE answer with number null — never one answer per booking — unless they clearly "
     "mean all of them ('both fine', 'all ok', 'оба', 'abi', 'los dos'). When my last message asked "
@@ -930,8 +934,22 @@ def _fitting(action: str, rows: Sequence[Mapping[str, Any]], now: datetime) -> l
     return fits or (live if len(live) == 1 else list(rows) if len(rows) == 1 else [])
 
 
+# A phone number she types: "+" and 7 or more digits, spaces or dashes
+# allowed ("+371 26 123 456"). WhatsApp customers are labelled with theirs.
+_PLUS_PHONE = re.compile(r"\+\d(?:[ \-().]?\d){6,}")
+# His number, whole or without the country code ("26123456"); without a
+# "+" only unbroken, so "yes 3 26123456" is not read as one number.
+_TYPED_PHONE = re.compile(rf"{_PLUS_PHONE.pattern}|\d{{7,}}")
+
+
+def _without_phones(text: str) -> str:
+    """Her words with any +number taken out: its digits are no booking number,
+    time or length."""
+    return _PLUS_PHONE.sub(" ", text or "")
+
+
 def _typed_numbers(text: str) -> set[int]:
-    return {int(digits) for digits in re.findall(r"\d+", text or "") if len(digits) <= 7}
+    return {int(digits) for digits in re.findall(r"\d+", _without_phones(text)) if len(digits) <= 7}
 
 
 def _offer(number: int, at: datetime, booking: Mapping[str, Any]) -> str:
@@ -1116,11 +1134,22 @@ _ALL = re.compile(r"(?i)\b(?:both|all|each|every|оба|обе|обоих|все
                   r"ambas|todos|todas|los\s+dos|las\s+dos)\b")
 
 
+def _phone_digits(label: str) -> str:
+    """The digits of a customer labelled with his number ("+37126123456"),
+    else ""."""
+    return label[1:] if re.fullmatch(r"\+\d{7,15}", label) else ""
+
+
 def _names_booking(booking: Mapping[str, Any], typed: str) -> bool:
-    """Her message names this booking: its number, or the customer's name."""
+    """Her message names this booking: its number, or the customer's name
+    (on WhatsApp his phone number, whole or without the country code)."""
     if booking.get("number") in _typed_numbers(typed):
         return True
-    name = " ".join(str(booking.get("customer_name") or "").split()).casefold()
+    label = " ".join(str(booking.get("customer_name") or "").split())
+    if digits := _phone_digits(label):
+        return any(len(d) >= 7 and digits.endswith(d)
+                   for d in (re.sub(r"\D", "", m) for m in _TYPED_PHONE.findall(typed)))
+    name = label.casefold()
     return len(name) >= 2 and re.search(rf"(?<!\w){re.escape(name)}(?!\w)", typed.casefold()) is not None
 
 

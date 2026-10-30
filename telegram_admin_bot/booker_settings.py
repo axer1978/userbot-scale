@@ -41,7 +41,7 @@ def preview(bundle: tenants.Bundle, language: str, messages: Mapping[str, str], 
     lang = language if language in booker_texts.LANGUAGES else booker_texts.DEFAULT_LANGUAGE
     texts = booker_texts.Texts(lang, usable)
     shown = bookings.preview_messages(texts, tz=bundle.config["timezone"], now=now or datetime.now(timezone.utc),
-                                      name=_name(bundle))
+                                      name=_name(bundle), whatsapp=bundle.tenant.get("channel") == "whatsapp")
     return {"preview": shown, "problems": problems}
 
 

@@ -346,19 +346,22 @@ _HANDLE = re.compile(r"(?<![\w.@])@[A-Za-z0-9_]{3,}")
 
 
 def masks_for(*, display_name: str = "", username: str = "", address: str = "",
-              way_in: str = "") -> list[tuple[str, str]]:
+              way_in: str = "", person_name: str = "") -> list[tuple[str, str]]:
     """What to hide from the model in one chat: the client's name, and the
     business's address and way in (the system sends those, they must never
-    turn up in a prompt). Longest first, so a whole text is replaced before
-    a line of it."""
+    turn up in a prompt). `person_name`: the name a WhatsApp person gave
+    themselves, when the chat is labelled with their number. Longest first,
+    so a whole text is replaced before a line of it."""
     found: list[tuple[str, str]] = []
     for text, label in ((address, "[address]"), (way_in, "[way in]")):
         text = (text or "").strip()
         if text:
             found.append((text, label))
             found += [(line.strip(), label) for line in text.splitlines() if len(line.strip()) >= 6]
-    name = (display_name or "").strip()
-    if len(name) >= 3:
+    for name in (display_name, person_name):
+        name = (name or "").strip()
+        if len(name) < 3 or _PHONE.fullmatch(name):
+            continue  # a number label is hidden as [number] by mask()
         found.append((name, "[client]"))
         first = name.split()[0]
         # Only a name-like first word: "Love" as a contact name must not eat "my love".
