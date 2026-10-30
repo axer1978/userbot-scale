@@ -50,6 +50,7 @@ import platform_api
 import prompt_layers
 import tenants
 import vision
+import wa_store
 
 log = logging.getLogger("rules")
 
@@ -413,7 +414,8 @@ async def _items(pool: Any, bundle: tenants.Bundle, limit: int = MAX_BATCH) -> l
         corrections = await con.fetch(_PENDING_CORRECTIONS + " LIMIT $2", tenant_id, limit)
         edits = await con.fetch(_PENDING_EDITS + " LIMIT $2", tenant_id, max(0, limit - len(corrections)))
         chats = {r["chat_id"] for r in (*corrections, *edits)}
-        people = await con.fetch("SELECT chat_id, display_name, username FROM conversations "
+        people = await con.fetch(f"SELECT chat_id, display_name, username, {wa_store.push_name_sql('c')} "
+                                 "AS person_name FROM conversations c "
                                  "WHERE tenant_id = $1 AND chat_id = ANY($2::bigint[])", tenant_id, list(chats))
         masks = {p["chat_id"]: finetune_api._masks(bundle, p) for p in people}
         no_masks = finetune.masks_for(address=(bundle.config.get("booking") or {}).get("address", ""),

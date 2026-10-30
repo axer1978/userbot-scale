@@ -117,11 +117,53 @@ async def peer(pool: asyncpg.Pool, session_id: str, chat_id: int) -> Optional[di
 
 
 def display_name(row: Optional[dict[str, Any]]) -> str:
-    """How a WhatsApp chat is labelled: the person's own name, else their
-    number, else a neutral placeholder (a LID is not worth showing)."""
+    """How a WhatsApp chat is labelled, in the panel and in the messages to
+    the booker: the person's number, else the name they gave themselves
+    (WhatsApp hides the number of some chats), else a neutral placeholder
+    (a LID is not worth showing). The name stays in wa_peers.push_name."""
     if not row:
         return "WhatsApp chat"
-    return row.get("push_name") or phone_of(row.get("phone_jid")) or f"WhatsApp chat {row['chat_id']}"
+    return phone_of(row.get("phone_jid")) or row.get("push_name") or f"WhatsApp chat {row['chat_id']}"
+
+
+# The number as display_name shows it, in SQL: "+" and the phone JID's
+# digits, a device suffix like ":12" dropped.
+_PHONE_LABEL = "'+' || split_part(split_part(w.phone_jid, '@', 1), ':', 1)"
+
+
+def push_name_sql(alias: str) -> str:
+    """A scalar subquery for the name a WhatsApp person gave themselves, for
+    a row `alias` with session_id and chat_id (NULL on Telegram): what the
+    finetune masks hide now that the chat is labelled with the number."""
+    return (f"(SELECT w.push_name FROM wa_peers w "
+            f"WHERE w.session_id = {alias}.session_id AND w.chat_id = {alias}.chat_id)")
+
+
+async def relabel(pool: asyncpg.Pool, session_id: str) -> int:
+    """Label the account's chats, bookings and waitlist with each person's
+    number (display_name), where WhatsApp has told us the number: rows
+    stored while chats were labelled by name. Nothing changes the second
+    time. Returns how many rows changed."""
+    changed = 0
+    async with pool.acquire() as con, con.transaction():
+        for table, column in (("conversations", "display_name"), ("bookings", "customer_name"),
+                              ("waitlist", "customer_name")):
+            result = await con.execute(
+                f"""
+                UPDATE {table} t SET {column} = {_PHONE_LABEL}
+                  FROM wa_peers w
+                 WHERE t.session_id = $1 AND w.session_id = t.session_id AND w.chat_id = t.chat_id
+                   AND w.phone_jid LIKE '%{PHONE_SERVER}'
+                   AND split_part(split_part(w.phone_jid, '@', 1), ':', 1) ~ '^[0-9]+$'
+                   AND t.{column} IS DISTINCT FROM {_PHONE_LABEL}
+                """,
+                session_id,
+            )
+            try:
+                changed += int(result.split()[-1])
+            except (IndexError, ValueError):
+                pass
+    return changed
 
 
 # ------------------------------------------------------------------- inbox

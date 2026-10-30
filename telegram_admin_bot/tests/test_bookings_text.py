@@ -884,6 +884,45 @@ def test_a_remark_about_one_customer_is_no_rule_for_all():
     assert bookings.standing_for_all("", rows) == ""
 
 
+# ------------------------------------- WhatsApp customers labelled with their number
+
+
+PHONES = [_row(3, customer_name="+37126123456"), _row(4, start="2026-10-20T22:00", customer_name="+37129990001")]
+
+
+@pytest.mark.parametrize("typed, kinds", [
+    ("yes to +37126123456", [("yes", 3), ("unclear", 4)]),
+    ("yes for +371 26 123 456 and +371 2999 0001", [("yes", 3), ("yes", 4)]),
+    ("yes 26123456", [("yes", 3), ("unclear", 4)]),        # without the country code
+    ("yes 3 26123456", [("yes", 3), ("unclear", 4)]),      # a booking number before it stays apart
+    ("yes 123456", [("unclear", None)]),                   # too short to be his number: asked which
+])
+def test_she_can_name_a_customer_by_his_number(typed, kinds):
+    got = commands([{"action": "yes", "number": 3}, {"action": "yes", "number": 4}], rows=PHONES, typed=typed)
+    assert [(c.kind, c.number) for c in got] == kinds
+
+
+def test_the_digits_of_a_number_are_no_booking_numbers():
+    rows = [_row(29, customer_name="+37126123456"), _row(4, start="2026-10-20T22:00", customer_name="+37129990001")]
+    assert bookings.named_in("ok for +371 29 990 001", rows) == {4}     # not booking 29
+    assert bookings.named_in("ok 29", rows) == {29}
+    # The model's guess of a booking that is not open is only taken when she typed its number.
+    got = commands([{"action": "yes", "number": 371}], rows=rows, typed="yes +371 26 123 456")
+    assert [(c.kind, c.missing) for c in got] == [("unclear", "which")]
+
+
+def test_a_remark_about_one_number_is_no_rule_for_all():
+    rows = [_row(6, bs.CONFIRMED, customer_name="+37126123456")]
+    assert bookings.standing_for_all("don't take +371 26123456 again", rows) == ""
+    assert bookings.standing_for_all("don't take 26123456 again", rows) == ""
+    assert bookings.standing_for_all("from now on cash only, 2 hours max", rows) == "from now on cash only, 2 hours max"
+
+
+def test_the_request_shows_his_number():
+    text = bookings.format_request(_row(3, customer_name="+37126123456"), name="Mia")
+    assert "Customer: +37126123456\n" in text
+
+
 # --------------------------------------------- round 3: the second review
 
 

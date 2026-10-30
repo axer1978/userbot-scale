@@ -81,6 +81,7 @@ import llm_usage
 import tenant_config
 import tenants
 import vision
+import wa_store
 
 log = logging.getLogger("examples")
 
@@ -523,8 +524,8 @@ def _owner_chat(provider: str) -> tuple[Optional[int], str]:
     return None, value.lstrip("@").lower()
 
 
-_CHATS = """
-SELECT c.chat_id, c.display_name, c.username, a.active_at,
+_CHATS = f"""
+SELECT c.chat_id, c.display_name, {wa_store.push_name_sql("c")} AS person_name, c.username, a.active_at,
        f.verdict, f.upto_message_id, f.corrections, f.outcome, f.client_kind
   FROM conversations c
   LEFT JOIN finetune_examples f ON f.tenant_id = c.tenant_id AND f.chat_id = c.chat_id
@@ -681,7 +682,7 @@ async def ingest_account(pool: asyncpg.Pool, tenant_id: int, *, now: Optional[da
         for chat in chats:
             flag = _flag(chat)
             masks = finetune.masks_for(display_name=chat["display_name"] or "", username=chat["username"] or "",
-                                       address=booking.get("address", ""),
+                                       person_name=chat["person_name"] or "", address=booking.get("address", ""),
                                        way_in=booking.get("arrival_instructions", ""))
             for turn in pair(rows.get(chat["chat_id"], []), now=now):
                 counts["turns"] += 1
@@ -1241,8 +1242,10 @@ async def note_for(runtime: Any, chat_id: int, history: list[dict[str, str]]) ->
 
 async def _note_for(runtime: Any, chat_id: int, history: list[dict[str, str]], settings: dict[str, Any]) -> Shown:
     conversation = await runtime.db.get_conversation(chat_id) or {}
+    peer = await wa_store.peer(runtime.pool, runtime.session_id, chat_id)
     booking = runtime.config.get("booking") or {}
     masks = finetune.masks_for(display_name=conversation.get("display_name") or "",
+                               person_name=(peer or {}).get("push_name") or "",
                                username=conversation.get("username") or "", address=booking.get("address", ""),
                                way_in=booking.get("arrival_instructions", ""))
     query = query_text(history, masks)
