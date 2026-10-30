@@ -1,0 +1,115 @@
+{
+ "note": "The threesome girl (Media: Threesome girl): when he asks about a threesome, a duo, another girl or her friend, the system sends the friend's photo and video with the reply; never when he asks for photos of her, wants to bring someone himself, or 'friend' means something else. Run with: python replay.py --tenant <id> --scenarios threesome",
+ "first_reply_address": false,
+ "greeting_video": true,
+ "threesome_girl": true,
+ "never_says": [
+  "let me check",
+  "i'll ask",
+  "my manager",
+  "the agency",
+  "our girls"
+ ],
+ "scenarios": [
+  {
+   "id": "ts-ask-en",
+   "category": "threesome",
+   "steps": [
+    {"customer": "hi, do you do threesome?", "threesome": true, "details": false}
+   ]
+  },
+  {
+   "id": "ts-duo-later",
+   "category": "threesome",
+   "steps": [
+    {"customer": "hi"},
+    {"customer": "is duo with another girl possible?", "threesome": true}
+   ]
+  },
+  {
+   "id": "ts-two-girls",
+   "category": "threesome",
+   "steps": [
+    {"customer": "hello"},
+    {"customer": "can i have 2 girls at the same time?", "threesome": true}
+   ]
+  },
+  {
+   "id": "ts-ru",
+   "category": "threesome",
+   "steps": [
+    {"customer": "привет, есть подруга для тройничка?", "threesome": true}
+   ]
+  },
+  {
+   "id": "ts-lv",
+   "category": "threesome",
+   "steps": [
+    {"customer": "čau, var trijatā ar tavu draudzeni?", "threesome": true}
+   ]
+  },
+  {
+   "id": "ts-es",
+   "category": "threesome",
+   "steps": [
+    {"customer": "hola, haces trío con una amiga?", "threesome": true}
+   ]
+  },
+  {
+   "id": "ts-then-price",
+   "category": "threesome",
+   "steps": [
+    {"customer": "hi, threesome possible?", "threesome": true},
+    {"customer": "wow she is hot 😍 how much for 1 hour with both of you?", "threesome": false, "photos": false}
+   ]
+  },
+  {
+   "id": "ts-more-of-her",
+   "category": "threesome",
+   "steps": [
+    {"customer": "hi do you work with a friend? for a threesome", "threesome": true},
+    {"customer": "send more pics of her", "threesome": false, "photos": false}
+   ]
+  },
+  {
+   "id": "ts-yes-to-see-her",
+   "category": "threesome",
+   "steps": [
+    {"customer": "hi"},
+    {"bot": "I also do threesome with my friend 😘 want to see her?"},
+    {"customer": "yes", "threesome": true}
+   ]
+  },
+  {
+   "id": "ts-not-friend-referral",
+   "category": "not a threesome",
+   "steps": [
+    {"customer": "hi, my friend gave me your number", "threesome": false}
+   ]
+  },
+  {
+   "id": "ts-not-his-friend",
+   "category": "not a threesome",
+   "steps": [
+    {"customer": "hi"},
+    {"customer": "can I bring my friend? we are two guys", "threesome": false}
+   ]
+  },
+  {
+   "id": "ts-not-her-pics",
+   "category": "not a threesome",
+   "steps": [
+    {"customer": "hi"},
+    {"customer": "pics?", "photos": true, "threesome": false}
+   ]
+  },
+  {
+   "id": "ts-not-time",
+   "category": "not a threesome",
+   "steps": [
+    {"customer": "hi"},
+    {"customer": "22:00 ok?", "threesome": false}
+   ]
+  }
+ ]
+}

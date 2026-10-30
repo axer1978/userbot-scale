@@ -121,6 +121,8 @@ export type MediaItem = {
   send_on_arrival?: boolean;
   // Sent with the first reply in every new chat.
   greeting?: boolean;
+  // The girl she does threesomes with: sent when he asks about one, never as her.
+  threesome?: boolean;
 };
 
 export type OutreachItem = {

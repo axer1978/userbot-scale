@@ -39,7 +39,12 @@ ROLES = (ARRIVAL_REFERENCE,)
 #   send the way in before the customer has arrived.
 # greeting: sent by the system with the first reply in a chat (a short
 #   video saying hi), right after its text, whatever the reply says.
-FLAGS = ("view_once", "send_on_arrival", "greeting")
+# threesome: a photo or video of the girl she does threesomes with, not of
+#   her. Sent by the system when he asks about a threesome or to see that
+#   girl (the threesome check); kept out of her own files, so the AI never
+#   sends it as a photo of her.
+THREESOME = "threesome"
+FLAGS = ("view_once", "send_on_arrival", "greeting", THREESOME)
 
 # `[send 3]`, `[send: 3]`, `[SEND #3]`, `[send photo 3]`, `[[send 3]]` — the
 # model is asked for the first form and produces all of them.
@@ -213,11 +218,17 @@ class MediaLibrary:
 
     def greeting_items(self) -> list[dict[str, Any]]:
         """What goes out with the first reply in a chat, in library order."""
-        return [item for item in self.all() if item.get("greeting") and not item.get("send_on_arrival")]
+        return [item for item in self.all()
+                if item.get("greeting") and not item.get("send_on_arrival") and not item.get(THREESOME)]
+
+    def threesome_items(self) -> list[dict[str, Any]]:
+        """The threesome girl's photos and videos, in library order."""
+        return [item for item in self.all() if item.get(THREESOME) and not item.get("send_on_arrival")]
 
     def for_ai(self) -> list[dict[str, Any]]:
-        """What the AI may attach: everything but the arrival items."""
-        return [item for item in self.all() if not item.get("send_on_arrival")]
+        """What the AI may attach: her own files (no arrival items, nothing
+        of the threesome girl's)."""
+        return [item for item in self.all() if not item.get("send_on_arrival") and not item.get(THREESOME)]
 
     # ---------------------------------------------------------- changes
 
@@ -311,11 +322,14 @@ class MediaLibrary:
 
 
 def label(item: dict[str, Any]) -> str:
-    """'photo #3: the beach shot' — how a file is named in the prompt and rows."""
+    """'photo #3: the beach shot' — how a file is named in the prompt and rows.
+    The threesome girl's say so ('photo #7 (threesome girl): Lina'): the
+    history then never shows her as a photo of me."""
     text = item.get("description") or ""
     if not text.strip():
         text = Path(item.get("file") or "").stem.replace("_", " ").replace("-", " ")
-    return f"{item.get('kind', PHOTO)} #{item.get('id')}: {text.strip()}"
+    whose = " (threesome girl)" if item.get(THREESOME) else ""
+    return f"{item.get('kind', PHOTO)} #{item.get('id')}{whose}: {text.strip()}"
 
 
 # What a deleted message's row keeps: the AI history then shows that
@@ -471,3 +485,105 @@ def they_ask_for_photos(history: list[dict[str, Any]]) -> bool:
     """Whether one of their messages since our last one may ask for photos —
     each on its own: "22:00?" and then "nice pics" is no request."""
     return any(asks_for_photos(text) for text in latest_from_them(history))
+
+
+# ------------------------------------------------------------- the threesome girl
+
+# How many of her files go with one reply: a photo and a video.
+THREESOME_FILES = 2
+
+THREESOME_RULE = (
+    "THE THREESOME GIRL: you also have photos or videos of the girl you do threesomes with. They are of her, "
+    "not of you: never write a [send] tag for her, never send one of yours as her, never call hers you. The "
+    "system sends her photo and video by itself when he asks about a threesome or to see her; the history "
+    "shows them as [sent photo #N (threesome girl): ...]."
+)
+
+
+def threesome_line(items: list[dict[str, Any]], show: str = "any") -> str:
+    """For the reply's prompt when he asks about a threesome or to see her:
+    what the system sends with it, or that there is nothing of her left."""
+    if items:
+        names = ", ".join(label(item) for item in items)
+        return (f"He asks about a threesome or to see the threesome girl. With this reply the system sends {names} "
+                "by itself, right after your text: write no [send] tag for it. It is her, not you: you may say "
+                "so in a few words (\"this is my friend 😘\").")
+    what = {"photo": "photo", "video": "video"}.get(show, "photo or video")
+    return (f"He asks to see more of the threesome girl, and there is no {what} of her left to send: say so "
+            "in a few words (\"that's all I have of her love 😘\"); never send one of yours instead.")
+
+
+def threesome_pick(items: list[dict[str, Any]], history: list[dict[str, Any]],
+                   show: str) -> Optional[list[dict[str, Any]]]:
+    """Which of her files go with this reply, as the threesome check read
+    his message: "photo" / "video" when he asks to see one, "any" when he
+    asks about the threesome itself. Returns None when nothing is to be
+    said about her files (he asks about the threesome again but has seen
+    her already), [] when he asks for more and none is left."""
+    left = unsent(items, history)
+    if show in (PHOTO, VIDEO):
+        return [item for item in left if item.get("kind") == show][:THREESOME_FILES]
+    if len(left) < len(items):
+        return None
+    # The first time: a photo and a video, or two of whatever there is.
+    first: list[dict[str, Any]] = []
+    for kind in (PHOTO, VIDEO):
+        first += [item for item in left if item.get("kind") == kind][:1]
+    first += [item for item in left if item not in first]
+    return first[:THREESOME_FILES]
+
+
+# A message that may be about a threesome or the girl for it. Only a first
+# sieve — the threesome check (THREESOME_REQUEST_SYSTEM_PROMPT) decides.
+_THREESOME_WORD = re.compile(
+    r"(?i)(three\s*-?\s*some|3\s*-?\s*some|\btr[ií]o\b|\bduo|\bduet|\bf[fm][fm]\b|\bm[fm]f\b"
+    r"|\b(two|2|another|other|second|2nd|extra|more) (girls?|ladies|lady|women|woman|of you)\b|\bboth\b"
+    r"|friend|\bgf\b|\bher\b|\bshe\b|lesbi|\bbi\b|bisex"
+    r"|втро[её]м|тройн|\bжмж\b|подруг|подружк|дв(е|ух|умя|оих) дев|ещ[её] одн|друг(ая|ой|ую|ие) дев"
+    r"|\bеё\b|\bее\b|\bона\b|\bней\b|лесби"
+    r"|trijat|trīsvien|trisvien|draudzen|draudzin|divas meiten|otr[aā] meiten|\bviņ[uaā]\b|\bvin[ua]\b"
+    r"|amig[ao]|dos chicas|otra chica|\bella\b)"
+)
+
+THREESOME_REQUEST_SYSTEM_PROMPT = (
+    "You read the end of a private chat between a girl who meets clients ('me') and a client ('them'). I do "
+    "threesomes with a girlfriend of mine: me, her and the client. Decide whether any of the client's messages "
+    "after my last message asks about that — a threesome, a duo, two girls, another girl joining, whether I "
+    "have a friend or a girlfriend for it, its price — or asks to see that girl (a photo or a video of her), "
+    "or says yes when I offered to show her. Answer false when he wants to bring someone himself (his friend, "
+    "another man, his wife or girlfriend: a couple); when 'friend' means something else ('my friend told me "
+    "about you', 'just as friends'); when he asks to see me; when he only remarks on photos of her he has had "
+    "('she is hot'). Say also what he wants to see of her: \"photo\" when he asks for a photo or pictures of "
+    "her, \"video\" when he asks for a video of her, \"any\" otherwise. Answer with a single JSON object and "
+    'nothing else: {"threesome": true|false, "show": "photo"|"video"|"any"}'
+)
+
+
+def threesome_may_come_up(history: list[dict[str, Any]]) -> bool:
+    """Whether his messages since our last one may be about a threesome or
+    her — or our last words asked about her ("want to see her?": he may
+    just say "yes")."""
+    tail = latest_from_them(history)
+    if not tail:
+        return False
+    if any(_THREESOME_WORD.search(text) for text in tail):
+        return True
+    mine = next((m.get("content") or "" for m in reversed(history)
+                 if m.get("role") == "assistant" and not _SENT.match(m.get("content") or "")), "")
+    return "?" in mine and bool(_THREESOME_WORD.search(mine))
+
+
+def parse_threesome_request(text: str) -> Optional[str]:
+    """The threesome check's answer: None, or what he wants to see of her
+    ("photo", "video", "any")."""
+    match = re.search(r"\{.*\}", (text or "").strip(), re.DOTALL)
+    if not match:
+        return None
+    try:
+        answer = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(answer, dict) or answer.get("threesome") is not True:
+        return None
+    show = answer.get("show")
+    return show if show in (PHOTO, VIDEO) else "any"

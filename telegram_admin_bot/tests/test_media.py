@@ -410,6 +410,197 @@ def test_greeting_items_go_with_the_first_reply_and_stay_known_to_the_ai(tmp_pat
     assert again.greeting_items() == []
 
 
+# ------------------------------------------------------- the threesome girl
+
+
+def _threesome_library(tmp_path):
+    for name in ("me.jpg", "lina.jpg", "lina-2.jpg", "lina.mp4"):
+        (tmp_path / name).write_bytes(b"x")
+    lib = media.MediaLibrary(tmp_path)
+    ids = {item["file"]: item["id"] for item in lib.all()}
+    for name in ("lina.jpg", "lina-2.jpg", "lina.mp4"):
+        lib.set_flags(ids[name], threesome=True)
+    lib.describe(ids["lina.jpg"], "my friend Lina, blonde")
+    return lib, ids
+
+
+def test_the_threesome_girl_is_kept_apart_from_her_own_files(tmp_path):
+    lib, ids = _threesome_library(tmp_path)
+    lib.set_flags(ids["lina.mp4"], greeting=True)
+    again = media.MediaLibrary(tmp_path)
+    assert [i["id"] for i in again.for_ai()] == [ids["me.jpg"]]
+    assert [i["file"] for i in again.threesome_items()] == ["lina-2.jpg", "lina.jpg", "lina.mp4"]
+    # Never a greeting: the first reply would show her as me.
+    assert again.greeting_items() == []
+    assert f"[send {ids['lina.jpg']}]" not in media.prompt_section(again.for_ai())
+    lina = again.get(ids["lina.jpg"])
+    assert media.label(lina) == f"photo #{ids['lina.jpg']} (threesome girl): my friend Lina, blonde"
+    # Her row in the history is still a sent file, to every reader of it.
+    history = [{"role": "assistant", "content": media.sent_placeholder(lina)}]
+    assert media.unsent([lina], history) == []
+    assert media.split_attachments(media.sent_placeholder(lina))[1] == [ids["lina.jpg"]]
+
+
+def test_the_first_time_a_photo_and_a_video_of_her_go_and_no_more(tmp_path):
+    lib, ids = _threesome_library(tmp_path)
+    items = lib.threesome_items()
+    first = media.threesome_pick(items, [], "any")
+    assert [i["file"] for i in first] == ["lina-2.jpg", "lina.mp4"]
+    history = [{"role": "assistant", "content": media.sent_placeholder(i)} for i in first]
+    # He asks about the threesome again (the price, say): he has seen her.
+    assert media.threesome_pick(items, history, "any") is None
+    # He asks for more photos of her: the ones he has not had.
+    assert [i["file"] for i in media.threesome_pick(items, history, "photo")] == ["lina.jpg"]
+    assert media.threesome_pick(items, history, "video") == []
+    assert "no video of her left" in media.threesome_line([], "video")
+    line = media.threesome_line(first)
+    assert "photo #" in line and "(threesome girl)" in line and "write no [send] tag" in line
+
+
+def test_only_photos_of_her_two_go(tmp_path):
+    lib, ids = _threesome_library(tmp_path)
+    lib.set_flags(ids["lina.mp4"], threesome=False)
+    assert [i["file"] for i in media.threesome_pick(lib.threesome_items(), [], "any")] == ["lina-2.jpg", "lina.jpg"]
+
+
+def test_a_message_that_may_be_about_a_threesome_is_told_apart():
+    def said(*texts, mine="hi love 😘 what time do you want to come?"):
+        return [{"role": "assistant", "content": mine}, *({"role": "user", "content": t} for t in texts)]
+
+    for text in ("do you do threesome?", "3some?", "duo with another girl?", "two girls possible",
+                 "do you have a friend?", "can I see her", "ffm?", "можно втроем?", "есть подруга?",
+                 "trijatā var?", "un draudzene?", "trío con tu amiga?"):
+        assert media.threesome_may_come_up(said(text)), text
+    for text in ("22:00?", "pics?", "how much for 1 hour", "ok", "send video"):
+        assert not media.threesome_may_come_up(said(text)), text
+    # He says yes to seeing her; after her files went, his time is just a time.
+    assert media.threesome_may_come_up(said("yes", mine="want to see my friend? 😘"))
+    assert not media.threesome_may_come_up(said("22:00", mine="yes love, with my friend 😘"))
+    sent_her = said("22:00", mine="want to see my friend? 😘")
+    sent_her.insert(1, {"role": "assistant", "content": "[sent photo #7 (threesome girl): Lina]"})
+    assert media.threesome_may_come_up(sent_her)
+    sent_her[0]["content"] = "yes love, with my friend 😘"
+    assert not media.threesome_may_come_up(sent_her)
+    # Nothing of his since our last message: nothing to check.
+    assert not media.threesome_may_come_up([{"role": "user", "content": "threesome?"},
+                                            {"role": "assistant", "content": "yes love"}])
+
+
+def test_the_threesome_check_answer_is_read_safely():
+    assert media.parse_threesome_request('{"threesome": true, "show": "any"}') == "any"
+    assert media.parse_threesome_request('ok {"threesome": true, "show": "video"}') == "video"
+    assert media.parse_threesome_request('{"threesome": true, "show": "photo"}') == "photo"
+    assert media.parse_threesome_request('{"threesome": true}') == "any"
+    assert media.parse_threesome_request('{"threesome": true, "show": "her"}') == "any"
+    assert media.parse_threesome_request('{"threesome": false, "show": "photo"}') is None
+    assert media.parse_threesome_request('{"threesome": "yes"}') is None
+    assert media.parse_threesome_request("yes") is None
+    assert media.parse_threesome_request("[true]") is None
+
+
+@pytest.fixture
+def lina(library, monkeypatch):
+    """The threesome girl's photo (#3) and video (#4), and a scripted
+    threesome check that records whether it was asked."""
+    for name in ("lina.jpg", "lina.mp4"):
+        (library.dir / name).write_bytes(b"x")
+    library.refresh()
+    library.set_flags(3, threesome=True)
+    library.set_flags(4, threesome=True)
+    library.describe(3, "my friend Lina")
+    check = {"answer": "any", "asked": 0}
+
+    async def fake_check(**kw):
+        check["asked"] += 1
+        return check["answer"]
+
+    monkeypatch.setattr(ai_responder, "extract_threesome_request", fake_check)
+    return check
+
+
+@pytest.mark.asyncio
+async def test_he_asks_about_a_threesome_and_her_photo_and_video_go_with_the_reply(app, db, drafting, outbox, lina):
+    app.config["auto_send"] = True  # videos still need approval: hers are the business's own choice
+    await db.upsert_conversation(7, "J", None, False, 1)
+    await db.record_message(7, DIR_IN, STATUS_RECEIVED, "do you do threesome?", telegram_id=1)
+    drafting["reply"] = "yes love, with my friend 😘"
+
+    await app.draft_worker(7)
+
+    assert outbox == ["yes love, with my friend 😘", ("file", "lina.jpg"), ("file", "lina.mp4")]
+    assert "the system sends photo #3 (threesome girl): my friend Lina, video #4 (threesome girl)" in drafting["prompt"]
+    assert media.THREESOME_RULE in drafting["prompt"]
+    # Not offered to the model as hers.
+    assert "[send 3] =" not in drafting["prompt"] and "[send 1] = photo #1: me at the beach" in drafting["prompt"]
+    rows = await db.get_messages(7)
+    assert rows[-2]["text"] == "[sent photo #3 (threesome girl): my friend Lina]"
+
+    # The price next: he has seen her, nothing more of hers goes.
+    await db.record_message(7, DIR_IN, STATUS_RECEIVED, "how much for the threesome?", telegram_id=2)
+    drafting["reply"] = "+250 love 😘"
+    await app.draft_worker(7)
+    assert outbox[3:] == ["+250 love 😘"]
+    assert "(threesome girl)" not in drafting["prompt"].replace(media.THREESOME_RULE, "")
+
+
+@pytest.mark.asyncio
+async def test_the_model_never_sends_her_by_tag(app, db, drafting, outbox, lina):
+    app.config["auto_send"] = True
+    lina["answer"] = None
+    await db.upsert_conversation(7, "J", None, False, 1)
+    await db.record_message(7, DIR_IN, STATUS_RECEIVED, "pics of you?", telegram_id=1)
+    drafting["reply"] = "here love [send 3] [send 1]"
+
+    await app.draft_worker(7)
+    assert outbox == ["here love", ("file", "beach.jpg")]
+
+
+@pytest.mark.asyncio
+async def test_no_threesome_check_without_a_word_for_it_or_without_her_files(app, db, drafting, outbox, lina, library):
+    app.config["auto_send"] = True
+    await db.upsert_conversation(7, "J", None, False, 1)
+    await db.record_message(7, DIR_IN, STATUS_RECEIVED, "22:00?", telegram_id=1)
+    drafting["reply"] = "ok love"
+    await app.draft_worker(7)
+    assert lina["asked"] == 0
+
+    library.set_flags(3, threesome=False)
+    library.set_flags(4, threesome=False)
+    await db.record_message(7, DIR_IN, STATUS_RECEIVED, "threesome?", telegram_id=2)
+    await app.draft_worker(7)
+    assert lina["asked"] == 0
+    assert media.THREESOME_RULE not in drafting["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_threesome_check_still_lets_the_reply_go(app, db, drafting, outbox, lina, monkeypatch):
+    async def down(**kw):
+        raise ai_responder.AIResponderError("timed out")
+
+    monkeypatch.setattr(ai_responder, "extract_threesome_request", down)
+    app.config["auto_send"] = True
+    await db.upsert_conversation(7, "J", None, False, 1)
+    await db.record_message(7, DIR_IN, STATUS_RECEIVED, "threesome?", telegram_id=1)
+    drafting["reply"] = "yes love 😘"
+
+    await app.draft_worker(7)
+    assert outbox == ["yes love 😘"]
+
+
+@pytest.mark.asyncio
+async def test_when_he_has_had_all_of_her_the_reply_is_told(app, db, drafting, outbox, lina, library):
+    app.config["auto_send"] = True
+    await db.upsert_conversation(7, "J", None, False, 1)
+    await app.send_burst(7, [], attachments=[3, 4])
+    await db.record_message(7, DIR_IN, STATUS_RECEIVED, "more pics of her?", telegram_id=1)
+    lina["answer"] = "photo"
+    drafting["reply"] = "that's all I have of her love 😘"
+
+    await app.draft_worker(7)
+    assert "no photo of her left" in drafting["prompt"]
+    assert outbox[-1] == "that's all I have of her love 😘"
+
+
 @pytest.mark.asyncio
 async def test_a_view_once_item_is_sent_as_view_once(app, library, monkeypatch):
     seen = {}

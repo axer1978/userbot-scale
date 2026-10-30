@@ -2,9 +2,9 @@
 
 // The media library: files the assistant may send, each with the short
 // description it picks them by, the entrance photo for arrival checks, and
-// three switches: view once, send on arrival (with the arrival
-// instructions, never by the AI), and greeting (with the first reply in
-// every new chat).
+// four switches: view once, send on arrival (with the arrival
+// instructions, never by the AI), greeting (with the first reply in every
+// new chat), and threesome girl (sent when he asks about a threesome).
 
 import { useEffect, useState } from "react";
 import { useDialogs, useToast } from "@/components/feedback";
@@ -24,7 +24,7 @@ export function MediaPreview({ item, sessionId, small }: { item: MediaItem; sess
   return <img src={src} alt={item.description || item.file} loading="lazy" className={small ? "preview" : undefined} />;
 }
 
-type Flag = "view_once" | "send_on_arrival" | "greeting";
+type Flag = "view_once" | "send_on_arrival" | "greeting" | "threesome";
 
 /** A tick box for one of the item's switches, shown ticked at once and set
  * back if the panel refuses. */
@@ -89,6 +89,9 @@ function MediaCard({ item }: { item: MediaItem }) {
       <FlagBox item={item} flag="greeting"
                title="Sent right after the first reply in every new chat (e.g. a short video saying hi). Never held for approval.">
         Greeting (with the first reply in every new chat)</FlagBox>
+      <FlagBox item={item} flag="threesome"
+               title="A photo or video of the girl she does threesomes with. Sent by itself (a photo and a video, two at most) when he asks about a threesome or to see her. Never sent as her own photo.">
+        Threesome girl (sent when he asks about a threesome)</FlagBox>
       <div className="actions">
         <button type="button" className="btn small primary" disabled={busy === "save"} onClick={async () => {
           setBusy("save");
@@ -181,7 +184,9 @@ export function MediaDialog({ onClose }: { onClose: () => void }) {
         <p className="hint" style={{ marginTop: 16 }}>Whether the AI may send these, and the video rules, are in{" "}
           <b>Settings → Config</b> under <code>media</code>. A photo marked <b>Entrance</b> is what a
           customer&apos;s arrival photo is compared with (<code>booking.arrival_photo_check</code>); the owner can
-          also send one to this account captioned &quot;door&quot;.</p>
+          also send one to this account captioned &quot;door&quot;. Files marked <b>Threesome girl</b> are of the
+          girl she does threesomes with: describe her (&quot;my friend Lina, blonde&quot;) — they go out by
+          themselves, a photo and a video, when he asks about a threesome or to see her.</p>
 
         <div className="sheet-actions">
           <button type="button" className="btn" onClick={onClose}>Close</button>
