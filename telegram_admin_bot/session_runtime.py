@@ -1219,13 +1219,19 @@ class SessionRuntime:
             return await self.db.find_by_wa_message_id(chat_id, value)
         return await self.db.find_by_telegram_id(chat_id, value)
 
+    def media_on(self) -> bool:
+        return bool(self.config["media"].get("enabled", True) and self.transport.can_send_files)
+
     def media_prompt(self) -> str:
-        if not self.config["media"].get("enabled", True) or not self.transport.can_send_files:
+        if not self.media_on():
             return ""
         self.media_library.refresh()
-        return media.prompt_section(
+        note = media.prompt_section(
             self.media_library.for_ai(), ask_before_video=self.config["media"].get("ask_before_video", True)
         )
+        if self.media_library.threesome_items():
+            note = "\n".join(filter(None, [note, media.THREESOME_RULE]))
+        return note
 
     def greeting_media(self, history: list[dict[str, Any]]) -> list[int]:
         """The files marked "greeting" that go out with the first reply in a
@@ -1249,6 +1255,35 @@ class SessionRuntime:
                 client=self.http_client, usage_sink=self.usage_sink("photo_check"),
             )
         return unsent if asked else []
+
+    async def threesome_media(self, history: list[dict[str, Any]]) -> Optional[tuple[list[int], str]]:
+        """The threesome girl's files to send with this reply, and the line
+        that tells the reply so, when he asks about a threesome or to see
+        her; None when he does not, or there is nothing to say about them.
+        A cheap word sieve first, then the threesome check."""
+        if not self.media_on():
+            return None
+        self.media_library.refresh()
+        items = self.media_library.threesome_items()
+        if not items or not media.threesome_may_come_up(history):
+            return None
+        try:
+            async with self.ai_gate():
+                show = await ai_responder.extract_threesome_request(
+                    api_key=self.deepseek_key, history=history, ai_config=self.config["ai"],
+                    client=self.http_client, usage_sink=self.usage_sink("threesome_check"),
+                )
+        except ai_responder.AIResponderError as exc:
+            # The reply still goes out, without her files.
+            log.warning("[%s]   the threesome check failed: %s", self.session_id, exc)
+            return None
+        if show is None:
+            return None
+        picked = media.threesome_pick(items, history, show)
+        if picked is None:
+            return None
+        log.info("[%s]   he asks about a threesome (%s).", self.session_id, show)
+        return [item["id"] for item in picked], media.threesome_line(picked, show)
 
     def contact_overrides(self, chat_id: Optional[int]) -> dict[str, Any]:
         if chat_id is None:
@@ -1757,9 +1792,13 @@ class SessionRuntime:
 
             if note.has_news:
                 log.info("[%s]   this reply carries booking news.", self.session_id)
+            # The threesome girl's photo and video, when he asks about a
+            # threesome or to see her: (their ids, the line for the reply).
+            threesome = None if photos_only else await self.threesome_media(history)
             # The tenant's "when not to answer" instruction is only offered
             # when there is nothing the reply must pass on.
-            no_reply = "" if note.has_news or photos_only else self.config["replies"]["no_reply_instruction"]
+            no_reply = ("" if note.has_news or photos_only or threesome
+                        else self.config["replies"]["no_reply_instruction"])
 
             media_note = self.media_prompt()
             if media_note and (had := media.sent_line(self.media_library.for_ai(), history)):
@@ -1768,6 +1807,10 @@ class SessionRuntime:
             greeting = [] if photos_only or not media_note else self.greeting_media(history)
             if greeting:
                 media_note += "\n" + media.greeting_line([self.media_library.get(i) for i in greeting])
+            if threesome:
+                media_note = "\n".join(filter(None, [media_note, threesome[1]]))
+            # What the system sends by itself, whatever the reply says.
+            system_files = [*greeting, *(i for i in (threesome[0] if threesome else []) if i not in greeting)]
             prompt = self.bundle.prompt if self.bundle is not None else None
             # Earlier moments like this one, with the business's real replies
             # (config retrieval): the note, and the replies in it for the
@@ -1824,13 +1867,15 @@ class SessionRuntime:
             # Before the policy check and the draft: what goes out (or waits
             # for approval) is the varied text. The address is a block by now.
             text = self.vary(text)
-            # Only what the AI was offered: never an arrival item (the way in).
+            # Only what the AI was offered: never an arrival item (the way
+            # in), never the threesome girl's (the system sends hers).
             attachments = [i for i in attachments
-                           if (item := self.media_library.get(i)) is not None and not item.get("send_on_arrival")]
+                           if (item := self.media_library.get(i)) is not None
+                           and not item.get("send_on_arrival") and not item.get(media.THREESOME)]
             if not media_note:
                 attachments = []
-            if greeting:
-                attachments = [*greeting, *(i for i in attachments if i not in greeting)]
+            if system_files:
+                attachments = [*system_files, *(i for i in attachments if i not in system_files)]
                 attachments = attachments[:media.MAX_ATTACHMENTS_PER_REPLY]
             parts = self.burst_parts(text)
             if not parts and not attachments:
@@ -1840,9 +1885,11 @@ class SessionRuntime:
                     media.label(self.media_library.get(i)) for i in attachments
                 ))
 
-            # The greeting video is the business's own choice, not the AI's.
+            # The greeting video and the threesome girl's are the business's
+            # own choice, not the AI's.
             holds_video = any(
-                (self.media_library.get(i) or {}).get("kind") == media.VIDEO for i in attachments if i not in greeting
+                (self.media_library.get(i) or {}).get("kind") == media.VIDEO
+                for i in attachments if i not in system_files
             )
             hold = holds_video and self.config["media"]["videos_need_approval"]
             verdict = await self.check_policy(chat_id, text, prompt)

@@ -952,6 +952,35 @@ async def extract_photo_request(
     return media.parse_photo_request(text)
 
 
+async def extract_threesome_request(
+    *,
+    api_key: str,
+    history: list[dict[str, str]],
+    ai_config: dict[str, Any],
+    client: Optional[httpx.AsyncClient] = None,
+    usage_sink: Optional[UsageSink] = None,
+) -> Optional[str]:
+    """Whether the client's messages since our last one are about a
+    threesome or the girl for it: None, or what he wants to see of her
+    ("photo", "video", "any")."""
+    import media
+
+    transcript = render_transcript(history[-8:])
+    if not transcript.strip():
+        return None
+    text = await _complete(
+        api_key=api_key,
+        messages=[
+            {"role": "system", "content": media.THREESOME_REQUEST_SYSTEM_PROMPT},
+            {"role": "user", "content": "Conversation, oldest first:\n\n" + transcript},
+        ],
+        ai_config={**ai_config, "max_tokens": 40, "temperature": 0.0},
+        client=client,
+        **_sink(usage_sink),
+    )
+    return media.parse_threesome_request(text)
+
+
 async def _complete(
     *,
     api_key: str,
