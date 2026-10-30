@@ -198,6 +198,8 @@ ROUTES: dict[RouteKey, Resolver] = {
     ("POST", "/api/platform/base/rollback"): "config.platform",
     ("PUT", "/api/platform/prices"): "config.platform",
     ("POST", "/api/industries"): "config.platform",
+    ("PATCH", "/api/industries/{industry_id}"): "config.platform",
+    ("DELETE", "/api/industries/{industry_id}"): "config.platform",
     ("PUT", "/api/industries/{industry_id}/template"): "config.platform",
     ("POST", "/api/industries/{industry_id}/template/rollback"): "config.platform",
     ("PUT", "/api/industries/{industry_id}/config"): "config.platform",

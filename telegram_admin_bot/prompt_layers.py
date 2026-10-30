@@ -5,7 +5,10 @@ Three layers, rendered into one system prompt with explicit sections:
 - base:     the platform's own rules. Rendered first, restated as taking
             precedence at the end. No lower layer can edit, remove or
             replace them: there is no section key that reaches them.
-- industry: text for each named section in SECTIONS.
+- industry: text for each named section in SECTIONS. An industry can hold
+            sub-folders, any levels deep; a sub-folder's template holds
+            only its changes to its parent's (validate_folder), and its
+            clients get the result (apply_folder).
 - client:   per-section overrides, each either `override` (replaces the
             industry text for that section) or `append` (added after it),
             plus a short free-text addendum.
@@ -103,13 +106,7 @@ def validate_industry(content: Any) -> dict[str, Any]:
     return {"sections": clean}
 
 
-def validate_client(content: Any, *, strict: bool = True) -> dict[str, Any]:
-    """strict=False is for rendering versions already stored: an override of
-    an append-only section saved before that rule existed is read as an
-    append instead of refused, so the bot keeps running."""
-    if not isinstance(content, dict) or set(content) - {"overrides", "addendum"}:
-        raise PromptError('client content must be {"overrides": {...}, "addendum": "..."}')
-    overrides = content.get("overrides") or {}
+def _validate_overrides(overrides: Any, *, strict: bool, who: str) -> dict[str, dict[str, str]]:
     if not isinstance(overrides, dict):
         raise PromptError("overrides must be an object")
     clean: dict[str, dict[str, str]] = {}
@@ -128,7 +125,7 @@ def validate_client(content: Any, *, strict: bool = True) -> dict[str, Any]:
             if strict:
                 raise PromptError(
                     f"{key!r} can only be appended to, not overridden: the industry's "
-                    f"{key} always apply. Put only this client's extra rules in it."
+                    f"{key} always apply. Put only this {who}'s extra rules in it."
                 )
             mode = "append"
         text = _text(value["text"], f"override {key!r}", MAX_SECTION_CHARS)
@@ -136,8 +133,62 @@ def validate_client(content: Any, *, strict: bool = True) -> dict[str, Any]:
         if not text:
             raise PromptError(f"override {key!r} is empty; remove it to inherit instead")
         clean[key] = {"mode": mode, "text": text}
+    return clean
+
+
+def validate_client(content: Any, *, strict: bool = True) -> dict[str, Any]:
+    """strict=False is for rendering versions already stored: an override of
+    an append-only section saved before that rule existed is read as an
+    append instead of refused, so the bot keeps running."""
+    if not isinstance(content, dict) or set(content) - {"overrides", "addendum"}:
+        raise PromptError('client content must be {"overrides": {...}, "addendum": "..."}')
+    clean = _validate_overrides(content.get("overrides") or {}, strict=strict, who="client")
     addendum = _text(content.get("addendum", ""), "addendum", MAX_ADDENDUM_CHARS)
     return {"overrides": clean, "addendum": addendum}
+
+
+def validate_folder(content: Any, *, strict: bool = True) -> dict[str, Any]:
+    """A sub-folder's template: only what it changes in its parent's, per
+    section, the way a client layer does (no addendum: that is the
+    client's own). The industry's boundaries stay in force here too."""
+    if not isinstance(content, dict) or set(content) - {"overrides"}:
+        raise PromptError('a sub-folder template must be {"overrides": {...}}')
+    return {"overrides": _validate_overrides(content.get("overrides") or {}, strict=strict, who="folder")}
+
+
+def apply_folder(sections: dict[str, str], folder: dict[str, Any]) -> dict[str, str]:
+    """The sections a sub-folder's clients inherit: its parent's (`sections`)
+    with the sub-folder's own changes on top."""
+    out = dict(sections)
+    for key, override in validate_folder(folder, strict=False)["overrides"].items():
+        if override["mode"] == "override":
+            out[key] = override["text"]
+        else:
+            out[key] = f"{out.get(key, '')}\n{override['text']}".strip()
+    return {key: out[key] for key in SECTION_KEYS if out.get(key)}
+
+
+def folder_changes(parent: dict[str, str], wanted: dict[str, str]) -> dict[str, Any]:
+    """The sub-folder template that turns the parent's sections into
+    `wanted` (a whole standard, as a finetune run writes one): a section the
+    same as the parent's is inherited, one that only adds to the end of it
+    is an append, anything else an override. Boundaries can only be added
+    to, so only what is new in them is kept, line by line."""
+    overrides: dict[str, dict[str, str]] = {}
+    for key in SECTION_KEYS:
+        have, want = (parent.get(key) or "").strip(), (wanted.get(key) or "").strip()
+        if not want or want == have:
+            continue
+        if have and want.startswith(have) and want[len(have):].strip():
+            overrides[key] = {"mode": "append", "text": want[len(have):].strip()}
+        elif key in APPEND_ONLY_SECTIONS:
+            known = {line.strip() for line in have.splitlines()}
+            new = [line for line in want.splitlines() if line.strip() and line.strip() not in known]
+            if new:
+                overrides[key] = {"mode": "append", "text": "\n".join(new).strip()}
+        else:
+            overrides[key] = {"mode": "override", "text": want}
+    return validate_folder({"overrides": overrides})
 
 
 # ----------------------------------------------------------------- rendering
@@ -175,10 +226,13 @@ def effective_sections(industry: dict[str, Any], client: dict[str, Any]) -> dict
     return out
 
 
-def layers_tag(versions: tuple[int, int, int, int]) -> str:
-    """"b1/i1v3/c2": base v1, industry #1 at v3, client v2 (c0 = none)."""
+def layers_tag(versions: tuple[int, int, int, int], parents: Sequence[tuple[int, int]] = ()) -> str:
+    """"b1/i1v3/c2": base v1, industry #1 at v3, client v2 (c0 = none). In
+    a sub-folder the folders above it come first, top one first:
+    "b1/i2v10/i5v3/c2" is sub-folder #5 at v3 inside industry #2 at v10."""
     base_v, industry_id, industry_v, client_v = versions
-    return f"b{base_v}/i{industry_id}v{industry_v}/c{client_v}"
+    above = "".join(f"/i{folder_id}v{folder_v}" for folder_id, folder_v in parents)
+    return f"b{base_v}{above}/i{industry_id}v{industry_v}/c{client_v}"
 
 
 def rules_tag(rules: Sequence[str]) -> str:
@@ -218,8 +272,12 @@ def render(
     language_policy: str,
     versions: tuple[int, int, int, int] = (0, 0, 0, 0),
     rules: Optional[Sequence[str]] = None,
+    parents: Sequence[tuple[int, int]] = (),
 ) -> Rendered:
     """versions = (base_version, industry_id, industry_version, client_version).
+    `industry` is the template the client's folder hands down, its parent
+    folders' already applied; `parents` = (folder id, version) of those
+    folders, top one first, for the version tag.
 
     `rules` are the operator's active rules (rules.active_for), one line
     each, after everything the business wrote and before the precedence
@@ -250,6 +308,6 @@ def render(
 
     return Rendered(
         text="\n\n".join(parts),
-        version_tag=layers_tag(versions) + rules_tag(rules),
+        version_tag=layers_tag(versions, parents) + rules_tag(rules),
         business_text="\n\n".join(business_parts),
     )

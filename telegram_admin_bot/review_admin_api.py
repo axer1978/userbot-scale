@@ -178,9 +178,15 @@ async def api_recheck(tenant_id: int, body: ReasonBody) -> dict[str, Any]:
 
 @router.get("/api/review/industries")
 async def api_industries() -> list[dict[str, Any]]:
+    """The top-level industries: the switch covers the folders inside one
+    too (review.set_industry_review), and `tenants` counts theirs."""
     rows = await _get_pool().fetch(
-        "SELECT i.id, i.name, i.requires_review, (SELECT count(*) FROM tenants t WHERE t.industry_id = i.id) AS "
-        "tenants FROM industries i ORDER BY lower(i.name)"
+        "WITH RECURSIVE tree AS (SELECT id AS top, id, 0 AS depth FROM industries WHERE parent_id IS NULL "
+        "UNION ALL SELECT tree.top, i.id, tree.depth + 1 FROM industries i JOIN tree ON i.parent_id = tree.id "
+        "WHERE tree.depth < 50) "
+        "SELECT i.id, i.name, i.requires_review, "
+        "(SELECT count(*) FROM tenants t JOIN tree ON tree.id = t.industry_id WHERE tree.top = i.id) AS tenants "
+        "FROM industries i WHERE i.parent_id IS NULL ORDER BY lower(i.name)"
     )
     return [dict(r) for r in rows]
 

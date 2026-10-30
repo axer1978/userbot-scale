@@ -118,9 +118,9 @@ function NewRun({ tree, ...props }: RunProps & { tree: PlatformTree }) {
   // Screenshots when the vision model is set up, typed chats otherwise.
   const [source, setSource] = useState<Source>(info.screenshots_ready || !info.transcripts_ready ? "screenshots" : "text");
 
-  if (!info.template.trim()) {
+  if (!(info.template || info.inherited_template).trim()) {
     return (
-      <div className="empty">Write the finetune template for {info.industry.name} first (Template tab)
+      <div className="empty">Write the finetune template for {info.industry.path} first (Template tab)
         {info.default_template ? ", or load the default there and save it" : ""}.</div>
     );
   }
@@ -144,7 +144,7 @@ function NewRun({ tree, ...props }: RunProps & { tree: PlatformTree }) {
         <div className="pf-errors">{source === "text" ? "Typed" : source === "hand" ? "Hand-typed" : "Flagged"} chats
           need DEEPSEEK_PLATFORM_KEY in the server&apos;s .env.</div>
       )}
-      <p className="pf-note">The {info.industry.name} standard is built from {info.businesses_so_far} business
+      <p className="pf-note">The {info.industry.path} standard is built from {info.businesses_so_far} business
         {info.businesses_so_far === 1 ? "" : "es"} so far{info.has_standard ? "" : " (none yet: this run writes the first)"}.
         {source === "examples" ? "Only your judgement of each chat is stored; the chat is read when the run starts."
           : source === "hand" ? "Nothing is stored; the chats are read when the run starts."
@@ -434,7 +434,7 @@ function HandRun({ tenantId, tree, onStarted }: RunProps & { tree: PlatformTree 
   const chars = chats.reduce((n, c) => n + (chosen.has(c.key) ? c.chars : 0), 0);
   const over = chosen.size > limits.chats || chars > limits.chars;
   const others = tree.tenants.filter((t) => t.id !== tenantId);
-  const industryName = (id: number) => tree.industries.find((i) => i.id === id)?.name ?? "";
+  const industryName = (id: number) => tree.industries.find((i) => i.id === id)?.path ?? "";
 
   const toggleAccount = (id: number) => {
     setAlso((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]));
@@ -816,9 +816,19 @@ function TemplateEditor({ info, onSaved }: { info: FinetuneIndustry; onSaved: (i
     setText(info.default_template);
   };
 
+  const loadInherited = async () => {
+    if (text.trim() && !(await confirm(`Replace the text in the editor with ${info.template_from}'s template? `
+      + "Nothing is saved until you press Save template."))) return;
+    setText(info.inherited_template);
+  };
+
   return (
     <>
-      <p className="pf-note">The instructions sent with the chats, for every client in {info.industry.name}. These
+      {info.template_from && !info.template && (
+        <p className="pf-note">{info.industry.path} has no template of its own: its runs use
+          {" "}{info.template_from}&apos;s. Save one here to give this folder its own finetuning instructions.</p>
+      )}
+      <p className="pf-note">The instructions sent with the chats, for every client in {info.industry.path}. These
         are filled in for each run: {info.placeholders.map((p) => <code key={p}>{p} </code>)}— the business name, how
         many businesses the standard is built from, and the current industry standard (&quot;none&quot; when there is
         none). The answer must be the three blocks === BUSINESS LAYER ===, === INDUSTRY STANDARD === and === NOTES FOR
@@ -829,6 +839,10 @@ function TemplateEditor({ info, onSaved }: { info: FinetuneIndustry; onSaved: (i
       )}
       <div className="pf-actions">
         <span className="muted grow">{text.length.toLocaleString()} characters</span>
+        {info.template_from && (
+          <button type="button" className="btn" disabled={busy || text === info.inherited_template} onClick={loadInherited}>
+            Start from {info.template_from}&apos;s</button>
+        )}
         {info.default_template && (
           <button type="button" className="btn" disabled={busy || text === info.default_template} onClick={loadDefault}>
             Load the default</button>
@@ -1305,7 +1319,7 @@ export function Finetune() {
     if (tab === "review") writeReviewNav(reviewNav, query);
     window.history.replaceState(null, "", `/finetune?${query}`);
   }, [tab, tenant, reviewNav]);
-  const industryName = tree?.industries.find((i) => i.id === tenant?.industry_id)?.name ?? "";
+  const industryName = tree?.industries.find((i) => i.id === tenant?.industry_id)?.path ?? "";
 
   const fetchInfo = useCallback(async () => (tenant
     ? api<FinetuneIndustry>("GET", `/api/finetune/industries/${tenant.industry_id}`) : null), [tenant]);
