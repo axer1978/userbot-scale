@@ -34,6 +34,8 @@ log = logging.getLogger("platform_api")
 router = APIRouter()
 ACTOR = audit.ADMIN
 RELOAD_TIMEOUT = 5.0
+# Listing an account's groups goes to WhatsApp / Telegram and back.
+GROUPS_TIMEOUT = 45.0
 
 # Wired by panel.py, read at call time so tests can swap panel's globals.
 _get_pool: Callable[[], Any] = lambda: None  # noqa: E731
@@ -355,6 +357,32 @@ async def api_save_tenant_config(tenant_id: int, body: ConfigBody) -> dict[str, 
         except commands.CommandError:
             pass
     return await api_tenant(tenant_id)
+
+
+# ------------------------------------------- the booker's group (provider)
+
+
+@router.get("/api/tenants/{tenant_id}/booking-groups")
+async def api_booking_groups(tenant_id: int) -> dict[str, Any]:
+    """The groups the client's account is in, for "Pick a group" next to
+    booking.provider: [{"id" (what booking.provider takes), "name",
+    "members", "admins_only"}]. Only the running account can say."""
+    bundle = await guarded(store().bundle(tenant_id))
+    session_id = bundle.tenant["session_id"]
+    if not session_id:
+        raise HTTPException(status_code=400, detail="This client has no account.")
+    bus = _get_bus()
+    if bus is None:
+        raise HTTPException(status_code=503, detail="The command bus is not connected.")
+    try:
+        groups = await bus.dispatch(session_id, "list_groups", {}, timeout=GROUPS_TIMEOUT)
+    except commands.CommandTimeout as exc:
+        raise HTTPException(status_code=503, detail=(
+            "The account is not running, so its groups can't be listed. Start it, or paste the group's "
+            "invite link into booking.provider instead.")) from exc
+    except commands.CommandError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"groups": groups, "provider": bundle.config["booking"]["provider"]}
 
 
 # --------------------------------------------- the messages to the booker

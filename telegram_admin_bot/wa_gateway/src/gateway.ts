@@ -11,7 +11,7 @@ import { decideClose, decideOpen, postgresSilentTooLong, watchdogVerdict, WATCHD
 import { InboxWriter } from './inbox.ts';
 import { parseDownloadRequest, parseOutboundMedia } from './media.ts';
 import { PairingRun, type PairEvent, type PairMethod } from './pairing.ts';
-import { PRESENCE_STATES, SessionSocket, type SessionEvent, type SessionSocketOptions } from './session.ts';
+import { PRESENCE_STATES, SessionSocket, type GroupEntry, type SessionEvent, type SessionSocketOptions } from './session.ts';
 
 export type Publish = (channel: string, payload: unknown) => Promise<boolean>;
 
@@ -24,6 +24,8 @@ export const MAX_READ_IDS = 500;
 export const MAX_DELETE_IDS = 50;
 // How long pair_cancel waits for the run to let go (the panel waits 5 s).
 export const CANCEL_WAIT_MS = 4_000;
+// The booker is one group; a few allow for a change of group.
+export const MAX_GROUPS = 20;
 
 function str(args: Record<string, unknown>, name: string, max = 128): string {
   const v = args[name];
@@ -37,10 +39,24 @@ function int(args: Record<string, unknown>, name: string): number {
   return v;
 }
 
-function jidArg(args: Record<string, unknown>, name = 'jid'): string {
+/** A chat to act in: a 1:1 chat, or (`group`) also a group (the booker's). */
+function jidArg(args: Record<string, unknown>, name = 'jid', group = false): string {
   const v = str(args, name);
-  if (!/^[0-9A-Za-z._:-]+@(s\.whatsapp\.net|lid)$/.test(v)) throw new GatewayError('bad_request', `${name} must be a 1:1 chat jid (…@s.whatsapp.net or …@lid)`);
+  if (group && /^[0-9-]+@g\.us$/.test(v)) return v;
+  if (!/^[0-9A-Za-z._:-]+@(s\.whatsapp\.net|lid)$/.test(v)) {
+    throw new GatewayError('bad_request', `${name} must be a 1:1 chat jid (…@s.whatsapp.net or …@lid)${group ? ' or a group (…@g.us)' : ''}`);
+  }
   return v;
+}
+
+/** `open`'s groups: the groups whose messages come through. Absent: unchanged. */
+function groupsArg(args: Record<string, unknown>): string[] | undefined {
+  const v = args.groups;
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v) || v.length > MAX_GROUPS || !v.every((g) => typeof g === 'string' && /^[0-9-]+@g\.us$/.test(g) && g.length <= 128)) {
+    throw new GatewayError('bad_request', `groups must be up to ${MAX_GROUPS} group jids (…@g.us)`);
+  }
+  return v as string[];
 }
 
 function browserArg(args: Record<string, unknown>): BrowserTuple {
@@ -104,6 +120,10 @@ export class Gateway {
         return this.presence(args);
       case 'logout':
         return this.logout(args);
+      case 'groups':
+        return this.groups(args);
+      case 'group_invite':
+        return this.groupInvite(args);
       default:
         throw new GatewayError('bad_request', `unknown action ${JSON.stringify(action)}`);
     }
@@ -178,7 +198,8 @@ export class Gateway {
     return writer;
   }
 
-  private newSession(sessionId: string, epoch: number, browser: BrowserTuple, quiet = false): SessionSocket {
+  private newSession(sessionId: string, epoch: number, browser: BrowserTuple, quiet = false,
+                     groups: readonly string[] = []): SessionSocket {
     return new SessionSocket({
       pool: this.pool,
       sessionId,
@@ -186,6 +207,7 @@ export class Gateway {
       browser,
       log: this.log,
       quiet,
+      groups,
       makeSocket: this.makeSocket,
       download: this.download,
       emit: (event: SessionEvent) => void this.publish(`wa:ev:${sessionId}`, event),
@@ -196,6 +218,7 @@ export class Gateway {
   private async open(args: Record<string, unknown>): Promise<{ state: SocketState | 'opening' }> {
     const sessionId = str(args, 'session_id');
     const epoch = int(args, 'epoch');
+    const groups = groupsArg(args);
     let tuple = parseBrowserTuple(args.browser);
     if (!tuple) {
       tuple = browserFor(sessionId);
@@ -217,6 +240,8 @@ export class Gateway {
         throw new GatewayError(decision.kind, decision.detail);
       case 'idempotent':
         if (existing?.lost) throw new GatewayError('session_lost', `${existing.lost}; re-pair the number`);
+        // Repeated every keepalive: a change of the booker group lands here.
+        if (groups) existing?.setGroups(groups);
         return { state: decision.state };
       case 'replace_then_open':
         this.log.warn({ session_id: sessionId, old_epoch: existing!.epoch, new_epoch: epoch }, 'newer epoch: closing the older socket first');
@@ -226,7 +251,7 @@ export class Gateway {
         break;
     }
 
-    const session = this.newSession(sessionId, epoch, tuple);
+    const session = this.newSession(sessionId, epoch, tuple, false, groups ?? []);
     this.sessions.set(sessionId, session);
     try {
       await session.start();
@@ -283,14 +308,14 @@ export class Gateway {
 
   private async sendText(args: Record<string, unknown>): Promise<{ message_id: string; ts: number }> {
     const session = this.fencedSocket(args);
-    const jid = jidArg(args);
+    const jid = jidArg(args, 'jid', true);
     const text = str(args, 'text', MAX_TEXT_LENGTH);
     return session.sendText(jid, text);
   }
 
   private async sendMedia(args: Record<string, unknown>): Promise<{ message_id: string; ts: number }> {
     const session = this.fencedSocket(args);
-    const jid = jidArg(args);
+    const jid = jidArg(args, 'jid', true);
     return session.sendMedia(jid, parseOutboundMedia(args));
   }
 
@@ -315,7 +340,7 @@ export class Gateway {
   /** Delete messages this account sent, for everyone in the chat. */
   private async deleteMessages(args: Record<string, unknown>): Promise<{ ok: true }> {
     const session = this.fencedSocket(args);
-    const jid = jidArg(args);
+    const jid = jidArg(args, 'jid', true);
     const ids = args.message_ids;
     if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_DELETE_IDS || !ids.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 128)) {
       throw new GatewayError('bad_request', `message_ids must be 1..${MAX_DELETE_IDS} non-empty strings`);
@@ -333,8 +358,22 @@ export class Gateway {
     const chatBound = state === 'composing' || state === 'paused';
     if (chatBound && typeof args.jid !== 'string') throw new GatewayError('bad_request', `state ${state} needs a jid`);
     if (!chatBound && args.jid !== undefined && args.jid !== null) throw new GatewayError('bad_request', `state ${state} takes no jid`);
-    await session.presence(state as 'available' | 'unavailable' | 'composing' | 'paused', chatBound ? jidArg(args) : undefined);
+    await session.presence(state as 'available' | 'unavailable' | 'composing' | 'paused', chatBound ? jidArg(args, 'jid', true) : undefined);
     return { ok: true };
+  }
+
+  /** The groups the account is in, for picking the booker's. */
+  private async groups(args: Record<string, unknown>): Promise<{ groups: GroupEntry[] }> {
+    const session = this.fencedSocket(args);
+    return { groups: await session.listGroups() };
+  }
+
+  /** The group an invite link is for (its code, after chat.whatsapp.com/). */
+  private async groupInvite(args: Record<string, unknown>): Promise<{ jid: string; subject: string }> {
+    const session = this.fencedSocket(args);
+    const code = str(args, 'code', 64);
+    if (!/^[0-9A-Za-z]+$/.test(code)) throw new GatewayError('bad_request', 'code must be the letters after chat.whatsapp.com/');
+    return session.groupInvite(code);
   }
 
   /**

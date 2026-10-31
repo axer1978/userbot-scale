@@ -91,15 +91,21 @@ Envelope is `commands.py`'s, so Python calls
 |---|---|---|---|
 | `pair` | `session_id`, `pair_id`, `method: "qr"\|"code"`, `phone?` (digits, for `code`), `browser: [os, browser, version]` | `{"started": true}` | `busy` (open socket, running pairing, or a live lease in Postgres), `not_found` (no session row), `bad_request` |
 | `pair_cancel` | `pair_id` | `{"cancelled": true}` | `not_found` |
-| `open` | `session_id`, `epoch`, `browser` | `{"state": "opening"}` (or the existing state on the same epoch) | `stale_epoch`, `not_found` (no creds: pair first), `bad_request` (channel not whatsapp, malformed), `busy` (pairing in progress), `session_lost` (same epoch, device already lost) |
+| `open` | `session_id`, `epoch`, `browser`, `groups?` (up to 20 `…@g.us`: the booker groups whose messages come through; on a live socket it replaces the set, absent leaves it) | `{"state": "opening"}` (or the existing state on the same epoch) | `stale_epoch`, `not_found` (no creds: pair first), `bad_request` (channel not whatsapp, malformed), `busy` (pairing in progress), `session_lost` (same epoch, device already lost) |
 | `close` | `session_id`, `epoch` | `{"closed": bool}`; `false` when nothing to close or `epoch` < the socket's | `bad_request` |
 | `status` | | `[{session_id, epoch, state, lost, me, inbox_pending}]` | |
-| `send_text` | `session_id`, `epoch`, `jid`, `text` | `{"message_id": "<wa id>", "ts": <unix seconds>}` | `not_connected`, `stale_epoch`, `session_lost`, `rate_limited`, `not_on_whatsapp`, `blocked`, `bad_request`, `other` |
+| `send_text` | `session_id`, `epoch`, `jid` (1:1, or a group `…@g.us`), `text` | `{"message_id": "<wa id>", "ts": <unix seconds>}` | `not_connected`, `stale_epoch`, `session_lost`, `rate_limited`, `not_on_whatsapp`, `blocked`, `bad_request`, `other` |
 | `send_media` | `session_id`, `epoch`, `jid`, `kind: "image"\|"video"`, `mimetype` (`image/…` / `video/…`), `data` (the file, base64, at most 16 MB), `view_once?`, `caption?` | `{"message_id": "<wa id>", "ts": <unix seconds>}` | as `send_text` |
 | `download_media` | `session_id`, `epoch`, `media` (an inbox payload's `media`) | `{"data": "<base64>", "bytes": <n>, "mimetype": <str\|null>}` | fencing as `send_text`; `bad_request` (bad descriptor, over 16 MB), `other` (the fetch failed, e.g. an expired link) |
 | `read` | `session_id`, `epoch`, `jid`, `message_ids: [..]` | `{"ok": true}` (keys `{remoteJid: jid, id, fromMe: false}` via `readMessages`) | same fencing/mapping as `send_text` |
 | `presence` | `session_id`, `epoch`, `state`, `jid?` | `{"ok": true}`; `composing`/`paused` need `jid`, `available`/`unavailable` take none | same |
 | `logout` | `session_id`, `epoch` | `{"logged_out": bool}` | `stale_epoch`, `not_found`, `busy`, `other` (timeout 25 s) |
+| `groups` | `session_id`, `epoch` | `{"groups": [{jid, subject, size, announce}]}`, every group the account is in, by name (one `groupFetchAllParticipating`) | fencing as `send_text` |
+| `group_invite` | `session_id`, `epoch`, `code` (the letters after `chat.whatsapp.com/`) | `{"jid", "subject"}` (`groupGetInviteInfo`; joins nothing) | fencing as `send_text`; `bad_request`; a revoked link maps like a send error |
+
+`send_media`, `delete` and `presence` take a group `jid` too; `read` does not
+(1:1 only). Groups exist for one thing: the booker (`booking.provider`) can be
+a group the account is in. Python sends its group in every keepalive `open`.
 
 `view_once` needs `scripts/patch-baileys.mjs`, which npm runs after every
 install: Baileys 7.0.0-rc14 reads the media type off the view-once wrapper,
@@ -176,7 +182,11 @@ to the account has no key on a linked device, so it has no `media`.
 (`…@lid`) are the two forms split out whichever way they arrived. `text` is
 `conversation`, `extendedTextMessage.text` or the image caption;
 `quoted_id` is `contextInfo.stanzaId`; `ts` is WhatsApp's message timestamp
-in Unix seconds. Ephemeral/view-once envelopes are unwrapped. Dropped: groups,
+in Unix seconds. Ephemeral/view-once envelopes are unwrapped. A message in a
+booker group (`open`'s `groups`) has `jid` = the group and `"group_jid"` = the
+group, `jid_alt` null, and `phone_jid` / `lid` / `push_name` of the member who
+wrote it (`key.participant`, `key.participantAlt`, device suffix dropped).
+Dropped: every other group,
 `status@broadcast`, broadcast lists, newsletters, protocol/reaction/stub
 messages, undecryptable messages. `from_me` messages are kept and flagged.
 
@@ -258,7 +268,8 @@ can be proven.
 ## Socket options
 
 `markOnlineOnConnect: false`, `syncFullHistory: false`, no history sync at
-all, `shouldIgnoreJid` for groups / status / broadcast / newsletters, the
+all, `shouldIgnoreJid` for groups (except the booker groups `open` named, read
+live from the session) / status / broadcast / newsletters, the
 browser tuple supplied in the command (`src/browser.ts` documents the
 deterministic `session_id -> tuple` mapping via sha256 for parity), a bounded
 in-memory LRU for `getMessage` (recent outbound messages, for retry

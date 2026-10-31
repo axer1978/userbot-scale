@@ -28,7 +28,7 @@ import wa_store
 from conftest import FakeHub, seed_session
 from transport import Inbound
 from database import DIR_OUT, STATUS_ERROR, STATUS_PENDING, STATUS_RECEIVED, STATUS_SENT
-from whatsapp_transport import GATEWAY, GatewayError, WhatsAppTransport, gateway_error
+from whatsapp_transport import GATEWAY, GatewayError, WhatsAppTransport, gateway_error, group_ref
 
 SID = "wa34600111222"
 ANNA_PN = "34600123456@s.whatsapp.net"
@@ -138,7 +138,7 @@ async def test_open_carries_the_lease_epoch_and_connects(wa, pg_pool):
     await wa.transport._open_once()
     (target, action, args), = wa.bus.calls
     assert (target, action) == (GATEWAY, "open")
-    assert args == {"session_id": SID, "epoch": 7, "browser": list(wa_device_profiles.derive(SID))}
+    assert args == {"session_id": SID, "epoch": 7, "browser": list(wa_device_profiles.derive(SID)), "groups": []}
     assert wa.transport.connected
     row = await wa.registry.get(SID)
     assert row["state"] == "running"
@@ -648,3 +648,148 @@ async def test_an_account_restriction_halts(wa, pg_pool):
         "jid": ANNA_PN, "code": 463, "error_kind": "other",
     }))
     assert [h["kind"] for h in await controls.holds(pg_pool, wa.tenant_id)] == [controls.WHATSAPP]
+
+
+# -------------------------------------------------- a group as the booker
+
+GROUP = "120363001122334455@g.us"
+FAMILY = "120363009988776655@g.us"
+LINA_PN = "37120000001@s.whatsapp.net"
+
+
+def gateway_groups(*groups):
+    return {"groups": [{"jid": jid, "subject": name, "size": 3, "announce": False} for jid, name in groups]}
+
+
+async def booker_group(wa, value=GROUP) -> int:
+    """The account connected, the group set as the booker and found."""
+    wa.bus.replies.setdefault("groups", gateway_groups((FAMILY, "Family"), (GROUP, "Riga bookings")))
+    await wa.transport._open_once()
+    wa.config["booking"].update(enabled=True, provider=value)
+    chat_id = await wa.provider_chat_id()
+    assert chat_id is not None
+    return chat_id
+
+
+async def put_group(pool, wa_message_id: str, text: str, *, group=GROUP, **payload) -> None:
+    fields = {"jid": group, "group_jid": group, "phone_jid": LINA_PN, "push_name": "Lina", "text": text}
+    await put_inbox(pool, wa_message_id, **{**fields, **payload})
+
+
+def test_group_values_are_told_from_phone_numbers():
+    assert group_ref(GROUP) == ("jid", GROUP)
+    assert group_ref(" https://chat.whatsapp.com/AbCd1234XyZ ") == ("invite", "AbCd1234XyZ")
+    assert group_ref("chat.whatsapp.com/invite/AbCd1234XyZ") == ("invite", "AbCd1234XyZ")
+    assert group_ref("Group:  Riga bookings") == ("name", "Riga bookings")
+    for phone in ("+371 2000 0000", "37120000000", "", "Riga bookings"):
+        assert group_ref(phone) is None
+
+
+@pytest.mark.asyncio
+async def test_a_group_set_as_the_booker_is_found_stored_and_let_through(wa, pg_pool):
+    chat_id = await booker_group(wa)
+    row = await wa_store.peer(pg_pool, SID, chat_id)
+    assert (row["jid"], row["group_jid"], row["push_name"], row["phone_jid"], row["lid"]) == \
+        (GROUP, GROUP, "Riga bookings", None, None)
+    assert (await wa.db.get_conversation(chat_id))["display_name"] == "Riga bookings"
+    # The gateway is told at once (and on every keepalive after).
+    opens = [args["groups"] for _, action, args in wa.bus.calls if action == "open"]
+    assert opens == [[], [GROUP]]
+    # Found once: the next rounds ask nothing.
+    await wa.transport._find_booker_group()
+    assert wa.bus.actions().count("groups") == 1
+    # A restarted runtime names it in its very first open, so what the group
+    # wrote meanwhile comes through.
+    wa.transport.groups = []
+    await pair(pg_pool)
+    await wa.transport.prepare()
+    assert wa.transport._open_args()["groups"] == [GROUP]
+
+
+@pytest.mark.asyncio
+async def test_a_group_by_its_invite_link_or_its_name(wa, pg_pool):
+    wa.bus.replies["group_invite"] = lambda args: {"jid": GROUP, "subject": "Riga bookings"}
+    chat_id = await booker_group(wa, " https://chat.whatsapp.com/AbCd1234 ")
+    assert [args["code"] for _, action, args in wa.bus.calls if action == "group_invite"] == ["AbCd1234"]
+    assert (await wa_store.peer(pg_pool, SID, chat_id))["group_jid"] == GROUP
+    assert (await wa.transport.resolve_owner("group: riga BOOKINGS"))[0] == chat_id
+
+
+@pytest.mark.asyncio
+async def test_a_group_the_account_is_not_in_is_never_the_booker(wa, pg_pool):
+    wa.bus.replies["groups"] = gateway_groups((FAMILY, "Family"), ("120363000000000001@g.us", "family"))
+    await wa.transport._open_once()
+    for value, why in ((GROUP, "not in that group"), ("group: Riga", "no group named"),
+                       ("group: Family", "2 groups")):
+        with pytest.raises(ValueError, match=why):
+            await wa.transport.resolve_owner(value)
+    assert await wa_store.group_jids(pg_pool, SID) == []
+    assert wa.transport._open_args()["groups"] == []
+
+
+@pytest.mark.asyncio
+async def test_anyone_in_the_booker_group_answers_and_the_group_never_gets_a_reply(wa, pg_pool, monkeypatch):
+    group_chat = await booker_group(wa)
+    answers = []
+
+    async def on_owner_message(chat_id, text, reply_to, message_id=None):
+        answers.append((chat_id, text, reply_to))
+        return text.startswith("YES")
+
+    monkeypatch.setattr(wa.flow, "on_owner_message", on_owner_message)
+    await put_group(pg_pool, "3EB0G1", "YES 1", quoted_id="3EB0OUT1")
+    await put_group(pg_pool, "3EB0G2", "who takes the 9pm?", phone_jid="37120000002@s.whatsapp.net", push_name=None)
+    assert await wa.transport.drain() == 2
+    assert answers == [(group_chat, "YES 1", "3EB0OUT1"), (group_chat, "who takes the 9pm?", None)]
+    assert sorted(m["text"] for m in await wa.db.get_messages(group_chat)) == \
+        ["+37120000002: who takes the 9pm?", "Lina: YES 1"]
+    assert wa.scheduled == []                   # never a customer's reply in the group
+    # The members get no chats of their own from it.
+    assert await pg_pool.fetchval("SELECT count(*) FROM wa_peers WHERE session_id = $1", SID) == 1
+
+
+@pytest.mark.asyncio
+async def test_other_groups_and_a_former_booker_group_are_never_read(wa, pg_pool):
+    group_chat = await booker_group(wa)
+    # A group never set as the booker (the gateway lets none through).
+    await put_group(pg_pool, "3EB0G3", "YES 1", group=FAMILY)
+    # The booker is a person now: the old group is no longer read.
+    wa.config["booking"]["provider"] = "+34 600 555 666"
+    await put_group(pg_pool, "3EB0G4", "YES 1")
+    assert await wa.transport.drain() == 2
+    # Bookings off: not read either.
+    wa.config["booking"].update(provider=GROUP, enabled=False)
+    await put_group(pg_pool, "3EB0G5", "YES 1")
+    assert await wa.transport.drain() == 1
+    assert await inbox_count(pg_pool) == 0
+    assert await wa.db.get_messages(group_chat) == []
+    assert await pg_pool.fetchval("SELECT count(*) FROM messages WHERE session_id = $1", SID) == 0
+    assert await wa_store.group_chat(pg_pool, SID, FAMILY) is None
+
+
+@pytest.mark.asyncio
+async def test_typed_by_hand_in_the_booker_group_is_kept_without_a_takeover(wa, pg_pool):
+    group_chat = await booker_group(wa)
+    await put_group(pg_pool, "3EB0G6", "I'll take #1", from_me=True, push_name=None, phone_jid=None)
+    await wa.transport.drain()
+    [m] = await wa.db.get_messages(group_chat)
+    assert (m["direction"], m["status"], m["text"]) == (DIR_OUT, STATUS_SENT, "I'll take #1")
+    assert wa.takeover_until(await wa.db.get_conversation(group_chat)) is None
+
+
+@pytest.mark.asyncio
+async def test_requests_go_to_the_group_with_no_read_receipts_and_the_panel_lists_groups(wa, pg_pool, monkeypatch):
+    async def nothing(*a, **k):
+        return None
+
+    monkeypatch.setattr(session_runtime.asyncio, "sleep", nothing)
+    group_chat = await booker_group(wa)
+    assert await wa.flow.send_owner("📅 Booking request #1", reason="test") is not None
+    assert [args["jid"] for _, action, args in wa.bus.calls if action == "send_text"] == [GROUP]
+    await wa.db.record_message(group_chat, "in", STATUS_RECEIVED, "Lina: YES 1", wa_message_id="3EB0G7")
+    await wa.transport.mark_read(group_chat)
+    assert "read" not in wa.bus.actions()
+    assert await wa.handle_command("list_groups", {}) == [
+        {"id": FAMILY, "name": "Family", "members": 3, "admins_only": False},
+        {"id": GROUP, "name": "Riga bookings", "members": 3, "admins_only": False},
+    ]

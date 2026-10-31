@@ -225,6 +225,8 @@ header {
 .cfg-row.dirty { background: rgba(169,130,31,.16); }
 .cfg-row .err { color: var(--danger); font-size: 12px; margin-top: 3px; }
 .cfg-row .list-mode { margin-top: 4px; }
+.cfg-row .cfg-helper { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; }
+.cfg-row .cfg-helper select { flex: 1 1 220px; }
 .src { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; padding: 1px 7px; border-radius: 999px;
   border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
 .src.client { border-color: var(--accent); color: var(--accent); }

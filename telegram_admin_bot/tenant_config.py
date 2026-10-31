@@ -256,9 +256,12 @@ def _default_reminders() -> list["Reminder"]:
 
 class Booking(_Strict):
     enabled: bool = False
-    # The owner's Telegram (username, phone or id). Requests go there from
-    # this account; the owner answers YES n, NO n or with a new time.
-    provider: str = Field("", max_length=64)
+    # Requests go there from this account; the booker answers YES n, NO n, a
+    # new time or in her own words. In a group, anyone in it answers for her.
+    provider: str = Field("", max_length=128, description=(
+        "Who gets the booking requests: a person (Telegram @username, phone or id; a WhatsApp number) or a "
+        "group this account is in (pick it with \"Pick a group\", or paste its invite link, or write "
+        "\"group: <its name>\")."))
     name: str = Field("", max_length=64, description=(
         "Her name: the 'Girl:' line of a booking request to the owner, and updates to the owner start with it "
         "(empty: the account's name). The customer is told it when the booking is confirmed and when they "

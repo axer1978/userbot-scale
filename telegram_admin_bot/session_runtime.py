@@ -465,6 +465,10 @@ class SessionRuntime:
         if action == "list_contacts":
             return await self.list_contacts()
 
+        if action == "list_groups":
+            # The panel's "Pick a group" for booking.provider.
+            return await self.transport.list_groups()
+
         if action == "cancel_draft":
             self.cancel_draft(args["chat_id"])
             await self.clear_deferred(args["chat_id"])
@@ -2245,6 +2249,11 @@ class SessionRuntime:
     async def provider_chat_id(self) -> Optional[int]:
         return await self.flow.provider_chat_id()
 
+    async def is_booker_group(self, chat_id: int) -> bool:
+        """A group's messages are read only while it is the booker and
+        bookings are on."""
+        return self.flow.enabled() and chat_id == await self.flow.provider_chat_id()
+
     # ------------------------------------------------------------------
     # Photos
     # ------------------------------------------------------------------
@@ -2329,8 +2338,13 @@ class SessionRuntime:
         await self.transport.on_outgoing(event)
 
     async def handle_inbound(self, message: Inbound) -> None:
-        """A private message the account received, from any transport."""
+        """A private message the account received, from any transport, or
+        one in the group set as the booker."""
         chat_id = message.chat_id
+        if message.group and not await self.is_booker_group(chat_id):
+            # A group that was the booker and no longer is (or bookings are
+            # off): nothing of it is stored or read.
+            return
         peer = await message.load_peer()
         name, username, is_bot = peer.name, peer.username, peer.is_bot
         conversation = await self._store_with_retry(
@@ -2343,6 +2357,10 @@ class SessionRuntime:
         has_text = bool(text)
         has_photo = message.has_photo
         stored_text = text if has_text else ("[photo]" if has_photo else "[non-text message]")
+        if message.group and message.sender:
+            # Who in the group wrote it, for the panel and for the reader of
+            # her answers (which reads the chat back from here).
+            stored_text = f"{message.sender}: {stored_text}"
 
         # Always stored: the platform keeps a complete record of every
         # conversation (the pre-platform log_all_messages switch is gone).
@@ -2379,6 +2397,11 @@ class SessionRuntime:
             # meant for a customer.
             if has_text and await self.flow.on_owner_message(chat_id, text, message.reply_to, message_id):
                 log.info("[%s]   message from the booking owner — handled by the booking flow.", self.session_id)
+                return
+            if message.group:
+                # A group never gets a reply meant for a customer.
+                log.info("[%s]   message in the booker's group, not a booking answer — left alone.",
+                         self.session_id)
                 return
             log.info("[%s]   message from the booking owner; replying as usual.", self.session_id)
 
@@ -2454,6 +2477,8 @@ class SessionRuntime:
         if text and text in (self.in_flight_sends.get(chat_id) or []):
             return
         if not text and self.in_flight_media.get(chat_id):
+            return
+        if message.group and not await self.is_booker_group(chat_id):
             return
 
         peer = await message.load_peer()

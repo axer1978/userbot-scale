@@ -56,6 +56,7 @@ In the panel, **☰ Menu → Safety** shows every client's account health, the h
 | Account switched off by "a new Telegram login" | Someone (maybe the owner) signed in on a new device | Confirm with the owner. If it was them: Safety → Resume the anomaly hold. If not: **Hard-off** (Safety → Revoke the session) and have the owner end the other device under Telegram → Settings → Devices, then sign in again |
 | Both the old AWS server and the new one answer customers | Both run the same number | On AWS: `docker compose stop manager scheduler`. Telegram may also have logged one of them out; sign in again on the new server |
 | Owner's YES/NO to bookings is ignored | `booking.provider` not set or not resolvable, or the owner's chat is paused | Config → `booking.provider` = the owner's @username or numeric id; the account must have chatted with them once |
+| The booker group gets nothing / its answers are ignored | The account is not in that group, the name matches no group (or several), or bookings are off | Manager log: `Cannot resolve the booking owner '…': ValueError: …` says which. Add the account to the group, then Config → `booking.provider` → **Pick a group…** (the account must be running). On WhatsApp a new group is let through within ~15 s |
 
 ## A WhatsApp account
 

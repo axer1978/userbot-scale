@@ -18,6 +18,8 @@ export type SocketDeps = {
   logger: pino.Logger;
   /** Recent outbound messages by id, for retry receipts. Transport-level only. */
   outbox?: LruCache<string, proto.IMessage>;
+  /** The groups let through (the booker's); every other group is ignored. */
+  allowGroup?: (jid: string) => boolean;
 };
 
 export function makeGatewaySocket(deps: SocketDeps): WASocket {
@@ -31,7 +33,7 @@ export function makeGatewaySocket(deps: SocketDeps): WASocket {
     // The inbox starts at pairing time; no history import, ever.
     syncFullHistory: false,
     shouldSyncHistoryMessage: () => false,
-    shouldIgnoreJid: (jid) => shouldIgnoreJid(jid),
+    shouldIgnoreJid: (jid) => shouldIgnoreJid(jid, deps.allowGroup),
     getMessage: async (key: WAMessageKey) => (key.id ? outbox.get(key.id) : undefined),
     // Our own sends will be echoed back through messages.upsert as from_me.
     emitOwnEvents: true,

@@ -17,6 +17,10 @@ type Row = { set: boolean; mode: "replace" | "append"; dirty: boolean; value: In
 
 export type ConfigSave = (body: { overrides: Record<string, unknown>; reason: string; expected_revision: number }) => Promise<void>;
 
+/** Extra controls beside a field (by path) that fill it in: `pick` sets the
+ *  value here (overriding the inherited one); Save config still saves it. */
+export type ConfigHelpers = Record<string, (pick: (value: string) => void) => React.ReactNode>;
+
 function getPath(obj: unknown, path: string): unknown {
   let node = obj;
   for (const part of path.split(".")) {
@@ -108,13 +112,14 @@ function FieldInput({ field, value, disabled, onChange }: {
   );
 }
 
-export function ConfigEditor({ fields, overrides, layer, inheritedLabel, revision, save }: {
+export function ConfigEditor({ fields, overrides, layer, inheritedLabel, revision, save, helpers }: {
   fields: ConfigField[];
   overrides: Record<string, unknown>;
   layer: "client" | "industry";
   inheritedLabel: string;
   revision: number;
   save: ConfigSave;
+  helpers?: ConfigHelpers;
 }) {
   const toast = useToast();
   const [rows, setRows] = useState<Row[]>(() => fields.map((field) => {
@@ -176,7 +181,7 @@ export function ConfigEditor({ fields, overrides, layer, inheritedLabel, revisio
     const srcText = row.set ? (row.dirty ? "changed" : layer) : field.source === layer ? "inherit" : field.source;
     body.push(
       <tr key={field.path} className={cx("cfg-row", row.set ? "overridden" : "inherited", row.dirty && "dirty")}>
-        <td className="path">{field.path}</td>
+        <td className="path" title={field.description || undefined}>{field.path}</td>
         <td><span className={`src ${srcClass}`}>{srcText}</span></td>
         <td className="val">
           <FieldInput field={field} value={row.value} disabled={!row.set}
@@ -188,6 +193,7 @@ export function ConfigEditor({ fields, overrides, layer, inheritedLabel, revisio
               <option value="append">adds to the inherited list</option>
             </select>
           )}
+          {helpers?.[field.path]?.((value) => update(i, { set: true, value, dirty: true, error: null }))}
           {row.error && <div className="err">{row.error}</div>}
         </td>
         <td className="act">

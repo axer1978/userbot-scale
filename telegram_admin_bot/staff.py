@@ -203,6 +203,9 @@ ROUTES: dict[RouteKey, Resolver] = {
     ("PUT", "/api/industries/{industry_id}/config"): "config.platform",
     ("PATCH", "/api/tenants/{tenant_id}"): "config.client",
     ("PUT", "/api/tenants/{tenant_id}/config"): "config.client",
+    # The account's group names, for picking booking.provider: shown to
+    # whoever may set it.
+    ("GET", "/api/tenants/{tenant_id}/booking-groups"): "config.client",
     ("GET", "/api/tenants/{tenant_id}/booker-messages"): "view.config",
     ("POST", "/api/tenants/{tenant_id}/booker-messages/preview"): "view.config",
     ("PUT", "/api/tenants/{tenant_id}/booker-messages"): "bookings.messages",

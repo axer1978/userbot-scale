@@ -124,7 +124,8 @@ DEFAULTS: dict[str, Any] = {
     # YES or NO, and the client is told. Times are read in timing.timezone.
     "booking": {
         "enabled": False,
-        # The account (a person or a bot) that confirms: @username or numeric id.
+        # The account (a person or a bot) that confirms: @username or numeric
+        # id; or a group the account is in (tenant_config.Booking.provider).
         "provider": "",
         # Used when the chat did not say how long the appointment is.
         "default_duration_minutes": 60,

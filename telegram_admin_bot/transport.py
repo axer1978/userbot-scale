@@ -51,7 +51,8 @@ class PeerInfo:
 @dataclass
 class Inbound:
     """One private message the account received, or sent from elsewhere
-    (from_me: typed on the phone, say).
+    (from_me: typed on the phone, say). Or one in the group set as the
+    booker (`group`): `chat_id` is the group's, `sender` who wrote it.
 
     `peer` is loaded on demand: for an echo of the runtime's own send the
     runtime returns before anything needs to know who the chat is with, so
@@ -65,6 +66,8 @@ class Inbound:
     has_photo: bool = False
     reply_to: Any = None
     is_service: bool = False
+    group: bool = False
+    sender: str = ""
     # The transport's own handle on the message (a Telethon event), for
     # fetching its media later. Opaque to the runtime.
     raw: Any = field(default=None, repr=False)
@@ -201,8 +204,14 @@ class Transport:
         raise NotImplementedError
 
     async def resolve_owner(self, value: str) -> tuple[int, PeerInfo]:
-        """The chat for booking.provider (a username, phone number or id)."""
+        """The chat for booking.provider: a person (a username, phone number
+        or id) or a group the account is in."""
         raise NotImplementedError
+
+    async def list_groups(self) -> list[dict[str, Any]]:
+        """The groups the account is in, for picking the booker's:
+        [{"id": what booking.provider takes, "name", "members"}]."""
+        raise ValueError(f"Groups can't be listed on {self.network or 'this network'}.")
 
     async def download_photo(self, message: Inbound, path: Optional[Path] = None) -> Optional[bytes]:
         """A received photo's bytes, or saved to `path` (then None)."""

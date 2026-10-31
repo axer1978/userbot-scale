@@ -374,7 +374,7 @@ function SettingsStep({ c, onSave }: { c: Effective; onSave: (patch: Record<stri
         <datalist id="ob-zones">{timeZones.map((z) => <option key={z} value={z} />)}</datalist>
         <Field label="Owner's Telegram" hint="Booking requests, escalations and the weekly summary go here."
                error={fieldErrors["booking.provider"]}>
-          <input type="text" maxLength={64} placeholder="@username or phone number" value={form.provider}
+          <input type="text" maxLength={128} placeholder="@username, phone number or a group's invite link" value={form.provider}
                  onChange={(ev) => set("provider", ev.target.value)} />
         </Field>
         <Check label="Bookings on (the bot takes booking requests for the owner to confirm)" checked={form.bookings}

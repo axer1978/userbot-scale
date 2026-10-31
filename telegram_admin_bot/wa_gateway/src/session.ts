@@ -17,7 +17,7 @@ import type { Pool } from './db.ts';
 import { backoffMs, classifyDisconnect, jitterMs, type SessionLostReason } from './disconnect.ts';
 import { FailureReporter, type MessageFailedEvent, type MessageUpdateLike } from './failures.ts';
 import type { SocketState } from './fencing.ts';
-import { isPnJid } from './jid.ts';
+import { isGroupJid, isPnJid, stripDevice } from './jid.ts';
 import { baileysLogger } from './log.ts';
 import { LruCache } from './lru.ts';
 import { collect, MAX_MEDIA_BYTES, type DownloadRequest, type OutboundMedia } from './media.ts';
@@ -46,6 +46,8 @@ export type SessionSocketOptions = {
   onLost?: (reason: SessionLostReason) => void;
   /** Temporary sockets (logout without a live socket): publish nothing. */
   quiet?: boolean;
+  /** The groups set as the booker: their messages come through (setGroups changes it). */
+  groups?: readonly string[];
   /** Tests: a fake in place of makeGatewaySocket (never connects). */
   makeSocket?: (deps: SocketDeps) => WASocket;
   /** Tests: a fake in place of Baileys' media download. */
@@ -58,10 +60,8 @@ export const SENT_ID_CACHE_SIZE = 2_000;
 export const KNOWN_JID_CACHE_SIZE = 5_000;
 export const PRESENCE_STATES: ReadonlySet<string> = new Set(['available', 'unavailable', 'composing', 'paused']);
 
-function stripDevice(jid: string): string {
-  const [user, server] = jid.split('@');
-  return `${(user ?? '').split(':')[0]}@${server ?? ''}`;
-}
+/** One group the account is in, as `groups` lists it. */
+export type GroupEntry = { jid: string; subject: string; size: number | null; announce: boolean };
 
 export function meFromUser(user: { id?: string; lid?: string; phoneNumber?: string; name?: string } | undefined): Me | null {
   if (!user?.id) return null;
@@ -115,6 +115,8 @@ export class SessionSocket {
   private readonly knownJids = new LruCache<string, true>(KNOWN_JID_CACHE_SIZE);
   private readonly openWaiters: Array<(outcome: 'open' | 'lost' | 'closed') => void> = [];
   private readonly failures: FailureReporter;
+  // Read by the socket's JID filter on every stanza, so a change applies at once.
+  private groups: ReadonlySet<string>;
 
   constructor(opts: SessionSocketOptions) {
     this.opts = opts;
@@ -122,6 +124,15 @@ export class SessionSocket {
     this.epoch = opts.epoch;
     this.log = opts.log.child({ session_id: opts.sessionId, epoch: opts.epoch });
     this.failures = new FailureReporter(opts.sessionId, opts.epoch);
+    this.groups = new Set(opts.groups ?? []);
+  }
+
+  /** The groups whose messages come through from now on (the booker's). */
+  setGroups(groups: readonly string[]): void {
+    const next = new Set(groups);
+    if (next.size === this.groups.size && [...next].every((g) => this.groups.has(g))) return;
+    this.groups = next;
+    this.log.info({ groups: [...next] }, 'booker groups set');
   }
 
   /** Loads the auth state (throws when there are no creds) and connects. */
@@ -171,6 +182,7 @@ export class SessionSocket {
       browser: this.opts.browser,
       logger: baileysLogger(this.sessionId),
       outbox: this.outbox,
+      allowGroup: (jid) => this.groups.has(jid),
     });
     this.sock = sock;
     const auth = this.auth;
@@ -223,7 +235,7 @@ export class SessionSocket {
       if (type !== 'notify' && type !== 'append') return;
       for (const raw of messages) {
         try {
-          const payload = normalizeMessage(raw as unknown as MessageLike, { sessionId: this.sessionId, epoch: this.epoch });
+          const payload = normalizeMessage(raw as unknown as MessageLike, { sessionId: this.sessionId, epoch: this.epoch, groups: this.groups });
           if (!payload) continue;
           if (isEcho(payload, this.sentIds)) {
             this.log.debug({ wa_message_id: payload.wa_message_id }, 'own send echoed back; not forwarded');
@@ -379,6 +391,32 @@ export class SessionSocket {
     const sock = this.openSock();
     try {
       await sock.readMessages(messageIds.map((id) => ({ remoteJid: jid, id, fromMe: false })));
+    } catch (error) {
+      this.failure(error);
+    }
+  }
+
+  /** Every group the account is in (one query), for picking the booker's. */
+  async listGroups(): Promise<GroupEntry[]> {
+    const sock = this.openSock();
+    try {
+      const all = await sock.groupFetchAllParticipating();
+      return Object.values(all)
+        .filter((g) => isGroupJid(g.id))
+        .map((g) => ({ jid: g.id, subject: g.subject ?? '', size: g.size ?? g.participants?.length ?? null, announce: g.announce === true }))
+        .sort((a, b) => a.subject.localeCompare(b.subject));
+    } catch (error) {
+      this.failure(error);
+    }
+  }
+
+  /** The group an invite link (its code) is for. Joins nothing. */
+  async groupInvite(code: string): Promise<{ jid: string; subject: string }> {
+    const sock = this.openSock();
+    try {
+      const g = await sock.groupGetInviteInfo(code);
+      if (!g?.id || !isGroupJid(g.id)) throw new GatewayError('not_found', 'no group for this invite link');
+      return { jid: g.id, subject: g.subject ?? '' };
     } catch (error) {
       this.failure(error);
     }
