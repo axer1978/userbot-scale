@@ -127,6 +127,37 @@ test('dropped: groups, status, broadcast, newsletters, protocol, reactions, stub
   drop(msg({ key: { remoteJid: null, id: 'X' }, message: { conversation: 'x' } }));
 });
 
+test('a booker group: the group is the chat, the member who wrote it is phone_jid / lid / push_name', () => {
+  const groups = new Set(['120363001@g.us']);
+  const inGroup = (key: MessageLike['key'], pushName: string | null = 'Lina') =>
+    normalizeMessage(msg({ key: { remoteJid: '120363001@g.us', id: 'G1', ...key }, pushName, message: { extendedTextMessage: { text: 'yes 3', contextInfo: { stanzaId: 'REQ3' } } } }), { ...opts, groups });
+
+  const lidFirst = inGroup({ participant: '777:5@lid', participantAlt: '37120000000:12@s.whatsapp.net', addressingMode: 'lid' });
+  assert.equal(lidFirst?.jid, '120363001@g.us');
+  assert.equal(lidFirst?.group_jid, '120363001@g.us');
+  assert.equal(lidFirst?.jid_alt, null);
+  assert.equal(lidFirst?.phone_jid, '37120000000@s.whatsapp.net', 'device suffix dropped');
+  assert.equal(lidFirst?.lid, '777@lid');
+  assert.equal(lidFirst?.push_name, 'Lina');
+  assert.equal(lidFirst?.text, 'yes 3');
+  assert.equal(lidFirst?.quoted_id, 'REQ3');
+
+  const pnOnly = inGroup({ participant: '37120000000@s.whatsapp.net' });
+  assert.equal(pnOnly?.phone_jid, '37120000000@s.whatsapp.net');
+  assert.equal(pnOnly?.lid, null);
+
+  // Our own message in the group (typed on the phone) is kept and flagged.
+  const mine = inGroup({ participant: '37100000000@s.whatsapp.net', fromMe: true }, null);
+  assert.equal(mine?.from_me, true);
+  assert.equal(mine?.group_jid, '120363001@g.us');
+
+  // Any other group stays out, as does every group without the option.
+  assert.equal(normalizeMessage(msg({ key: { remoteJid: '120363999@g.us', id: 'G2', participant: '1@s.whatsapp.net' }, message: { conversation: 'chat' } }), { ...opts, groups }), null);
+  assert.equal(normalizeMessage(msg({ key: { remoteJid: '120363001@g.us', id: 'G3', participant: '1@s.whatsapp.net' }, message: { conversation: 'chat' } }), opts), null);
+  // A 1:1 message carries no group_jid.
+  assert.equal('group_jid' in normalizeMessage(msg({ message: { conversation: 'hola' } }), { ...opts, groups })!, false);
+});
+
 test('timestamps: number, string, Long-like objects', () => {
   assert.equal(timestampSeconds(1.9), 1);
   assert.equal(timestampSeconds('1700000000'), 1_700_000_000);

@@ -8,8 +8,12 @@
  * is the other form when known, key.addressingMode says which one
  * remoteJid is ("pn" | "lid"). We keep all of it and also split into
  * phone_jid / lid so consumers never have to guess.
+ *
+ * A message in a group set as the booker: remoteJid is the group (also in
+ * group_jid), and phone_jid / lid / push_name are the member who wrote it
+ * (key.participant, key.participantAlt).
  */
-import { isDirectChatJid, isLidJid, isPnJid } from './jid.ts';
+import { isDirectChatJid, isGroupJid, isLidJid, isPnJid, stripDevice } from './jid.ts';
 import { inboxMedia, longValue, type InboxMedia } from './media.ts';
 
 export type InboxType = 'text' | 'image' | 'other';
@@ -32,6 +36,8 @@ export type InboxPayload = {
   ts: number;
   /** An image the runtime can fetch with download_media (images only, when fetchable). */
   media?: InboxMedia;
+  /** A message in a group set as the booker: the group (also `jid`). */
+  group_jid?: string;
 };
 
 /** The subset of WAMessage we read. Structural so tests can pass literals. */
@@ -42,6 +48,7 @@ export type MessageLike = {
     fromMe?: boolean | null;
     id?: string | null;
     participant?: string | null;
+    participantAlt?: string | null;
     addressingMode?: string | null;
   } | null;
   message?: Record<string, unknown> | null;
@@ -118,17 +125,23 @@ function textOf(kind: string | undefined, content: Record<string, unknown>): Con
   }
 }
 
-export type NormalizeOptions = { sessionId: string; epoch: number };
+export type NormalizeOptions = {
+  sessionId: string;
+  epoch: number;
+  /** The groups set as the booker; messages in any other group are not wanted. */
+  groups?: ReadonlySet<string>;
+};
 
 /**
- * Returns null for anything the inbox does not want: non-direct chats,
- * stub/system rows, protocol/reaction messages, undecryptable messages
- * (message == null) and rows without an id.
+ * Returns null for anything the inbox does not want: chats that are neither
+ * 1:1 nor a booker group, stub/system rows, protocol/reaction messages,
+ * undecryptable messages (message == null) and rows without an id.
  */
 export function normalizeMessage(msg: MessageLike, opts: NormalizeOptions): InboxPayload | null {
   const key = msg.key;
   if (!key?.id || !key.remoteJid) return null;
-  if (!isDirectChatJid(key.remoteJid)) return null;
+  const group = isGroupJid(key.remoteJid) && opts.groups?.has(key.remoteJid) ? key.remoteJid : null;
+  if (!group && !isDirectChatJid(key.remoteJid)) return null;
   if (msg.messageStubType) return null;
   const content = unwrapContent(msg.message);
   if (!content) return null;
@@ -136,9 +149,12 @@ export function normalizeMessage(msg: MessageLike, opts: NormalizeOptions): Inbo
   if (!kind || NON_CONTENT_KEYS.has(kind)) return null;
 
   const jid = key.remoteJid;
-  const alt = key.remoteJidAlt ?? null;
-  const phoneJid = isPnJid(jid) ? jid : isPnJid(alt) ? alt : null;
-  const lid = isLidJid(jid) ? jid : isLidJid(alt) ? alt : null;
+  const alt = group ? null : key.remoteJidAlt ?? null;
+  // Who wrote it: the chat itself, or in a group the member.
+  const who = group ? (key.participant ? stripDevice(key.participant) : null) : jid;
+  const whoAlt = group ? (key.participantAlt ? stripDevice(key.participantAlt) : null) : alt;
+  const phoneJid = isPnJid(who) ? who : isPnJid(whoAlt) ? whoAlt : null;
+  const lid = isLidJid(who) ? who : isLidJid(whoAlt) ? whoAlt : null;
   const { type, text, ctx, media } = textOf(kind, content);
 
   return {
@@ -157,6 +173,7 @@ export function normalizeMessage(msg: MessageLike, opts: NormalizeOptions): Inbo
     quoted_id: ctx?.stanzaId ?? null,
     ts: timestampSeconds(msg.messageTimestamp),
     ...(media ? { media } : {}),
+    ...(group ? { group_jid: group } : {}),
   };
 }
 

@@ -2631,3 +2631,120 @@ async def test_model_down_with_only_finished_bookings_she_is_told_nothing_was_do
     w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
     await owner(w, "tell him sorry")
     assert w.sent[OWNER][-1] == bookings.READ_NOTHING_FAILED
+
+
+# ------------------------------------------------- a group as the booker
+
+GROUP = -1001234567890
+OTHER_GROUP = -1009999999999
+
+
+class GroupEvent(FakeEvent):
+    """A message in a Telegram group the account is in, by `sender`."""
+
+    def __init__(self, text, reply_to=None, chat_id=GROUP, sender="Lina", outgoing=False):
+        super().__init__(chat_id, text, reply_to)
+        self.is_private = False
+        self.sender_id = 77
+        self.sender = sender
+        self.outgoing = outgoing
+
+    async def get_sender(self):
+        return SimpleNamespace(id=77, first_name=self.sender, last_name=None, username=None, bot=False,
+                               access_hash=2)
+
+    async def get_chat(self):
+        return SimpleNamespace(id=self.chat_id, title="Riga bookings", username=None, access_hash=555)
+
+
+@pytest_asyncio.fixture
+async def group_world(world, monkeypatch):
+    async def booker_group():
+        return GROUP
+
+    monkeypatch.setattr(world.app.flow, "provider_chat_id", booker_group)
+    world.app.config["booking"]["provider"] = "https://t.me/+RigaBookings"
+    return world
+
+
+async def in_group(w, text, reply_to=None, chat_id=GROUP, **event):
+    await w.app.on_incoming(GroupEvent(text, reply_to, chat_id, **event))
+    await settle(w.app)
+
+
+async def group_texts(w, chat_id=GROUP):
+    return [m["text"] for m in await w.db.get_messages(chat_id)]
+
+
+async def test_a_group_as_the_booker_gets_the_request_and_anyone_in_it_answers(group_world):
+    w = group_world
+    await customer(w, "tomorrow at 15?", book())
+    [request] = w.sent[GROUP]
+    assert "Booking request #1" in request and "YES 1" in request
+    assert OWNER not in w.sent
+
+    await in_group(w, "YES 1", sender="Lina")
+    b = await only_booking(w)
+    assert b["state"] == bs.CONFIRMED and b["decided_by"] == bs.OWNER
+    assert w.sent[GROUP][-1].startswith("#1 confirmed")
+    assert "has just been CONFIRMED" in w.script["notes"][-1]
+    # The group's thread says who wrote what.
+    assert "Lina: YES 1" in await group_texts(w)
+    assert (await w.db.get_conversation(GROUP))["display_name"] == "Riga bookings"
+
+
+async def test_a_member_answers_in_her_own_words_by_quoting_the_request(group_world):
+    w = group_world
+    await customer(w, "tomorrow at 15?", book())
+    request_id = (await w.store.by_number(1))["provider_message_id"]
+    w.script["owner_answer"] = reading(answer(1, "yes", tell_customer="bring cash"))
+    await in_group(w, "ok, he should bring cash", reply_to=request_id, sender="Driver Andris")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    [call] = w.script["owner_calls"]
+    assert call["latest"] == "ok, he should bring cash"
+    assert "Driver Andris: ok, he should bring cash" in await group_texts(w)
+
+
+async def test_talk_in_the_booker_group_gets_no_reply_and_other_groups_are_never_read(group_world):
+    w = group_world
+    await customer(w, "tomorrow at 15?", book())
+    sent, calls = len(w.sent[GROUP]), w.script["calls"]
+    # Another group the account is in: not read, not stored, even a YES.
+    await in_group(w, "YES 1", chat_id=OTHER_GROUP)
+    assert (await only_booking(w))["state"] == bs.PENDING
+    assert await w.db.get_messages(OTHER_GROUP) == [] and OTHER_GROUP not in w.sent
+    # Talk in the booker's group about no booking: read, and nothing said back.
+    w.script["owner_answer"] = reading()
+    await in_group(w, "who drives tonight?")
+    assert len(w.sent[GROUP]) == sent and w.script["calls"] == calls
+    # Without the reading of her words a private booker chat gets an ordinary
+    # reply; a group never does.
+    w.app.config["booking"]["owner_free_text"] = False
+    await in_group(w, "who drives tonight?")
+    assert len(w.sent[GROUP]) == sent and w.script["calls"] == calls
+    assert (await only_booking(w))["state"] == bs.PENDING
+
+
+async def test_a_group_that_is_no_longer_the_booker_is_not_read(group_world, monkeypatch):
+    w = group_world
+    await customer(w, "tomorrow at 15?", book())
+
+    async def person():
+        return OWNER
+
+    monkeypatch.setattr(w.app.flow, "provider_chat_id", person)
+    await in_group(w, "YES 1")
+    assert (await only_booking(w))["state"] == bs.PENDING
+    assert "Lina: YES 1" not in await group_texts(w)
+
+
+async def test_typed_by_hand_in_the_booker_group_is_kept_and_takes_nothing_over(group_world):
+    w = group_world
+    await customer(w, "tomorrow at 15?", book())
+    await w.app.on_outgoing(GroupEvent("I'll take #1", outgoing=True))
+    await settle(w.app)
+    assert "I'll take #1" in await group_texts(w)
+    assert w.app.takeover_until(await w.db.get_conversation(GROUP)) is None
+    # The same in another group: nothing stored.
+    await w.app.on_outgoing(GroupEvent("hi all", chat_id=OTHER_GROUP, outgoing=True))
+    assert await w.db.get_messages(OTHER_GROUP) == []

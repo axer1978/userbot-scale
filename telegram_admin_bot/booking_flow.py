@@ -519,7 +519,10 @@ class BookingFlow:
             chat_id, peer = await rt.transport.resolve_owner(value)
             await rt.db.upsert_conversation(chat_id, peer.name, peer.username, peer.is_bot, peer.access_hash)
         except Exception as exc:
-            log.warning("[%s] Cannot resolve the booking owner %r: %s", rt.session_id, value, type(exc).__name__)
+            # Why, when it says (not in that group, no such name): the
+            # operator fixes booking.provider from this line.
+            why = f"{type(exc).__name__}: {exc}" if isinstance(exc, ValueError) else type(exc).__name__
+            log.warning("[%s] Cannot resolve the booking owner %r: %s", rt.session_id, value, why)
             self._provider = (value, None, now)
             return None
         self._provider = (value, chat_id, now)
@@ -586,8 +589,8 @@ class BookingFlow:
                 booking["chat_id"],
                 f"Booking #{booking['number']} was NOT sent to the owner: no owner is set in booking.provider, "
                 "or it cannot be found (a phone number only works if that person lets anyone find them by "
-                "number — an @username is safest). It is retried every few minutes, and can be answered "
-                "from the Bookings page.",
+                "number — an @username is safest; a group only if this account is in it). It is retried "
+                "every few minutes, and can be answered from the Bookings page.",
             )
             await self.broadcast(booking)
             return False

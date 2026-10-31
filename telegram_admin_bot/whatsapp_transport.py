@@ -21,6 +21,11 @@ Order of things, which is the point of the design:
   runtime halts loudly (SessionRuntime.on_session_lost).
 - Photos and videos go to the gateway as bytes (`send_media`); an inbound
   photo's payload carries what `download_media` needs to fetch it later.
+- The booker (booking.provider) can be a group the account is in. Every
+  `open` names the groups that have been the booker (wa_peers), and the
+  gateway lets messages through from those and no other group. A group set
+  for the first time is found (by its JID, invite link or name), stored and
+  sent with an `open` at once.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ import base64
 import json
 import logging
 import mimetypes
+import re
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Optional
@@ -77,6 +83,11 @@ EVENT_RETRY_SECONDS = 2.0
 # Chats whose newest read-marked message id is remembered (the oldest
 # forgotten beyond this; forgetting only costs one repeated read receipt).
 READ_UPTO_MAX = 5_000
+# The groups list and an invite link lookup are one query each.
+GROUPS_TIMEOUT = 30.0
+
+INVITE_LINK = re.compile(r"chat\.whatsapp\.com/(?:invite/)?([0-9A-Za-z]+)", re.IGNORECASE)
+GROUP_NAME = re.compile(r"group\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
 
 # What the gateway's session_lost reasons mean for the operator.
 SESSION_LOST = {
@@ -90,6 +101,20 @@ SESSION_LOST = {
 
 def event_channel(session_id: str) -> str:
     return f"wa:ev:{session_id}"
+
+
+def group_ref(value: str) -> Optional[tuple[str, str]]:
+    """booking.provider as a group: ("jid", "120363…@g.us"), ("invite",
+    code) for a chat.whatsapp.com link, or ("name", name) for "group: Name".
+    None for anything else (a phone number)."""
+    value = (value or "").strip()
+    if wa_store.is_group_jid(value):
+        return "jid", value
+    if match := INVITE_LINK.search(value):
+        return "invite", match.group(1)
+    if match := GROUP_NAME.fullmatch(value):
+        return "name", match.group(1).strip()
+    return None
 
 
 class GatewayError(RuntimeError):
@@ -140,6 +165,8 @@ class WhatsAppTransport(Transport):
         self._gateway_down_logged = False
         # chat_id -> the newest received message id already marked read.
         self._read_upto: dict[int, str] = {}
+        # The groups whose messages the gateway lets through (every `open`).
+        self.groups: list[str] = []
 
     # ----------------------------------------------------------- state
 
@@ -178,6 +205,9 @@ class WhatsAppTransport(Transport):
         else:
             if changed:
                 log.info("[%s] %d chats/bookings now labelled with the number.", rt.session_id, changed)
+        # Known before the first `open`, so what the booker group wrote while
+        # the account was away comes through with the rest.
+        self.groups = await wa_store.group_jids(rt.pool, rt.session_id)
 
     async def reload_login(self) -> str:
         if not await wa_store.has_login(self.rt.pool, self.rt.session_id):
@@ -191,6 +221,7 @@ class WhatsAppTransport(Transport):
         # panel), else the same deterministic one the panel would pick.
         browser = (self.rt.account.get("identity") or {}).get("wa_browser")
         args["browser"] = list(browser) if browser else list(wa_device_profiles.derive(self.rt.session_id))
+        args["groups"] = list(self.groups)
         return args
 
     async def start(self) -> None:
@@ -236,6 +267,7 @@ class WhatsAppTransport(Transport):
             if not self.lost:
                 try:
                     await self._open_once()
+                    await self._find_booker_group()
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -282,6 +314,15 @@ class WhatsAppTransport(Transport):
             await self._set_connected((result or {}).get("me") or {})
         elif state not in (None, "open", "opening", "connecting") and self.connected:
             await self._set_disconnected(f"WhatsApp socket is {state}.")
+
+    async def _find_booker_group(self) -> None:
+        """A group set as the booker is found as soon as the socket is open,
+        not only when the first request goes to it: until then the gateway
+        would keep its messages out. Once found it is cached (booking_flow),
+        so later rounds cost nothing."""
+        flow = getattr(self.rt, "flow", None)
+        if self.connected and flow is not None and group_ref(flow.settings.get("provider") or ""):
+            await self.rt.provider_chat_id()
 
     async def _set_connected(self, me: dict[str, Any]) -> None:
         was = self.connected
@@ -419,6 +460,9 @@ class WhatsAppTransport(Transport):
 
     async def _take(self, payload: dict[str, Any], wa_message_id: str) -> None:
         rt = self.rt
+        if payload.get("group_jid"):
+            await self._take_group(payload, wa_message_id)
+            return
         phone_jid = payload.get("phone_jid")
         lid = payload.get("lid")
         if not phone_jid and not lid:
@@ -431,6 +475,26 @@ class WhatsAppTransport(Transport):
             rt.pool, rt.session_id, phone_jid=phone_jid, lid=lid,
             push_name=None if from_me else (payload.get("push_name") or None),
         )
+        await self._deliver(payload, wa_message_id, chat_id)
+
+    async def _take_group(self, payload: dict[str, Any], wa_message_id: str) -> None:
+        """A message in a group that has been the booker. One from a group
+        never set (the gateway lets only those through) is dropped unseen;
+        the runtime drops one from a group that is no longer the booker."""
+        rt = self.rt
+        chat_id = await wa_store.group_chat(rt.pool, rt.session_id, payload["group_jid"])
+        if chat_id is None:
+            log.warning("[%s] WhatsApp message %s from a group that was never the booker; dropped.",
+                        rt.session_id, wa_message_id)
+            return
+        sender = "" if payload.get("from_me") else (
+            payload.get("push_name") or wa_store.phone_of(payload.get("phone_jid")) or "someone")
+        await self._deliver(payload, wa_message_id, chat_id, group=True, sender=sender)
+
+    async def _deliver(self, payload: dict[str, Any], wa_message_id: str, chat_id: int, *,
+                       group: bool = False, sender: str = "") -> None:
+        rt = self.rt
+        from_me = bool(payload.get("from_me"))
         if await rt.db.find_by_wa_message_id(chat_id, wa_message_id) is not None:
             return  # delivered before: stored once, handled once
 
@@ -446,6 +510,8 @@ class WhatsAppTransport(Transport):
             has_photo=payload.get("type") == "image",
             reply_to=payload.get("quoted_id"),
             raw=payload,
+            group=group,
+            sender=sender,
         )
         if from_me:
             await rt.handle_own_echo(message)
@@ -545,8 +611,12 @@ class WhatsAppTransport(Transport):
     async def mark_read(self, chat_id: int, message_id: Any = None) -> None:
         """Blue ticks for the chat's newest received messages not yet marked
         (or just `message_id`). Whether the sender sees them depends on the
-        account's own read-receipt privacy setting."""
+        account's own read-receipt privacy setting. None in the booker's
+        group (a group's receipts name each sender's message)."""
         rt = self.rt
+        chat = await wa_store.peer(rt.pool, rt.session_id, chat_id)
+        if chat is None or chat.get("group_jid"):
+            return
         if message_id is not None:
             ids = [message_id]
         else:
@@ -565,10 +635,7 @@ class WhatsAppTransport(Transport):
                 ids.append(row["wa_message_id"])
         if not ids:
             return
-        row = await wa_store.peer(rt.pool, rt.session_id, chat_id)
-        if row is None:
-            return
-        await self._call("read", {"jid": row["jid"], "message_ids": list(reversed(ids))}, ACTION_TIMEOUT)
+        await self._call("read", {"jid": chat["jid"], "message_ids": list(reversed(ids))}, ACTION_TIMEOUT)
         self._read_upto.pop(chat_id, None)
         self._read_upto[chat_id] = ids[0]
         while len(self._read_upto) > READ_UPTO_MAX:
@@ -583,10 +650,54 @@ class WhatsAppTransport(Transport):
         raise ValueError("Outreach is not available for WhatsApp accounts.")
 
     async def resolve_owner(self, value: str) -> tuple[int, PeerInfo]:
-        """booking.provider for a WhatsApp account is the owner's phone number."""
+        """booking.provider for a WhatsApp account: the owner's phone number,
+        or a group the account is in (its JID, invite link or "group: Name").
+        A group found for the first time is let through by the gateway at once."""
         rt = self.rt
-        chat_id, _ = await wa_store.chat_for(rt.pool, rt.session_id, phone_jid=wa_store.phone_jid_for(value))
-        return chat_id, PeerInfo(wa_store.display_name(await wa_store.peer(rt.pool, rt.session_id, chat_id)))
+        ref = group_ref(value)
+        if ref is None:
+            chat_id, _ = await wa_store.chat_for(rt.pool, rt.session_id, phone_jid=wa_store.phone_jid_for(value))
+            return chat_id, PeerInfo(wa_store.display_name(await wa_store.peer(rt.pool, rt.session_id, chat_id)))
+        jid, name = await self._find_group(*ref)
+        chat_id = await wa_store.group_chat_for(rt.pool, rt.session_id, jid, name)
+        if jid not in self.groups:
+            self.groups.append(jid)
+            log.info("[%s] The booker is the WhatsApp group %s; its messages come through from now on.",
+                     rt.session_id, jid)
+            await self._open_once()
+        return chat_id, PeerInfo(name or "WhatsApp group")
+
+    async def _find_group(self, kind: str, ref: str) -> tuple[str, str]:
+        """(JID, name) of a group this account is in, by JID, invite code or
+        name (any case). ValueError when it is in no such group, or in
+        several of that name."""
+        if kind == "invite":
+            found = await self._call("group_invite", {"code": ref}, GROUPS_TIMEOUT)
+            kind, ref = "jid", str((found or {}).get("jid") or "")
+        groups = await self.list_groups()
+        if kind == "jid":
+            hits = [g for g in groups if g["id"] == ref]
+            if not hits:
+                raise ValueError("this WhatsApp account is not in that group")
+        else:
+            hits = [g for g in groups if g["name"].strip().casefold() == ref.casefold()]
+            if not hits:
+                raise ValueError(f"this WhatsApp account is in no group named {ref!r}")
+            if len(hits) > 1:
+                raise ValueError(f"this WhatsApp account is in {len(hits)} groups named {ref!r}: "
+                                 "pick the group in the panel instead")
+        return hits[0]["id"], hits[0]["name"]
+
+    async def list_groups(self) -> list[dict[str, Any]]:
+        if not self.connected:
+            raise ValueError("WhatsApp is not connected.")
+        result = await self._call("groups", {}, GROUPS_TIMEOUT)
+        return [
+            {"id": g["jid"], "name": g.get("subject") or "", "members": g.get("size"),
+             "admins_only": bool(g.get("announce"))}
+            for g in (result or {}).get("groups") or []
+            if wa_store.is_group_jid(g.get("jid"))
+        ]
 
     async def download_photo(self, message: Inbound, path: Optional[Path] = None) -> Optional[bytes]:
         """The photo of an inbound message, from WhatsApp's media servers

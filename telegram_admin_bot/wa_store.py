@@ -7,6 +7,9 @@ WhatsApp chat gets its chat_id from wa_peers, which maps it to the JIDs
 WhatsApp uses for the person: the phone JID (34600123456@s.whatsapp.net)
 and/or the privacy-preserving LID (123456789@lid). Both point at one chat
 once WhatsApp has told us they belong together.
+
+A group set as the booker (booking.provider, migration 0023) is a chat too,
+keyed by the group's JID (120363012345678901@g.us), its name in push_name.
 """
 
 from __future__ import annotations
@@ -21,6 +24,11 @@ log = logging.getLogger("wa_store")
 
 PHONE_SERVER = "@s.whatsapp.net"
 LID_SERVER = "@lid"
+GROUP_SERVER = "@g.us"
+
+
+def is_group_jid(jid: Optional[str]) -> bool:
+    return bool(jid) and jid.endswith(GROUP_SERVER)
 
 
 def split_jid(jid: Optional[str]) -> tuple[Optional[str], Optional[str]]:
@@ -108,9 +116,46 @@ async def chat_for(
         return row["chat_id"], new_jid
 
 
+async def group_chat_for(pool: asyncpg.Pool, session_id: str, group_jid: str, name: str) -> int:
+    """The chat_id of a group set as the booker, creating it on first sight;
+    `name` (the group's name now) is kept up to date."""
+    if not is_group_jid(group_jid):
+        raise ValueError(f"{group_jid!r} is not a WhatsApp group")
+    return await pool.fetchval(
+        """
+        INSERT INTO wa_peers (session_id, jid, group_jid, push_name) VALUES ($1, $2, $2, $3)
+        ON CONFLICT (session_id, group_jid) WHERE group_jid IS NOT NULL
+        DO UPDATE SET push_name = CASE WHEN EXCLUDED.push_name <> '' THEN EXCLUDED.push_name
+                                       ELSE wa_peers.push_name END,
+                      updated_at = now()
+        RETURNING chat_id
+        """,
+        session_id, group_jid, name or "",
+    )
+
+
+async def group_chat(pool: asyncpg.Pool, session_id: str, group_jid: str) -> Optional[int]:
+    """The chat_id of a group that has been the booker; None for any other
+    group (never stored)."""
+    return await pool.fetchval(
+        "SELECT chat_id FROM wa_peers WHERE session_id = $1 AND group_jid = $2", session_id, group_jid,
+    )
+
+
+async def group_jids(pool: asyncpg.Pool, session_id: str) -> list[str]:
+    """Every group that has been this account's booker: the groups wa-gateway
+    lets messages through from."""
+    rows = await pool.fetch(
+        "SELECT group_jid FROM wa_peers WHERE session_id = $1 AND group_jid IS NOT NULL ORDER BY chat_id",
+        session_id,
+    )
+    return [r["group_jid"] for r in rows]
+
+
 async def peer(pool: asyncpg.Pool, session_id: str, chat_id: int) -> Optional[dict[str, Any]]:
     row = await pool.fetchrow(
-        "SELECT chat_id, jid, phone_jid, lid, push_name FROM wa_peers WHERE session_id = $1 AND chat_id = $2",
+        "SELECT chat_id, jid, phone_jid, lid, group_jid, push_name FROM wa_peers "
+        "WHERE session_id = $1 AND chat_id = $2",
         session_id, chat_id,
     )
     return dict(row) if row else None

@@ -20,6 +20,7 @@ import type { Pool } from '../src/db.ts';
 import { Gateway } from '../src/gateway.ts';
 import { INSERT_SQL } from '../src/inbox.ts';
 import type { SessionEvent, SessionSocketOptions } from '../src/session.ts';
+import type { SocketDeps } from '../src/socket.ts';
 
 const KEY_B64 = 'MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=';
 process.env.USERBOT_MASTER_KEY = KEY_B64;
@@ -74,15 +75,16 @@ function fakePool(creds: Record<string, Buffer>, opts: { insertError?: (waMessag
   return pool as unknown as Pool & { inserted: Array<[string, string]> };
 }
 
-type FakeSock = WASocket & { ev: EventEmitter; ended: number };
+type FakeSock = WASocket & { ev: EventEmitter; ended: number; deps: SocketDeps };
 
 /** Every socket the gateway makes, in order; each one is a bare emitter. */
 function socketFactory() {
   const made: FakeSock[] = [];
-  const makeSocket = () => {
+  const makeSocket = (deps: SocketDeps) => {
     const ev = new EventEmitter();
     const sock = {
       ev,
+      deps,
       ended: 0,
       user: { id: '34600000000:3@s.whatsapp.net', lid: '999@lid', name: 'Salon' },
       end: async () => void (sock.ended += 1),
@@ -275,6 +277,51 @@ test('offline redelivery ("append") is accepted, anything else on messages.upser
   await tick();
   assert.deepEqual(pool.inserted.map(([, id]) => id), ['OFF1', 'OK2', 'PHONE1']);
   await gw.handle(cmd('close', { session_id: 'wa1', epoch: 4 }));
+});
+
+test('the booker group: only its messages reach the inbox, a keepalive open changes it, groups and invites are looked up', async () => {
+  const { gw, pool, last } = await setup();
+  const s = { session_id: 'wa1', epoch: 4 };
+  const BOOKER = '120363001@g.us';
+  await gw.handle(cmd('open', { ...s, browser, groups: [BOOKER] }));
+  const sock = last();
+  open(sock);
+  // Baileys asks the filter for every stanza: the booker group passes, others never decrypt.
+  assert.equal(sock.deps.allowGroup?.(BOOKER), true);
+  assert.equal(sock.deps.allowGroup?.('120363999@g.us'), false);
+  const groupMsg = (id: string, group: string) =>
+    inbound(id, { key: { remoteJid: group, fromMe: false, id, participant: '37120000000@s.whatsapp.net' }, pushName: 'Lina', message: { conversation: 'YES 3' } });
+  sock.ev.emit('messages.upsert', { type: 'notify', messages: [groupMsg('G1', BOOKER), groupMsg('G2', '120363999@g.us')] });
+  await tick();
+  assert.deepEqual(pool.inserted, [['wa1', 'G1']]);
+
+  // Our own request to the group echoes back: not an inbox row.
+  const sent = (await gw.handle(cmd('send_text', { ...s, jid: BOOKER, text: 'Booking #3' }))) as { message_id: string };
+  sock.ev.emit('messages.upsert', { type: 'notify', messages: [inbound(sent.message_id, { key: { remoteJid: BOOKER, fromMe: true, id: sent.message_id, participant: '34600000000@s.whatsapp.net' } })] });
+  await tick();
+  assert.deepEqual(pool.inserted, [['wa1', 'G1']]);
+
+  // The booker moved to a person: the next keepalive open says so, on the same socket.
+  await gw.handle(cmd('open', { ...s, browser, groups: [] }));
+  assert.equal(last(), sock, 'no new socket');
+  assert.equal(sock.deps.allowGroup?.(BOOKER), false);
+  sock.ev.emit('messages.upsert', { type: 'notify', messages: [groupMsg('G3', BOOKER)] });
+  await tick();
+  assert.deepEqual(pool.inserted, [['wa1', 'G1']]);
+
+  (sock as unknown as { groupFetchAllParticipating: unknown }).groupFetchAllParticipating = async () => ({
+    [BOOKER]: { id: BOOKER, subject: 'Riga bookings', size: 4, participants: [], announce: false },
+    '120363002@g.us': { id: '120363002@g.us', subject: 'Admins', participants: [{}, {}], announce: true },
+  });
+  (sock as unknown as { groupGetInviteInfo: unknown }).groupGetInviteInfo = async (code: string) =>
+    (code === 'AbC123' ? { id: BOOKER, subject: 'Riga bookings' } : Promise.reject(new Boom('not-authorized', { statusCode: 401 })));
+  assert.deepEqual(await gw.handle(cmd('groups', s)), { groups: [
+    { jid: '120363002@g.us', subject: 'Admins', size: 2, announce: true },
+    { jid: BOOKER, subject: 'Riga bookings', size: 4, announce: false },
+  ] });
+  assert.deepEqual(await gw.handle(cmd('group_invite', { ...s, code: 'AbC123' })), { jid: BOOKER, subject: 'Riga bookings' });
+  assert.notEqual(await kindOf(gw.handle(cmd('group_invite', { ...s, code: 'Revoked1' }))), 'ok');
+  await gw.handle(cmd('close', s));
 });
 
 test('send_media sends a WhatsApp image, its echo is ours; download_media fetches and joins the file', async () => {

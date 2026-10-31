@@ -16,12 +16,23 @@ from pathlib import Path
 from typing import Any, Optional
 
 import asyncpg
-from telethon import TelegramClient, errors, events
+from telethon import TelegramClient, errors, events, utils
 from telethon.crypto import AuthKey
 from telethon.sessions import MemorySession
 from telethon.tl.functions.account import GetAuthorizationsRequest, UpdateStatusRequest
 from telethon.tl.functions.contacts import GetContactsRequest, ResolvePhoneRequest
-from telethon.tl.types import InputPeerUser, User
+from telethon.tl.functions.messages import CheckChatInviteRequest
+from telethon.tl.types import (
+    Channel,
+    Chat,
+    ChatInviteAlready,
+    InputPeerChannel,
+    InputPeerChat,
+    InputPeerUser,
+    PeerChannel,
+    PeerChat,
+    User,
+)
 
 import anomaly
 import config_store
@@ -48,6 +59,16 @@ log = logging.getLogger("session_runtime")
 # ttl_seconds that Telegram reads as "view once" rather than a timer.
 VIEW_ONCE_TTL = 0x7FFFFFFF
 
+# booking.provider as a group: an invite link, a group's id (negative, as
+# the panel's group list gives it) or "group: <its name>". A bare name is
+# never looked up as a group: it could be someone else's @username.
+INVITE_LINK = re.compile(r"(?:t|telegram)\.me/(?:\+|joinchat/)([\w-]+)", re.IGNORECASE)
+PUBLIC_LINK = re.compile(r"(?:https?://)?(?:t|telegram)\.me/([A-Za-z]\w{3,})/?", re.IGNORECASE)
+GROUP_ID = re.compile(r"-\d+")
+GROUP_NAME = re.compile(r"group\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
+# Chats looked through for a group by name or id (the newest first).
+GROUP_SCAN_DIALOGS = 3000
+
 def describe_sender(sender: Any, fallback_id: int) -> tuple[str, Optional[str], bool, Optional[int]]:
     """(display_name, username, is_bot, access_hash) for a private-chat peer."""
     username = getattr(sender, "username", None)
@@ -67,6 +88,15 @@ def describe_sender(sender: Any, fallback_id: int) -> tuple[str, Optional[str], 
 
 def peer_info(sender: Any, fallback_id: int) -> PeerInfo:
     return PeerInfo(*describe_sender(sender, fallback_id))
+
+
+def _is_group(entity: Any) -> bool:
+    """A group the account can take part in: a basic group still in use, or
+    a supergroup (not a broadcast channel)."""
+    if isinstance(entity, Chat):
+        return not (getattr(entity, "deactivated", False) or getattr(entity, "left", False)
+                    or getattr(entity, "migrated_to", None))
+    return isinstance(entity, Channel) and bool(entity.megagroup) and not getattr(entity, "left", False)
 
 
 def _client_from_auth(
@@ -269,13 +299,13 @@ class TelegramTransport(Transport):
 
     # --------------------------------------------------------- inbound
 
-    def _inbound(self, event: Any, *, from_me: bool) -> Inbound:
+    def _inbound(self, event: Any, *, from_me: bool, group: bool = False, sender: str = "") -> Inbound:
         chat_id = event.chat_id
         message = event.message
 
         async def load_peer() -> PeerInfo:
             try:
-                who = await (event.get_chat() if from_me else event.get_sender())
+                who = await (event.get_chat() if from_me or group else event.get_sender())
             except Exception:
                 who = None
             return peer_info(who, chat_id)
@@ -290,16 +320,30 @@ class TelegramTransport(Transport):
             reply_to=getattr(message, "reply_to_msg_id", None),
             is_service=chat_id == TELEGRAM_SERVICE_ID,
             raw=event,
+            group=group,
+            sender=sender,
         )
+
+    async def _booker_group(self, event: Any) -> bool:
+        """A message outside a private chat counts only in the group set as
+        the booker (booking.provider); every other group, and channels, are
+        never read."""
+        return event.chat_id == await self.rt.provider_chat_id()
 
     async def on_incoming(self, event: Any) -> None:
         """Telethon's handler for a new message. Whatever goes wrong with
         one message is logged here, with the account and chat, and never
         reaches Telethon, so the next message is handled as usual."""
         try:
-            if not event.is_private:
-                return
-            await self.rt.handle_inbound(self._inbound(event, from_me=False))
+            if event.is_private:
+                await self.rt.handle_inbound(self._inbound(event, from_me=False))
+            elif await self._booker_group(event):
+                try:
+                    who = await event.get_sender()
+                except Exception:
+                    who = None
+                sender = peer_info(who, event.sender_id or 0).name
+                await self.rt.handle_inbound(self._inbound(event, from_me=False, group=True, sender=sender))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -308,9 +352,9 @@ class TelegramTransport(Transport):
 
     async def on_outgoing(self, event: Any) -> None:
         try:
-            if not event.is_private:
+            if not event.is_private and not await self._booker_group(event):
                 return
-            await self.rt.handle_own_echo(self._inbound(event, from_me=True))
+            await self.rt.handle_own_echo(self._inbound(event, from_me=True, group=not event.is_private))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -325,11 +369,18 @@ class TelegramTransport(Transport):
         try:
             return await self.client.get_input_entity(chat_id)
         except (ValueError, TypeError):
+            # The client's memory is empty after a restart: rebuilt from the
+            # access hash stored with the conversation (a basic group needs none).
+            real_id, kind = utils.resolve_id(chat_id)
+            if kind is PeerChat:
+                return InputPeerChat(real_id)
             access_hash = await self.rt.db.get_access_hash(chat_id)
             if access_hash is None:
                 raise RuntimeError(
                     f"Cannot resolve chat {chat_id}. Receive a message from them first."
                 )
+            if kind is PeerChannel:
+                return InputPeerChannel(real_id, access_hash)
             return InputPeerUser(chat_id, access_hash)
 
     async def send_text(self, peer: Any, chat_id: int, text: str, typing_seconds: Optional[float]) -> Any:
@@ -421,16 +472,32 @@ class TelegramTransport(Transport):
         ]
 
     async def resolve_owner(self, value: str) -> tuple[int, PeerInfo]:
-        entity = await self._owner_entity(value)
-        chat_id = int(entity.id)
+        entity = await self._owner_entity(value.strip())
+        if isinstance(entity, Channel) and not entity.megagroup:
+            raise ValueError("a channel can't answer booking requests: use a group")
+        # A group's chat id is negative (-100… for a supergroup), as in its events.
+        chat_id = utils.get_peer_id(entity)
         return chat_id, peer_info(entity, chat_id)
 
     async def _owner_entity(self, value: str) -> Any:
-        """booking.provider: @username, numeric id or phone number.
+        """booking.provider: @username, numeric id or phone number of a
+        person; or a group this account is in, by its invite link, its id
+        (negative) or "group: <name>". A public group's @username or t.me
+        link works like a person's.
         Telethon's get_entity finds a phone only among this account's
         contacts, so a phone is looked up with contacts.ResolvePhone (works
         when the owner lets people find them by number)."""
         client = self.client
+        if match := INVITE_LINK.search(value):
+            return await self._invited_group(match.group(1))
+        if match := GROUP_NAME.fullmatch(value):
+            name = match.group(1).strip()
+            return await self._group_where(lambda d: (d.name or "").strip().casefold() == name.casefold(),
+                                           f"named {name!r}")
+        if GROUP_ID.fullmatch(value):
+            return await self._group_by_id(int(value))
+        if match := PUBLIC_LINK.fullmatch(value):
+            value = "@" + match.group(1)
         digits = re.sub(r"[+()\s-]", "", value)
         if not digits.isdigit() or len(digits) < 7:
             return await client.get_entity(int(value) if value.lstrip("-").isdigit() else value)
@@ -449,6 +516,50 @@ class TelegramTransport(Transport):
         if user is None:
             raise ValueError(f"no Telegram user for phone {value}")
         return user
+
+    async def _invited_group(self, invite_hash: str) -> Any:
+        """The group an invite link is for. Joins nothing: the account must
+        be in it already (a stranger's request would go nowhere)."""
+        result = await self.client(CheckChatInviteRequest(invite_hash))
+        if not isinstance(result, ChatInviteAlready):
+            raise ValueError("this Telegram account is not in that group yet: join it first")
+        return result.chat
+
+    async def _group_by_id(self, peer_id: int) -> Any:
+        """A group by its (negative) id. Telethon remembers nothing after a
+        restart, so the stored access hash is tried before the chat list."""
+        try:
+            return await self.client.get_entity(peer_id)
+        except (ValueError, TypeError):
+            pass
+        real_id, kind = utils.resolve_id(peer_id)
+        access_hash = await self.rt.db.get_access_hash(peer_id)
+        if kind is PeerChannel and access_hash is not None:
+            with suppress(ValueError, TypeError, errors.RPCError):
+                return await self.client.get_entity(InputPeerChannel(real_id, access_hash))
+        return await self._group_where(lambda d: d.id == peer_id, f"with id {peer_id}")
+
+    async def _group_where(self, wanted: Any, described: str) -> Any:
+        """The one group among this account's chats that `wanted` picks."""
+        found = [d.entity async for d in self.client.iter_dialogs(limit=GROUP_SCAN_DIALOGS)
+                 if _is_group(d.entity) and wanted(d)]
+        if not found:
+            raise ValueError(f"this Telegram account is in no group {described}")
+        if len(found) > 1:
+            raise ValueError(f"this Telegram account is in {len(found)} groups {described}: "
+                             "pick the group in the panel instead")
+        return found[0]
+
+    async def list_groups(self) -> list[dict[str, Any]]:
+        if not self.ready:
+            raise ValueError("Telegram is not connected.")
+        groups = [
+            {"id": str(d.id), "name": d.name or "", "members": getattr(d.entity, "participants_count", None),
+             "admins_only": False}
+            async for d in self.client.iter_dialogs(limit=GROUP_SCAN_DIALOGS)
+            if _is_group(d.entity)
+        ]
+        return sorted(groups, key=lambda g: g["name"].casefold())
 
     async def download_photo(self, message: Inbound, path: Optional[Path] = None) -> Optional[bytes]:
         if path is None:

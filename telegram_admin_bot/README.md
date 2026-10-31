@@ -360,7 +360,10 @@ They work as on Telegram, with one difference: **`booking.provider` is the
 owner's phone number** in international format (`+34600555666`), not a
 username. Booking requests go to the owner from the account's own number; the
 owner answers `YES 7` / `NO 7` (and the other commands), or **replies to the
-request message** (WhatsApp's reply/quote) with a bare `yes` or `no`.
+request message** (WhatsApp's reply/quote) with a bare `yes` or `no`. It can
+also be a WhatsApp group the account is in (see *A group as the booker*
+below); the first message from each member may take a moment while WhatsApp
+hands over the group's keys.
 
 ### When a send fails
 
@@ -631,6 +634,21 @@ the opening hours, the calendar link and AI usage.
   *Booking request #7 … Reply YES 7 or NO 7, or a new time like 7 15:30.*
   Numbers count per client from 1. **Nothing is confirmed until a person
   says yes**: the owner by text, or you in the panel.
+- **A group as the booker.** `booking.provider` can be a WhatsApp or Telegram
+  group the account is in: Clients → client → Config → `booking.provider` →
+  **Pick a group…** (asks the running account for its groups and fills in the
+  group's id), or paste the group's invite link (`chat.whatsapp.com/…`,
+  `t.me/+…`), or write `group: <its exact name>`. A bare name is never looked
+  up as a group (on Telegram it could be a stranger's @username). Requests and
+  every other message for the owner (escalations, notices, the digest) go to
+  the group, and **anyone in it answers for her**: a command, a quote of the
+  request, or her own words. In the panel the group's thread shows who wrote
+  each message (`Lina: YES 7`). Talk in the group about no booking gets no
+  answer, and the group never gets a reply meant for a customer. Every other
+  group, and a group that is no longer the booker, is never read or stored;
+  on WhatsApp the gateway does not even decrypt them. With
+  `booking.owner_free_text` on, every message in the group costs one small
+  model call to read.
 - The request lists who asks, her name (`Girl:`), the **extras** he asked
   for in the chat (`Extras: domination +50, …`, read with the time; kept on
   the booking and shown on the Bookings page), when, and notes.

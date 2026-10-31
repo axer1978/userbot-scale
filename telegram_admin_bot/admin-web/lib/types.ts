@@ -218,6 +218,7 @@ export type ConfigField = {
   value: unknown;
   inherited_value?: unknown;
   source: string;
+  description?: string;
 };
 
 export type ConfigView = {

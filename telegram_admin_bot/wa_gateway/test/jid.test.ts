@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isDirectChatJid, isLidJid, isPnJid, shouldIgnoreJid } from '../src/jid.ts';
+import { isDirectChatJid, isLidJid, isPnJid, shouldIgnoreJid, stripDevice } from '../src/jid.ts';
 import { browserFor, candidateIndex, parseBrowserTuple, BROWSER_CANDIDATES } from '../src/browser.ts';
 import { LruCache } from '../src/lru.ts';
 
@@ -9,6 +9,19 @@ test('groups, status, broadcast lists and newsletters are ignored at the socket'
     assert.equal(shouldIgnoreJid(jid), true, jid);
     assert.equal(isDirectChatJid(jid), false, jid);
   }
+});
+
+test('a group passes only when allowed (the booker group); never as a 1:1 chat', () => {
+  const allow = (jid: string) => jid === '120363000000@g.us';
+  assert.equal(shouldIgnoreJid('120363000000@g.us', allow), false);
+  assert.equal(shouldIgnoreJid('123-456@g.us', allow), true);
+  assert.equal(isDirectChatJid('120363000000@g.us'), false);
+  for (const jid of ['status@broadcast', '1234567890@broadcast', '120363@newsletter']) {
+    assert.equal(shouldIgnoreJid(jid, () => true), true, jid);
+  }
+  assert.equal(shouldIgnoreJid('34600000000@s.whatsapp.net', allow), false);
+  assert.equal(stripDevice('34600000000:12@s.whatsapp.net'), '34600000000@s.whatsapp.net');
+  assert.equal(stripDevice('777@lid'), '777@lid');
 });
 
 test('1:1 chats by phone number or LID pass', () => {

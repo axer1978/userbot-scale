@@ -123,3 +123,52 @@ async def test_the_owner_routes_need_an_owner_login(two):
         assert (await anonymous.get(f"/api/owner/booker-messages?tenant_id={two['a']}")).status_code == 401
         r = await anonymous.put(f"/api/owner/booker-messages?tenant_id={two['a']}", json={"language": "ru"})
         assert r.status_code == 401
+
+
+# ------------------------------------------------- a group as the booker
+
+
+class GroupsBus:
+    """The running account's answer to list_groups (or its failure)."""
+
+    def __init__(self, answer):
+        self.answer, self.calls = answer, []
+
+    async def dispatch(self, session_id, action, args=None, *, timeout=30):
+        self.calls.append((session_id, action))
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+    async def publish_event(self, session_id, payload):
+        pass
+
+
+async def test_pick_a_group_lists_the_running_accounts_groups(panel_client, two, monkeypatch):
+    import commands
+    import panel
+
+    groups = [{"id": "120363001@g.us", "name": "Riga bookings", "members": 4, "admins_only": False}]
+    bus = GroupsBus(groups)
+    monkeypatch.setattr(panel, "bus", bus)
+    r = await panel_client.get(f"/api/tenants/{two['a']}/booking-groups")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"groups": groups, "provider": ""}
+    assert bus.calls == [("acct_a", "list_groups")]
+
+    monkeypatch.setattr(panel, "bus", GroupsBus(commands.CommandTimeout("nobody home")))
+    r = await panel_client.get(f"/api/tenants/{two['a']}/booking-groups")
+    assert r.status_code == 503 and "not running" in r.json()["detail"]
+    monkeypatch.setattr(panel, "bus", GroupsBus(commands.CommandError("WhatsApp is not connected.")))
+    r = await panel_client.get(f"/api/tenants/{two['a']}/booking-groups")
+    assert r.status_code == 502 and "not connected" in r.json()["detail"]
+    assert (await panel_client.get("/api/tenants/999999/booking-groups")).status_code == 404
+
+
+async def test_a_group_link_fits_in_booking_provider(panel_client, two):
+    tenant = (await panel_client.get(f"/api/tenants/{two['a']}")).json()
+    link = "group: " + "Riga bookings and the drivers of the night shift " * 2
+    r = await panel_client.put(f"/api/tenants/{two['a']}/config", json={
+        "overrides": {"booking": {"provider": link.strip()}}, "expected_revision": tenant["config"]["revision"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["config"]["effective"]["booking"]["provider"] == link.strip()

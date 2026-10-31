@@ -62,7 +62,8 @@ async def test_a_fresh_database_has_every_object(pg_pool):
         assert columns[("bookings", "provider_wa_message_id")] == ("text", "YES")
         for table, cols in {
             "wa_peers": ("tenant_id", "session_id", "chat_id", "jid", "phone_jid", "lid", "push_name",
-                         "created_at", "updated_at"),
+                         "created_at", "updated_at",
+                         "group_jid"),  # 0023: a group as the booker
             "wa_auth_state": ("tenant_id", "session_id", "kind", "key_id", "value_enc", "updated_at"),
             "wa_inbox": ("id", "tenant_id", "session_id", "wa_message_id", "payload", "created_at"),
         }.items():

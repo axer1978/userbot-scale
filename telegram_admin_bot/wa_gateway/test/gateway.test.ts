@@ -104,6 +104,9 @@ function stubSocket(over: Partial<{ epoch: number; state: string; lost: string |
     presence: async (state: string, jid?: string) => void calls.push(['presence', state, jid]),
     logout: async () => (calls.push(['logout']), true),
     close: async () => void calls.push(['close']),
+    setGroups: (groups: readonly string[]) => void calls.push(['groups', [...groups]]),
+    listGroups: async () => (calls.push(['list_groups']), [{ jid: '120363001@g.us', subject: 'Bookings', size: 3, announce: false }]),
+    groupInvite: async (code: string) => (calls.push(['invite', code]), { jid: '120363001@g.us', subject: 'Bookings' }),
     ...over,
   };
   return stub;
@@ -141,8 +144,11 @@ test('send_text / read / presence are fenced: exact epoch, open state, valid arg
     assert.equal(await kindOf(gw.handle(cmd('presence', { session_id: 'wa1', epoch, state: 'available' }))), 'stale_epoch');
     assert.equal(await kindOf(gw.handle(cmd('logout', { session_id: 'wa1', epoch }))), 'stale_epoch');
   }
-  // Argument validation happens after fencing.
-  assert.equal(await kindOf(gw.handle(cmd('send_text', { ...s, jid: '123@g.us', text: 'x' }))), 'bad_request');
+  // Argument validation happens after fencing. A group is only for sending
+  // (the booker's group); read receipts stay 1:1.
+  assert.equal(await kindOf(gw.handle(cmd('send_text', { ...s, jid: 'status@broadcast', text: 'x' }))), 'bad_request');
+  assert.equal(await kindOf(gw.handle(cmd('send_text', { ...s, jid: '120363@newsletter', text: 'x' }))), 'bad_request');
+  assert.equal(await kindOf(gw.handle(cmd('read', { ...s, jid: '123@g.us', message_ids: ['a'] }))), 'bad_request');
   assert.equal(await kindOf(gw.handle(cmd('send_text', { ...s, jid: '1@s.whatsapp.net', text: '' }))), 'bad_request');
   assert.equal(await kindOf(gw.handle(cmd('read', { ...s, jid: '1@s.whatsapp.net', message_ids: [] }))), 'bad_request');
   assert.equal(await kindOf(gw.handle(cmd('read', { ...s, jid: '1@s.whatsapp.net', message_ids: 'a' }))), 'bad_request');
@@ -174,7 +180,7 @@ test('send_media and download_media are fenced like send_text and check their ar
   assert.deepEqual(stub.calls, [['media', '1@s.whatsapp.net', 'image', 'image/jpeg', 4, true], ['download', 'image', '/v/t62/a']]);
 
   assert.equal(await kindOf(gw.handle(cmd('send_media', { ...photo, epoch: 5 }))), 'stale_epoch');
-  assert.equal(await kindOf(gw.handle(cmd('send_media', { ...photo, jid: '123@g.us' }))), 'bad_request');
+  assert.equal(await kindOf(gw.handle(cmd('send_media', { ...photo, jid: 'status@broadcast' }))), 'bad_request');
   assert.equal(await kindOf(gw.handle(cmd('send_media', { ...photo, mimetype: 'text/html' }))), 'bad_request');
   assert.equal(await kindOf(gw.handle(cmd('download_media', { ...s, media: { ...media, url: 'http://x', direct_path: null } }))), 'bad_request');
   inject(gw, stubSocket({ state: 'closed', lost: 'loggedOut' }));
@@ -239,10 +245,49 @@ test('delete validates jid and message_ids, then hands every id to the socket', 
   ]) {
     assert.equal(await kindOf(del({ jid, message_ids })), 'bad_request', `message_ids=${JSON.stringify(message_ids)}`);
   }
-  for (const badJid of ['123@g.us', 'status@broadcast', '', undefined, 'a b@s.whatsapp.net']) {
+  for (const badJid of ['status@broadcast', '120363@newsletter', 'x@g.us', '', undefined, 'a b@s.whatsapp.net']) {
     assert.equal(await kindOf(del({ jid: badJid, message_ids: ['a'] })), 'bad_request', `jid=${String(badJid)}`);
   }
   assert.deepEqual(stub.calls, [], 'a refused call never reaches the socket');
+});
+
+test('the booker group: open passes the groups on, sends reach a group, groups and invites are listed', async () => {
+  const rows: Record<string, Row> = {
+    wa1: { channel: 'whatsapp', is_active: true, lease_epoch: 4, live: true, lease_expires_at_ms: Date.now() + 20_000 },
+  };
+  const gw = new Gateway(fakePool(rows, new Set(['wa1'])), async () => true, quiet);
+  const s = { session_id: 'wa1', epoch: 4 };
+  assert.equal(await kindOf(gw.handle(cmd('groups', s))), 'not_connected');
+  assert.equal(await kindOf(gw.handle(cmd('group_invite', { ...s, code: 'AbC123' }))), 'not_connected');
+
+  const stub = stubSocket();
+  inject(gw, stub);
+  // The keepalive open: the groups change on the live socket; none given, none changed.
+  assert.deepEqual(await gw.handle(cmd('open', { ...s, browser, groups: ['120363001@g.us', '123-456@g.us'] })), { state: 'open' });
+  assert.deepEqual(await gw.handle(cmd('open', { ...s, browser, groups: [] })), { state: 'open' });
+  assert.deepEqual(await gw.handle(cmd('open', { ...s, browser })), { state: 'open' });
+  for (const groups of ['120363001@g.us', ['1@s.whatsapp.net'], [1], Array.from({ length: 21 }, (_, i) => `${i}@g.us`)]) {
+    assert.equal(await kindOf(gw.handle(cmd('open', { ...s, browser, groups }))), 'bad_request', JSON.stringify(groups));
+  }
+  assert.deepEqual(await gw.handle(cmd('send_text', { ...s, jid: '120363001@g.us', text: 'Booking #3' })), { message_id: 'MID', ts: 1 });
+  assert.deepEqual(await gw.handle(cmd('presence', { ...s, state: 'composing', jid: '120363001@g.us' })), { ok: true });
+  assert.deepEqual(await gw.handle(cmd('delete', { ...s, jid: '120363001@g.us', message_ids: ['a'] })), { ok: true });
+  assert.deepEqual(await gw.handle(cmd('groups', s)),
+                   { groups: [{ jid: '120363001@g.us', subject: 'Bookings', size: 3, announce: false }] });
+  assert.deepEqual(await gw.handle(cmd('group_invite', { ...s, code: 'AbC123' })), { jid: '120363001@g.us', subject: 'Bookings' });
+  for (const code of ['', 'https://chat.whatsapp.com/AbC123', 'a b', undefined]) {
+    assert.equal(await kindOf(gw.handle(cmd('group_invite', { ...s, code }))), 'bad_request', String(code));
+  }
+  assert.equal(await kindOf(gw.handle(cmd('groups', { ...s, epoch: 5 }))), 'stale_epoch');
+  assert.deepEqual(stub.calls, [
+    ['groups', ['120363001@g.us', '123-456@g.us']],
+    ['groups', []],
+    ['send', '120363001@g.us', 'Booking #3'],
+    ['presence', 'composing', '120363001@g.us'],
+    ['delete', '120363001@g.us', ['a']],
+    ['list_groups'],
+    ['invite', 'AbC123'],
+  ]);
 });
 
 test('logout: with a socket it logs out, wipes and drops; without one it is fenced like open', async () => {
