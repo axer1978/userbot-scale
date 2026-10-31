@@ -277,6 +277,9 @@ def test_the_preview_shows_every_main_message():
     ru = bookings.preview_messages(bt.Texts("ru"), tz="Europe/Riga", now=now)
     assert ru["request"].startswith("📅 Запрос на бронь #3\nКлиент: Alex (@alex_m)\nДевушка: Mia\n")
     assert "ср, 21 окт 2026, 21:00–22:00" in ru["request"]
+    # On WhatsApp the customer is his number, as in the real messages.
+    wa = bookings.preview_messages(bt.ENGLISH, tz="Europe/Riga", now=now, whatsapp=True)
+    assert wa["request"].startswith("📅 Booking request #3\nCustomer: +37126123456\nGirl: Mia\n")
 
 
 # ------------------------------------------- Russian, Latvian, Spanish

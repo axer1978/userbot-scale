@@ -195,6 +195,16 @@ class WhatsAppTransport(Transport):
                 f"session {rt.session_id!r} has no WhatsApp login yet — pair it from the panel "
                 "(+ Add account → WhatsApp) before starting this runtime."
             )
+        # Chats and bookings stored while chats were labelled by name now
+        # show the number too. Best effort: a failure costs only the labels.
+        try:
+            changed = await wa_store.relabel(rt.pool, rt.session_id)
+        except Exception as exc:
+            log.warning("[%s] Could not label the chats with their numbers: %s", rt.session_id,
+                        type(exc).__name__)
+        else:
+            if changed:
+                log.info("[%s] %d chats/bookings now labelled with the number.", rt.session_id, changed)
         # Known before the first `open`, so what the booker group wrote while
         # the account was away comes through with the rest.
         self.groups = await wa_store.group_jids(rt.pool, rt.session_id)

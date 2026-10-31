@@ -2373,7 +2373,8 @@ class SessionRuntime:
         if row is not None:
             await self.push_message(row)
 
-        log.info("[%s] DM from %s%s (chat %s): %s", self.session_id, name, " [bot]" if is_bot else "", chat_id,
+        # The chat, not the person: on WhatsApp the label is their number.
+        log.info("[%s] DM in chat %s%s: %s", self.session_id, chat_id, " [bot]" if is_bot else "",
                  f"{len(text)} chars" if has_text else "non-text message")
 
         if message.is_service:
