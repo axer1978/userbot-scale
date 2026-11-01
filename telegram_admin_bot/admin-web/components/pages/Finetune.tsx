@@ -16,10 +16,14 @@
 // (rules_api.py), folded into the prompt itself by a run of their own, and
 // shows the style card: how the business types, measured. The Examples tab
 // (FinetuneReplyExamples.tsx) holds the real moments retrieval shows the bot.
+// The Context review tab (FinetuneContextReview.tsx) shows how a reply is
+// built, piece by piece, and has the model report what the real chats show.
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDialogs, useToast } from "@/components/feedback";
+import { ContextReviewTab, readReviewNav, type ReviewNav, writeReviewNav } from "@/components/FinetuneContextReview";
 import { CLIENT_KINDS, OUTCOMES, verdictLabel } from "@/components/FinetuneExampleDialog";
 import { ReplyExamplesTab } from "@/components/FinetuneReplyExamples";
 import { REASONS as UNANSWERED_REASONS } from "@/components/pages/Unanswered";
@@ -33,7 +37,8 @@ import type {
 import { useLoader } from "@/lib/useLoader";
 import "@/app/finetune.css";
 
-type Tab = "new" | "runs" | "rules" | "examples" | "template" | "quality";
+type Tab = "new" | "runs" | "rules" | "examples" | "template" | "quality" | "review";
+const TABS: readonly Tab[] = ["new", "runs", "rules", "examples", "template", "quality", "review"];
 type Mark = "" | "good" | "bad";
 type Shot = { file: File; base: string; ext: string; mark: Mark };
 type Chat = { id: number; name: string; mark: Mark; text: string };
@@ -69,6 +74,10 @@ function statusText(run: FinetuneRun): string {
 
 function plural(n: number, one: string): string {
   return `${n} ${one}${n === 1 ? "" : "s"}`;
+}
+
+function isTab(key?: string | null): key is Tab {
+  return TABS.includes(key as Tab);
 }
 
 /** "03a-good.png" → base "03a", mark "good", ext ".png". */
@@ -1257,17 +1266,45 @@ function StyleCardView({ tenantId, tenantName, industryId, industryName }: {
 
 /* ------------------------------------------------------------------ page */
 
+// The address says what is open (?tab=review&tenant=6, and what the Context
+// review has open: FinetuneContextReview.tsx), so a reload, a link, or Back
+// from a chat or the Clients page lands there again. It is read from the
+// address itself when the page mounts, not from page.tsx's props: coming
+// Back, Next shows the page as first loaded, with the props of that address.
 export function Finetune() {
+  const search = useSearchParams();
   const fetchTree = useCallback(() => api<PlatformTree>("GET", "/api/platform/tree"), []);
   const { data: tree, error: treeError } = useLoader(fetchTree);
-  const [tenantId, setTenantId] = useState<number | null>(null);
-  const [tab, setTab] = useState<Tab>("new");
+  const [tenantId, setTenantId] = useState<number | null>(() => {
+    const id = search.get("tenant") ?? "";
+    return /^\d+$/.test(id) ? Number(id) : null;
+  });
+  const [tab, setTab] = useState<Tab>(() => {
+    const key = search.get("tab");
+    return isTab(key) ? key : "new";
+  });
+  const [reviewNav, setReviewNav] = useState<ReviewNav>(() => readReviewNav(search));
+  const patchReviewNav = useCallback((patch: Partial<ReviewNav>) => setReviewNav((nav) => ({ ...nav, ...patch })), []);
   const [openRun, setOpenRun] = useState<number | null>(null);
+  // A link from a tab to another one of the same client switches in place.
+  const openTab = useCallback((key: string) => {
+    if (!isTab(key)) return false;
+    setTab(key);
+    setOpenRun(null);
+    return true;
+  }, []);
 
   const tenant = useMemo(() => {
     if (!tree?.tenants.length) return null;
     return tree.tenants.find((t) => t.id === tenantId) ?? tree.tenants[0];
   }, [tree, tenantId]);
+
+  useEffect(() => {
+    if (!tenant) return;
+    const query = new URLSearchParams({ tab, tenant: String(tenant.id) });
+    if (tab === "review") writeReviewNav(reviewNav, query);
+    window.history.replaceState(null, "", `/finetune?${query}`);
+  }, [tab, tenant, reviewNav]);
   const industryName = tree?.industries.find((i) => i.id === tenant?.industry_id)?.name ?? "";
 
   const fetchInfo = useCallback(async () => (tenant
@@ -1280,7 +1317,8 @@ export function Finetune() {
   const refresh = useCallback(() => { void reloadRuns(); void reloadInfo(); }, [reloadRuns, reloadInfo]);
 
   const tabs: [Tab, string][] = [["new", "New run"], ["runs", `Runs${runs?.length ? ` (${runs.length})` : ""}`],
-    ["rules", "Rules"], ["examples", "Examples"], ["template", `Template${industryName ? ` — ${industryName}` : ""}`], ["quality", "Quality"]];
+    ["rules", "Rules"], ["examples", "Examples"], ["template", `Template${industryName ? ` — ${industryName}` : ""}`], ["quality", "Quality"],
+    ["review", "Context review"]];
   // Open a run in the Runs tab, as starting one from New run does.
   const showRun = (id: number) => { void reloadRuns(); setTab("runs"); setOpenRun(id); };
   const error = treeError || infoError || runsError;
@@ -1294,7 +1332,13 @@ export function Finetune() {
           <div className="bk-nav">
             <label className="muted" htmlFor="ft-client">Client</label>
             <select id="ft-client" value={String(tenant.id)}
-                    onChange={(ev) => { setTenantId(Number(ev.target.value)); setOpenRun(null); }}>
+                    onChange={(ev) => {
+                      const id = Number(ev.target.value);
+                      setTenantId(id);
+                      setOpenRun(null);
+                      // Another client: none of its reviews is open, and it is not one of the others.
+                      setReviewNav((nav) => ({ ...nav, review: null, also: nav.also.filter((x) => x !== id) }));
+                    }}>
               {tree?.tenants.map((t) => <option key={t.id} value={String(t.id)}>{t.name}</option>)}
             </select>
             <span className="muted">{industryName}</span>
@@ -1322,6 +1366,12 @@ export function Finetune() {
                             onSaved={() => { void reloadInfo(); }} />
           )}
           {tab === "quality" && <QualityView key={tenant.id} tenantId={tenant.id} />}
+          {tree && tab === "review" && (
+            <ContextReviewTab key={tenant.id} tenantId={tenant.id} tenantName={tenant.name}
+                              industryId={tenant.industry_id} industryName={industryName}
+                              sessionId={tenant.session_id ?? null} tree={tree} onTab={openTab}
+                              nav={reviewNav} onNav={patchReviewNav} />
+          )}
         </>}
       </div>
     </PageShell>

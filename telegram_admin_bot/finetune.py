@@ -311,11 +311,14 @@ def example_name(example_id: int, verdict: str) -> str:
     return f"{example_id:02d}" + (f"-{verdict}" if verdict in ("good", "bad") else "")
 
 
-def chat_lines(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+def chat_lines(messages: Sequence[dict[str, Any]],
+               limit: Optional[int] = MAX_EXAMPLE_MESSAGES) -> list[dict[str, Any]]:
     """The chat as the model reads it: what crossed the wire, and the
     booking system's events. Drafts never sent, rejected drafts, errors and
     the panel's other notes are left out. A business message that says
-    whether a person typed it ("typed") keeps that mark."""
+    whether a person typed it ("typed") keeps that mark. At most `limit`
+    lines from the start (None: all of them; the context review cuts a long
+    chat itself, keeping its end too)."""
     lines: list[dict[str, Any]] = []
     for m in messages:
         text = (m.get("text") or "").strip()
@@ -334,7 +337,7 @@ def chat_lines(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
             if who == "business" and "typed" in m:
                 line["typed"] = bool(m["typed"])
             lines.append(line)
-    return lines[:MAX_EXAMPLE_MESSAGES]
+    return lines if limit is None else lines[:limit]
 
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
@@ -343,6 +346,14 @@ _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 # 12.10.2026 are left alone.
 _PHONE = re.compile(r"\+\d(?:[ \-().]?\d){6,}|(?<!\d)\d(?:-?\d){7,}(?!\d)")
 _HANDLE = re.compile(r"(?<![\w.@])@[A-Za-z0-9_]{3,}")
+# A client's name is hidden in any case ("janis", "JANIS"), except that a
+# contact named like an everyday word ("Love", "Baby") must not eat "my
+# love": such a word written in small letters is left as it is.
+EVERYDAY_WORDS = frozenset({
+    "love", "baby", "babe", "honey", "darling", "dear", "sweet", "sweetie", "sweetheart", "angel", "king", "queen",
+    "prince", "princess", "boss", "friend", "bro", "man", "guy", "boy", "girl", "mister", "sir", "daddy", "papi",
+    "handsome", "beautiful", "sexy", "kitty", "bunny", "tiger", "client", "me", "you",
+})
 
 
 def masks_for(*, display_name: str = "", username: str = "", address: str = "",
@@ -363,19 +374,30 @@ def masks_for(*, display_name: str = "", username: str = "", address: str = "",
         if len(name) < 3 or _PHONE.fullmatch(name):
             continue  # a number label is hidden as [number] by mask()
         found.append((name, "[client]"))
-        first = name.split()[0]
-        # Only a name-like first word: "Love" as a contact name must not eat "my love".
-        if first != name and len(first) >= 3 and first[0].isupper():
-            found.append((first, "[client]"))
+        words = name.split()
+        # Only a name-like first or last word: "love bug" as a contact name must not eat "my love".
+        for word in {words[0], words[-1]} if len(words) > 1 else ():
+            if len(word) >= 3 and word[0].isupper():
+                found.append((word, "[client]"))
     if username and len(username.lstrip("@")) >= 3:
         found.append(("@" + username.lstrip("@"), "[username]"))
     return sorted(set(found), key=lambda item: -len(item[0]))
 
 
+def _name(literal: str, label: str) -> Callable[["re.Match[str]"], str]:
+    everyday = literal.lower() in EVERYDAY_WORDS
+
+    def hide(match: "re.Match[str]") -> str:
+        return match.group(0) if everyday and match.group(0).islower() else label
+    return hide
+
+
 def mask(text: str, masks: Sequence[tuple[str, str]]) -> str:
     for literal, label in masks:
         if label == "[client]":
-            text = re.sub(rf"(?<!\w){re.escape(literal)}(?!\w)", label, text)
+            # Not inside an e-mail address or a handle: those have masks of their own.
+            text = re.sub(rf"(?<![\w@.]){re.escape(literal)}(?![\w@])", _name(literal, label), text,
+                          flags=re.IGNORECASE)
         else:
             text = re.sub(re.escape(literal), label, text, flags=re.IGNORECASE)
     text = _EMAIL.sub("[email]", text)
@@ -413,8 +435,8 @@ def render_example(example: dict[str, Any], lines: Sequence[dict[str, Any]], *,
 
     corrections = example.get("corrections") or {}
     body: list[str] = []
-    for line, rendered in _rendered(lines, masks, tz,
-                                    lambda line: "Client" if line["who"] == "client" else "Business"):
+    for line, rendered in rendered_lines(lines, masks, tz,
+                                         lambda line: "Client" if line["who"] == "client" else "Business"):
         body += rendered
         correction = corrections.get(str(line["id"]))
         if correction:
@@ -422,8 +444,8 @@ def render_example(example: dict[str, Any], lines: Sequence[dict[str, Any]], *,
     return "\n".join(head) + "\n\n" + "\n".join(body)
 
 
-def _rendered(lines: Sequence[dict[str, Any]], masks: Sequence[tuple[str, str]], tz: Optional[ZoneInfo],
-              who: Callable[[dict[str, Any]], str]) -> Iterator[tuple[dict[str, Any], list[str]]]:
+def rendered_lines(lines: Sequence[dict[str, Any]], masks: Sequence[tuple[str, str]], tz: Optional[ZoneInfo],
+                   who: Callable[[dict[str, Any]], str]) -> Iterator[tuple[dict[str, Any], list[str]]]:
     """Each chat line as transcript lines, masked: a "— <day> —" line when
     the day changes, then the message with its time and `who(line)`, or the
     booking event."""
@@ -512,7 +534,7 @@ def render_hand_chat(lines: Sequence[dict[str, Any]], *, origin: str, masks: Seq
     assistant. Longer than `max_chars`, it is cut and its start kept."""
     out = [f"FROM: {origin}", ""]
     size = sum(len(part) + 1 for part in out)
-    for _, rendered in _rendered(lines, masks, tz, lambda line: (
+    for _, rendered in rendered_lines(lines, masks, tz, lambda line: (
             "Client" if line["who"] == "client" else TYPED if line.get("typed") else ASSISTANT)):
         chunk = "\n".join(rendered)
         if size + len(chunk) + len(CUT) + 1 > max_chars:

@@ -601,10 +601,20 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
       catch (err) { if (!cancelled) toast("Could not load the accounts: " + errorText(err)); return; }
       if (cancelled) return;
       dispatch({ type: "sessions", sessions });
+      // A link to one chat (/?session=…&chat=…, Finetune's context review)
+      // opens that chat of that account, once: the address goes back to /.
+      const linkTo = new URLSearchParams(window.location.search);
+      const linked = window.location.pathname === "/"
+        ? sessions.find((s) => s.session_id === linkTo.get("session")) : undefined;
+      const linkedChat = Number(linkTo.get("chat"));
       const preferred = readPreferred();
-      const wanted = sessions.find((s) => s.session_id === preferred) || sessions[0];
+      const wanted = linked || sessions.find((s) => s.session_id === preferred) || sessions[0];
       if (wanted) await selectSession(wanted.session_id);
       else if (permits(who, "accounts.connect")) await openAddAccount();
+      if (linked) {
+        window.history.replaceState(null, "", "/");
+        if (Number.isSafeInteger(linkedChat) && linkedChat !== 0) void selectChat(linkedChat);
+      }
     })();
     // Running/connected can change from outside this tab; so can alerts.
     const timers = [

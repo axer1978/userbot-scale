@@ -515,7 +515,7 @@ async def accounts(pool: asyncpg.Pool) -> list[int]:
 # ------------------------------------------------------------------ ingest
 
 
-def _owner_chat(provider: str) -> tuple[Optional[int], str]:
+def owner_chat(provider: str) -> tuple[Optional[int], str]:
     """booking.provider as a chat id or a username: the owner's chat holds
     booking commands, not client turns."""
     value = (provider or "").strip()
@@ -661,7 +661,7 @@ async def ingest_account(pool: asyncpg.Pool, tenant_id: int, *, now: Optional[da
     industry_id = bundle.tenant["industry_id"]
     fixed = ai_responder.fixed_blocks(bundle.prompt.text, 1)
     booking = config.get("booking") or {}
-    owner_id, owner_name = _owner_chat(booking.get("provider", ""))
+    owner_id, owner_name = owner_chat(booking.get("provider", ""))
     mark = None if from_start else await _setting(pool, watermark_key(tenant_id))
     after_at = _when((mark or {}).get("through")) or _EPOCH
     after_chat = int((mark or {}).get("chat", _FIRST_CHAT))
