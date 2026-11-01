@@ -384,6 +384,14 @@ def test_personal_data_and_the_way_in_are_masked():
     assert finetune.mask("Hi my love, Love", finetune.masks_for(display_name="Love")) == "Hi my love, [client]"
 
 
+def test_a_clients_name_is_hidden_in_any_case_but_an_everyday_word_is_not_eaten():
+    masks = finetune.masks_for(display_name="Janis Ozols")
+    assert finetune.mask("janis here, JANIS, Janis, ozols", masks) == "[client] here, [client], [client], [client]"
+    # His e-mail and handle have masks of their own.
+    assert finetune.mask("write to janis@mail.lv or @janis_lv", masks) == "write to [email] or [username]"
+    assert finetune.mask("my love, LOVE, Love", finetune.masks_for(display_name="Love")) ==         "my love, [client], [client]"
+
+
 def test_a_whatsapp_chat_labelled_with_the_number_still_hides_his_name():
     masks = finetune.masks_for(display_name="+37126123456", person_name="Toms Berzins")
     assert finetune.mask("Hi Toms, this is +37126123456? Toms Berzins here", masks) == \

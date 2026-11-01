@@ -942,6 +942,197 @@ export type ChatExampleView = {
   newer: number;
 };
 
+/* ------------------------------------------------------- context review */
+// Finetune → Context review (context_review_api.py). Part A: how a reply of
+// one account is built, piece by piece, without a model call or chat text.
+// Part B: a model's reading of the account's real chats, beside exact
+// counts from the database. Report only: nothing is applied to any prompt.
+
+// Where a piece of the prompt comes from. client: the account's own text in
+// place of the industry's; industry+client: the industry's with the
+// account's addition; per_chat: made for each chat; empty: nothing there.
+export type ContextPieceSource =
+  "platform" | "industry" | "client" | "industry+client" | "config" | "system" | "per_chat" | "empty";
+
+// Where to change something, e.g. {label: "Clients → pam → Prompt", href: "/clients?node=tenant-6&tab=prompt"}.
+export type ContextEditLink = { label: string; href: string };
+
+export type ContextPiece = {
+  // "platform_rules", "section:about", "language", "rules", "history", …
+  key: string;
+  // Where it sits in what the model reads.
+  part: "system" | "history" | "closing";
+  title: string;
+  source: ContextPieceSource;
+  // In words: "Industry Escort v10", "Own text — replaces the industry's", …
+  source_label: string;
+  // false: switched off or empty, so the model does not get it.
+  enabled: boolean;
+  // 0 for a piece whose size depends on the chat.
+  chars: number;
+  // The exact text; for a piece made per chat, what goes in, in [brackets].
+  text: string;
+  // Sections only: the industry's text, when the account replaces or adds to it.
+  inherited?: string;
+  note: string;
+  edit: ContextEditLink | null;
+};
+
+// Something that can stop or delay a reply before the model is called, or
+// that changes the model's text before it goes out, with this account's value.
+export type ContextStep = { key: string; title: string; detail: string; active: boolean; edit: ContextEditLink | null };
+
+export type ContextWarning = { level: "warn" | "info"; piece: string | null; text: string; edit: ContextEditLink | null };
+
+// GET /api/finetune/context?tenant_id=N
+export type ContextView = {
+  tenant_id: number;
+  account: string;
+  network: Channel;
+  industry: { id: number; name: string; template_version: number };
+  version_tag: string;
+  // The account's prompt is held at this version (prompt_pin_version).
+  pinned: number | null;
+  // In the order the model reads them.
+  pieces: ContextPiece[];
+  before: ContextStep[];
+  after: ContextStep[];
+  // warn first, then info.
+  warnings: ContextWarning[];
+  // The system message as it starts for every reply, with each piece made
+  // per chat as a one-line [placeholder].
+  system_text: string;
+  size: { system_chars: number; approx_tokens: number; history_messages: number };
+};
+
+export type ContextReviewOutcome =
+  "booked" | "booked_no_show" | "not_booked" | "waiting" | "went_quiet" | "unanswered" | "open";
+
+// One chat a review would read (GET /api/finetune/review-chats), masked.
+export type ContextReviewChat = {
+  // "<tenant id>:<chat id>"
+  key: string;
+  // "C4", in the order the model reads them; null when it does not fit.
+  ref: string | null;
+  tenant_id: number;
+  session_id: string;
+  chat_id: number;
+  account: string;
+  display_name: string;
+  outcome: ContextReviewOutcome;
+  outcome_label: string;
+  messages: number;
+  chars: number;
+  picked: boolean;
+  // Exactly what the model reads; "" for a chat it does not read.
+  text: string;
+};
+
+export type ContextReviewChats = {
+  accounts: { tenant_id: number; name: string; chats: number; picked: number }[];
+  chats: ContextReviewChat[];
+  limits: { chats: number; chars: number };
+  days: number;
+};
+
+// Exact numbers from the database, never the model's.
+export type ContextReviewCounts = {
+  window: { since: string; until: string; days: number };
+  chats: {
+    in_window: number;
+    read: number;
+    by_account: { tenant_id: number; name: string; in_window: number; read: number }[];
+  };
+  // Over the chats read.
+  outcomes: Record<ContextReviewOutcome, number>;
+  lines: { client: number; bot: number; bot_edited: number; by_hand: number; system: number };
+  // stats.quality per account over the window, every chat.
+  quality: {
+    tenant_id: number;
+    name: string;
+    replies_written: number;
+    drafts: { approved: number; edited: number; rejected: number };
+    takeovers: number;
+    unanswered_by_reason: Record<string, number>;
+  }[];
+  // Lines the bot sent near-identical in 3 or more chats, most chats first.
+  phrases: { text: string; chats: number; times: number }[];
+};
+
+// A box of the prompt: a section key, or "addendum", "rules" or "none".
+export type ContextReviewFix = { box: string; line: string };
+
+export type ContextReviewQuestion = {
+  question: string;
+  chats: string[];
+  chat_count: number;
+  wordings: string[];
+  her_answer: string;
+  bot_answer: string;
+  covered_by: string;
+  problem: string;
+  suggested: ContextReviewFix | null;
+};
+
+export type ContextReviewPoint = { point: string; chats: string[]; chat_count: number };
+
+export type ContextReviewWrong = { what: string; chats: string[]; chat_count: number; why: string; fix: ContextReviewFix | null };
+
+export type ContextReviewPhrase = { text: string; note: string; chats: string[]; chat_count: number };
+
+export type ContextReviewBoxes = { boxes: string[]; problem: string; fix: string };
+
+// The model's reading, checked: refs not in the review are dropped.
+export type ContextReviewReport = {
+  summary: string;
+  questions: ContextReviewQuestion[];
+  booking: { works: ContextReviewPoint[]; loses: ContextReviewPoint[]; speed: string };
+  wrong: ContextReviewWrong[];
+  phrases: ContextReviewPhrase[];
+  boxes: ContextReviewBoxes[];
+};
+
+// A ref of the review ("C4") and the chat it stands for.
+export type ContextReviewChatRef = {
+  ref: string;
+  tenant_id: number;
+  session_id: string;
+  chat_id: number;
+  account: string;
+  outcome: string;
+  outcome_label: string;
+};
+
+export type ContextReviewStatus = "running" | "done" | "failed";
+
+// GET /api/finetune/reviews?tenant_id=N: no report, no counts.
+export type ContextReviewItem = {
+  id: number;
+  tenant_id: number;
+  also_tenant_ids: number[];
+  days: number;
+  status: ContextReviewStatus;
+  model: string;
+  chats_read: number;
+  created_at: string;
+  finished_at: string | null;
+  error: string;
+};
+
+// GET /api/finetune/reviews/{id}
+export type ContextReview = ContextReviewItem & {
+  chats: ContextReviewChatRef[];
+  counts: ContextReviewCounts | null;
+  report: ContextReviewReport | null;
+  // What the check dropped from the model's answer.
+  errors: string[];
+  // Only when the answer could not be read as a report.
+  raw_output: string;
+  created_by: string;
+  // For the box labels.
+  sections: { key: string; heading: string }[];
+};
+
 /* ------------------------------------------------ messages to the booker */
 // GET/PUT /api/tenants/{id}/booker-messages (admin) and
 // /api/owner/booker-messages?tenant_id=N (owner): the language of the bot's

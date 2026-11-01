@@ -72,6 +72,7 @@ import booking_store
 import commands
 import config_store
 import context_link
+import context_review_api
 import controls
 import media
 import pg
@@ -1646,6 +1647,10 @@ for _module in (owner_admin_api, unanswered_api, review_api, manager_admin_api, 
                 rules_api, examples_api):
     _module.bind(get_pool=lambda: pool, get_bus=lambda: bus)
     app.include_router(_module.router, dependencies=[Depends(require_auth)])
+# Finetune → Context review: admin only too (under /api/finetune/); it reads
+# the media library from the data folder, as the runtime does.
+context_review_api.bind(get_pool=lambda: pool, get_bus=lambda: bus, get_data_dir=lambda: DATA_DIR)
+app.include_router(context_review_api.router, dependencies=[Depends(require_auth)])
 # Verification videos and photo review: admin only (review.py).
 review_admin_api.bind(get_pool=lambda: pool, get_bus=lambda: bus, get_data_dir=lambda: DATA_DIR)
 app.include_router(review_admin_api.router, dependencies=[Depends(require_auth)])
