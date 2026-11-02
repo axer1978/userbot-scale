@@ -488,7 +488,8 @@ class SessionRuntime:
 
         if action == "owner_notice":
             # A platform notice to the owner (billing.py), from this account.
-            row = await self.flow.send_owner(str(args["text"]), reason=str(args.get("reason") or "notice to the owner"))
+            row = await self.flow.send_owner_main(str(args["text"]),
+                                                  reason=str(args.get("reason") or "notice to the owner"))
             return {"sent": row is not None, "error": "" if row is not None else (
                 f"sending is off ({self.off_reason})" if self.off_reason else
                 "the owner could not be reached (booking.provider)")}
@@ -518,6 +519,9 @@ class SessionRuntime:
         if action == "resend_unsent_bookings":
             for booking in await self.booking_store.unsent():
                 await self.flow.submit(booking)
+            if self.flow.enabled() and self.flow.settings.get("shifts") and not self.paused():
+                # The shifts changed: what waits goes to whoever is on duty now.
+                await self.flow.hand_over(self.utcnow())
             return {"ok": True}
 
         if action == "ensure_outreach_worker":
@@ -571,7 +575,7 @@ class SessionRuntime:
                 raise ValueError("Unknown conversation")
             if not self.flow.enabled():
                 raise ValueError("Bookings are turned off (booking.enabled)")
-            if chat_id == await self.flow.provider_chat_id():
+            if await self.flow.is_booker(chat_id):
                 raise ValueError("That chat is the booking owner")
             self.flow.cancel_scan(chat_id)
             await self.flow.scan(chat_id)
@@ -939,7 +943,7 @@ class SessionRuntime:
             if self.transport.is_service_chat(chat_id):
                 return
             # The owner talking to their own bot is not a customer.
-            if chat_id == await self.flow.provider_chat_id():
+            if await self.flow.is_booker(chat_id):
                 return
             if message_id is None:
                 message_id = await unanswered.last_customer_message(self.pool, self.tenant_id, chat_id)
@@ -1000,7 +1004,7 @@ class SessionRuntime:
         chat (booking.provider): stored, never answered."""
         if not self.staging_on() or self.is_test_chat(chat_id, username):
             return False
-        return chat_id != await self.flow.provider_chat_id()
+        return not await self.flow.is_booker(chat_id)
 
     async def staging_skip(self, chat_id: int, message_id: Optional[int]) -> None:
         """A message staging keeps the bot out of: a note in the chat (at
@@ -2249,10 +2253,14 @@ class SessionRuntime:
     async def provider_chat_id(self) -> Optional[int]:
         return await self.flow.provider_chat_id()
 
+    async def is_booker_chat(self, chat_id: int) -> bool:
+        """A booker's chat (booking.provider or a shift's), on duty or not."""
+        return await self.flow.is_booker(chat_id)
+
     async def is_booker_group(self, chat_id: int) -> bool:
-        """A group's messages are read only while it is the booker and
-        bookings are on."""
-        return self.flow.enabled() and chat_id == await self.flow.provider_chat_id()
+        """A group's messages are read only while it is a booker (on duty or
+        not) and bookings are on."""
+        return self.flow.enabled() and await self.flow.is_booker(chat_id)
 
     # ------------------------------------------------------------------
     # Photos
@@ -2383,7 +2391,7 @@ class SessionRuntime:
             await self.check_logins()
             return
 
-        is_provider = self.flow.enabled() and chat_id == await self.flow.provider_chat_id()
+        is_provider = self.flow.enabled() and await self.flow.is_booker(chat_id)
         quiet = self.silenced(conversation)
         # Staging: only the test chats get the normal flow; the owner's own
         # chat is never held back. Decided up front so a photo from anyone
@@ -2497,7 +2505,7 @@ class SessionRuntime:
         await self.push_message(row)
         # Written by hand on the account's own phone or app: a person has
         # taken this chat over. Not the owner's booking chat or Saved Messages.
-        if chat_id != await self.flow.provider_chat_id():
+        if not await self.flow.is_booker(chat_id):
             await self.start_takeover(chat_id, how=f"Someone wrote here by hand in {self.transport.network}",
                                       actor=audit.OWNER)
 

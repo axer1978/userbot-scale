@@ -18,8 +18,9 @@ type Row = { set: boolean; mode: "replace" | "append"; dirty: boolean; value: In
 export type ConfigSave = (body: { overrides: Record<string, unknown>; reason: string; expected_revision: number }) => Promise<void>;
 
 /** Extra controls beside a field (by path) that fill it in: `pick` sets the
- *  value here (overriding the inherited one); Save config still saves it. */
-export type ConfigHelpers = Record<string, (pick: (value: string) => void) => React.ReactNode>;
+ *  value here (overriding the inherited one); Save config still saves it.
+ *  `current` is the field's text as it stands (JSON for a list of objects). */
+export type ConfigHelpers = Record<string, (pick: (value: string) => void, current: string) => React.ReactNode>;
 
 function getPath(obj: unknown, path: string): unknown {
   let node = obj;
@@ -193,7 +194,8 @@ export function ConfigEditor({ fields, overrides, layer, inheritedLabel, revisio
               <option value="append">adds to the inherited list</option>
             </select>
           )}
-          {helpers?.[field.path]?.((value) => update(i, { set: true, value, dirty: true, error: null }))}
+          {helpers?.[field.path]?.((value) => update(i, { set: true, value, dirty: true, error: null }),
+                                   String(row.value))}
           {row.error && <div className="err">{row.error}</div>}
         </td>
         <td className="act">

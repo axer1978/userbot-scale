@@ -325,10 +325,10 @@ class TelegramTransport(Transport):
         )
 
     async def _booker_group(self, event: Any) -> bool:
-        """A message outside a private chat counts only in the group set as
-        the booker (booking.provider); every other group, and channels, are
-        never read."""
-        return event.chat_id == await self.rt.provider_chat_id()
+        """A message outside a private chat counts only in a group set as a
+        booker (booking.provider, or a shift's, on duty or not); every other
+        group, and channels, are never read."""
+        return await self.rt.is_booker_chat(event.chat_id)
 
     async def on_incoming(self, event: Any) -> None:
         """Telethon's handler for a new message. Whatever goes wrong with

@@ -382,8 +382,8 @@ def _status(row: Any) -> dict[str, Any]:
 
     - business: the tenant has a name of its own, i.e. not the account's id
       or label it was created with (SessionRegistry.create names it so).
-    - settings: the owner's Telegram (booking.provider) is set; without it
-      nothing can reach the owner.
+    - settings: the owner's Telegram (booking.provider, or a booker in
+      booking.shifts) is set; without it nothing can reach the owner.
     - staging: turned on at some point (it is on, or test chats are kept).
     - live: named, owner set, and staging off, i.e. it answers everyone.
       Skipping staging is allowed; the wizard only recommends it.
@@ -400,7 +400,7 @@ def _status(row: Any) -> dict[str, Any]:
     steps = {
         "account": bool(row["session_id"]) and bool(row["session_active"]),
         "business": named,
-        "settings": bool(config.booking.provider.strip()),
+        "settings": bool(config.booking.provider.strip()) or bool(config.booking.shifts),
         "staging": staging.enabled or bool(staging.test_chats),
     }
     steps["live"] = steps["business"] and steps["settings"] and not staging.enabled

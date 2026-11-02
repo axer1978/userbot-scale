@@ -30,6 +30,7 @@ from typing import Any, Literal, Optional, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+import booker_shifts
 import booker_texts
 
 try:
@@ -254,6 +255,45 @@ def _default_reminders() -> list["Reminder"]:
     return [Reminder(minutes_before=24 * 60), Reminder(minutes_before=120)]
 
 
+class BookerShift(_Strict):
+    """One booker's hours (booker_shifts): from `start` to `end` in the
+    account's time zone, past midnight when the end is not after the start
+    ("24:00" is midnight), on `days` (the days it starts on; none: every
+    day)."""
+    start: str
+    end: str
+    # What booking.provider takes: a person or a group.
+    provider: str = Field(max_length=128)
+    days: list[Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]] = Field(default_factory=list, max_length=7)
+
+    @field_validator("start")
+    @classmethod
+    def _start(cls, value: str) -> str:
+        if not _HHMM.match(value):
+            raise ValueError("must be HH:MM, 24-hour")
+        return value
+
+    @field_validator("end")
+    @classmethod
+    def _end(cls, value: str) -> str:
+        if value != "24:00" and not _HHMM.match(value):
+            raise ValueError("must be HH:MM, 24-hour (24:00 for midnight)")
+        return value
+
+    @field_validator("provider")
+    @classmethod
+    def _provider(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("who books in this shift is empty")
+        return value
+
+    @field_validator("days")
+    @classmethod
+    def _days(cls, value: list[str]) -> list[str]:
+        return [day for day in booker_shifts.DAYS if day in value]
+
+
 class Booking(_Strict):
     enabled: bool = False
     # Requests go there from this account; the booker answers YES n, NO n, a
@@ -261,7 +301,15 @@ class Booking(_Strict):
     provider: str = Field("", max_length=128, description=(
         "Who gets the booking requests: a person (Telegram @username, phone or id; a WhatsApp number) or a "
         "group this account is in (pick it with \"Pick a group\", or paste its invite link, or write "
-        "\"group: <its name>\")."))
+        "\"group: <its name>\"). With shifts: the booker outside every shift."))
+    # Who books at what time (booker_shifts): the booker on duty gets every
+    # new request and every update; a request still waiting when her shift
+    # ends goes to the next one too, and the first answer counts. Every
+    # booker here can answer at any time.
+    shifts: list[BookerShift] = Field(default_factory=list, max_length=booker_shifts.MAX_SHIFTS, description=(
+        "Bookers by the hour: each shift has a start and end (HH:MM in the account's time zone; an end before "
+        "the start runs past midnight, 24:00 is midnight), who books then (like booking.provider) and the days it "
+        "starts on (none: every day). The first matching shift is on duty; outside them all, booking.provider."))
     name: str = Field("", max_length=64, description=(
         "Her name: the 'Girl:' line of a booking request to the owner, and updates to the owner start with it "
         "(empty: the account's name). The customer is told it when the booking is confirmed and when they "

@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookerGroupPicker } from "@/components/BookerGroupPicker";
+import { BookerShiftsEditor } from "@/components/BookerShiftsEditor";
 import { BookerMessagesEditor, type BookerMessagesClient, type BookerUi } from "@/components/BookerMessagesEditor";
 import { ConfigEditor } from "@/components/ConfigEditor";
 import { useDialogs, useToast } from "@/components/feedback";
@@ -534,9 +535,15 @@ export function Clients({ initialNode, initialTab }: { initialNode: TreeNode | n
         config: <ConfigEditor key={generation} fields={v.config.fields} overrides={v.config.overrides} layer="client"
                               inheritedLabel={`the ${v.industry.name} industry or the platform defaults`}
                               revision={v.config.revision}
-                              helpers={v.tenant.session_id ? {
-                                "booking.provider": (pick) => <BookerGroupPicker tenantId={node.id} onPick={pick} />,
-                              } : undefined}
+                              helpers={{
+                                ...(v.tenant.session_id ? {
+                                  "booking.provider": (pick) => <BookerGroupPicker tenantId={node.id} onPick={pick} />,
+                                } : {}),
+                                "booking.shifts": (pick, current) => (
+                                  <BookerShiftsEditor tenantId={v.tenant.session_id ? node.id : null} value={current}
+                                                      onChange={pick} />
+                                ),
+                              }}
                               save={async (b) => setTenantView(await api<TenantView>("PUT", `/api/tenants/${node.id}/config`, b))} />,
         prompt: <TenantPrompt key={generation} {...props} />,
         versions: <TenantVersions key={generation} {...props} />,

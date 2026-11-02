@@ -346,10 +346,12 @@ async def api_save_tenant_config(tenant_id: int, body: ConfigBody) -> dict[str, 
     bundle = await guarded(store().save_config(
         tenant_id, body.overrides, actor=ACTOR, reason=body.reason, expected_revision=body.expected_revision))
     await reload_accounts([bundle.tenant["session_id"]], bundle)
-    # Booking requests that waited for a provider go out once there is one.
+    # Booking requests that waited for a provider go out once there is one
+    # (booking.shifts: the booker on duty may be another one now).
     after = bundle.config["booking"]
     if bundle.tenant["session_id"] and after["enabled"] and (
-        after["provider"] != before["provider"] or not before["enabled"]
+        after["provider"] != before["provider"] or after.get("shifts") != before.get("shifts")
+        or not before["enabled"]
     ):
         try:
             await _get_bus().dispatch(bundle.tenant["session_id"], "resend_unsent_bookings", {},
