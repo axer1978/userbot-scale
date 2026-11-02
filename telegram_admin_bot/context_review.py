@@ -76,7 +76,7 @@ def _tenant_link(tenant: dict[str, Any], tab: str, what: str) -> dict[str, str]:
 
 
 def _industry_link(industry: dict[str, Any]) -> dict[str, str]:
-    return _link(f"Clients → {industry['name']} → Template",
+    return _link(f"Clients → {industry.get('path') or industry['name']} → Template",
                  f"/clients?node=industry-{industry['id']}&tab=template")
 
 
@@ -227,7 +227,10 @@ def context_view(bundle: Any, notes: Notes = Notes()) -> dict[str, Any]:
     adapt = _adapter(network)
     pinned = tenant.get("prompt_pin_version")
     industry_version = bundle.layers.get("industry_version") or industry["template_version"]
-    industry_label = f"Industry {industry['name']} v{industry_version}" + (" (pinned)" if pinned else "")
+    # In a sub-folder the boxes are the folders' changes on the industry's:
+    # the whole path says where they come from.
+    industry_label = (f"Industry {industry.get('path') or industry['name']} v{industry_version}"
+                      + (" (pinned)" if pinned else ""))
     prompt_link = _tenant_link(tenant, "prompt", "Prompt")
     config_link = _tenant_link(tenant, "config", "Config")
     pieces: list[_Piece] = []
