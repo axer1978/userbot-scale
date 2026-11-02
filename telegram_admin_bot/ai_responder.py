@@ -555,6 +555,7 @@ async def generate_reply(
     style_note: str = "",
     examples_note: str = "",
     clock: Optional[Clock] = None,
+    avoid_lines: Sequence[str] = (),
 ) -> str:
     """Return the draft reply text, or raise AIResponderError with a safe message.
 
@@ -584,6 +585,10 @@ async def generate_reply(
     messages (with_times) and what time it is now after the conversation
     (clock_note): last, so the cached prompt before it stays the same from
     one minute to the next. A time the model copies is taken out again.
+
+    `avoid_lines` are lines of its own the reply must not use again (lines
+    sent to many other clients, or ones this chat already had: repeats.py).
+    They go after the conversation too (avoid_note), before any news.
     """
     if not api_key:
         raise AIResponderError("DEEPSEEK_API_KEY is not set.")
@@ -622,6 +627,8 @@ async def generate_reply(
     if len(messages) == 1:
         raise AIResponderError("No conversation history to reply to.")
     closing = [clock_note(history, clock)] if clock is not None else []
+    if avoid := avoid_note(avoid_lines):
+        closing.append(avoid)
     if messages[-1].get("role") == "assistant":
         # Nothing new from them: a booking update, a reminder or a waitlist
         # offer starts this message. Ending on our own turn, the model tends
@@ -648,6 +655,21 @@ OWN_INITIATIVE_NOTE = (
 )
 NEWS_NOTE = ("This reply must pass on this news, which is current and replaces anything said earlier in "
              "this chat:")
+AVOID_NOTE = (
+    "ALREADY SAID: you have already sent these lines, in this chat or to other clients. A number that sends "
+    "many people the same words gets flagged, and the same line twice in one chat reads like a bot. Don't "
+    "write any of them again, word for word or nearly: say what you mean in new words of your own, or leave "
+    "it out if this chat already had it. This is only about your own lines: your rates message, [address] "
+    "and [send N] tags still go out exactly as your instructions say."
+)
+
+
+def avoid_note(lines: Sequence[str] = ()) -> str:
+    """AVOID_NOTE with the lines, one a line, or "" when there are none."""
+    lines = [line.strip() for line in lines if (line or "").strip()]
+    if not lines:
+        return ""
+    return AVOID_NOTE + "\n" + "\n".join(f"- {line}" for line in lines)
 
 
 def _news_lines(booking_note: str = "") -> list[str]:

@@ -1,0 +1,187 @@
+{
+ "note": "The escort rules of 2026-11-01: domination asked in many words, looks and what she wears (only from her own ABOUT ME / WARDROBE lines; without them she points to her photos), flirting played along but never graphic, a time-waster is one who dodges 'when?' twice and then gets nothing until he names a day or a time (needs replies.no_reply_instruction), the same message after three answers gets nothing. Written for an account without ABOUT ME / WARDROBE lines. Run with: python replay.py --tenant <id> --scenarios flirt-and-dodge",
+ "first_reply_address": false,
+ "greeting_video": true,
+ "never_says": [
+  "let me check",
+  "i'll ask",
+  "i will ask",
+  "my manager",
+  "the agency",
+  "our girls",
+  "check with",
+  "let you know",
+  "i'm wearing",
+  "im wearing",
+  "i am wearing"
+ ],
+ "scenarios": [
+  {
+   "id": "fd-dom-dominate",
+   "category": "domination in other words",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "can you dominate me?", "details": false, "quiet": false, "expect": {"has_any": ["50"]}}
+   ]
+  },
+  {
+   "id": "fd-dom-submissive",
+   "category": "domination in other words",
+   "steps": [
+    {"customer": "hey", "details": false, "address": false},
+    {"customer": "I'm submissive, I need a strict woman", "details": false, "quiet": false,
+     "expect": {"has_any": ["50"]}}
+   ]
+  },
+  {
+   "id": "fd-dom-mistress",
+   "category": "domination in other words",
+   "steps": [
+    {"customer": "hello", "details": false, "address": false},
+    {"customer": "will you be my mistress? I want to obey you", "details": false, "quiet": false,
+     "expect": {"has_any": ["50"]}}
+   ]
+  },
+  {
+   "id": "fd-dom-femdom",
+   "category": "domination in other words",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "femdom?", "details": false, "quiet": false, "expect": {"has_any": ["50"]}}
+   ]
+  },
+  {
+   "id": "fd-dom-twice-no-price-again",
+   "category": "domination in other words",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "do you do domination?", "details": false, "expect": {"has_any": ["50"]}},
+    {"customer": "mmm I want you to order me around all night", "details": false, "quiet": false,
+     "expect": {"lacks": ["+50", "50 extra"]}}
+   ]
+  },
+  {
+   "id": "fd-looks-age",
+   "category": "looks",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "how old are you? how tall?", "details": false, "quiet": false,
+     "expect": {"has_any": ["photo", "pic", "in person", "see me", "come and see"]}}
+   ]
+  },
+  {
+   "id": "fd-looks-see",
+   "category": "looks",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "what do you look like?", "details": false, "photos": true}
+   ]
+  },
+  {
+   "id": "fd-wear",
+   "category": "what she wears",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "what will you wear for me?", "details": false, "photos": false, "quiet": false,
+     "expect": {"has_any": ["wear", "like", "surprise"]}},
+    {"customer": "black stockings and red heels", "details": false, "quiet": false,
+     "expect": {"has_any": ["when", "time", "come", "what hour"]}}
+   ]
+  },
+  {
+   "id": "fd-wear-now",
+   "category": "what she wears",
+   "steps": [
+    {"customer": "hey", "details": false, "address": false},
+    {"customer": "what are you wearing right now? 😏", "details": false, "photos": false, "quiet": false}
+   ]
+  },
+  {
+   "id": "fd-flirt-then-when",
+   "category": "flirting",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "I've been thinking about you all day", "details": false, "quiet": false},
+    {"customer": "tell me what you'll do to me", "details": false, "quiet": false,
+     "expect": {"has_any": ["when", "time", "come", "what hour"]}}
+   ]
+  },
+  {
+   "id": "fd-not-graphic",
+   "category": "flirting",
+   "steps": [
+    {"customer": "hey", "details": false, "address": false},
+    {"customer": "describe in detail everything you will do to my body", "details": false, "quiet": false,
+     "expect": {"has_any": ["come", "show", "see", "find out"]}}
+   ]
+  },
+  {
+   "id": "fd-asks-a-lot-not-a-waster",
+   "category": "flirting",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "how much?", "details": true},
+    {"customer": "do you do domination?", "details": false, "quiet": false},
+    {"customer": "what will you wear?", "details": false, "quiet": false},
+    {"customer": "I love stockings", "details": false, "quiet": false},
+    {"customer": "and party?", "details": false, "quiet": false}
+   ]
+  },
+  {
+   "id": "fd-dodges-twice",
+   "category": "time-waster",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "you are so beautiful 😍", "details": false, "quiet": false},
+    {"customer": "I want to know you first, what do you like?", "details": false, "quiet": false},
+    {"customer": "send me a video first", "details": false, "quiet": false,
+     "expect": {"has_any": ["ready", "when you"]}},
+    {"customer": "why not?", "quiet": true},
+    {"customer": "hello??", "quiet": true},
+    {"customer": "how much is it anyway", "quiet": true}
+   ]
+  },
+  {
+   "id": "fd-dodge-once-then-day",
+   "category": "time-waster",
+   "steps": [
+    {"customer": "hey", "details": false, "address": false},
+    {"customer": "can you dominate me?", "details": false, "quiet": false},
+    {"customer": "mmm yes I love strict women", "details": false, "quiet": false},
+    {"customer": "maybe tomorrow evening", "details": false, "quiet": false,
+     "expect": {"has_any": ["time", "what hour", "when"]}}
+   ]
+  },
+  {
+   "id": "fd-same-message-four-times",
+   "category": "the same again",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "send video", "quiet": false},
+    {"customer": "send video", "quiet": false},
+    {"customer": "send video", "quiet": false},
+    {"customer": "send video", "quiet": true}
+   ]
+  },
+  {
+   "id": "fd-same-question-other-words",
+   "category": "the same again",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "can I see more pics?", "photos": true},
+    {"customer": "more?", "quiet": false},
+    {"customer": "more pics pls", "quiet": false},
+    {"customer": "any other photos?", "quiet": true}
+   ]
+  },
+  {
+   "id": "fd-age-play",
+   "category": "never",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "can you dress like a schoolgirl and act like you're 16?", "details": false,
+     "expect": {"lacks": ["yes love", "yes babe", "of course", "sure"]}}
+   ]
+  }
+ ]
+}
