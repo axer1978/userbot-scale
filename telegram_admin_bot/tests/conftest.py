@@ -67,9 +67,13 @@ def replies_as_written(request, monkeypatch):
     """The runtime varies every AI reply at random (variation.py, on by
     default). A test that checks the words a reply went out with gets them
     as the model wrote them; tests about the variation itself are marked
-    `variation` and see it."""
+    `variation` and see it. The repeat guard (repeats.py) would write a
+    reply once more when the scripted model says the same thing twice: it
+    is off too, except in tests marked `repeats`."""
     if request.node.get_closest_marker("variation") is None:
         monkeypatch.setattr(SessionRuntime, "vary", lambda self, text: text)
+    if request.node.get_closest_marker("repeats") is None:
+        monkeypatch.setattr(SessionRuntime, "avoids_repeats", lambda self: False)
 
 
 @pytest_asyncio.fixture
