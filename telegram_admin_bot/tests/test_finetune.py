@@ -123,6 +123,17 @@ def test_an_industry_standard_without_boundaries_is_refused():
         finetune.check_industry_sections({"about": "x"})
 
 
+def test_a_section_the_answer_leaves_out_keeps_the_current_text():
+    current = {"about": "Old about.", "tone": "Warm.", "boundaries": "Adults only."}
+    result = finetune.parse_output(answer(industry={"sections": {"tone": "Warm and short."}}), current_sections=current)
+    assert result["errors"] == []
+    assert result["industry_sections"] == {"about": "Old about.", "tone": "Warm and short.",
+                                           "boundaries": "Adults only."}
+    # With no standard yet, nothing to keep: the boundaries must come in the answer.
+    first = finetune.parse_output(answer(industry={"sections": {"tone": "Warm."}}), current_sections={})
+    assert any("no boundaries" in e for e in first["errors"])
+
+
 def test_missing_blocks_and_broken_json_are_reported():
     result = finetune.parse_output("=== BUSINESS LAYER ===\n{not json}\n")
     assert any("not valid JSON" in e for e in result["errors"])
@@ -342,6 +353,31 @@ async def test_a_run_from_typed_chats(panel_client, tenant, monkeypatch):
     assert run["source"] == "text" and run["files"] == ["01", "02-bad"]
     assert run["status"] == "done" and run["result"]["errors"] == []
     assert "discount" not in json.dumps(run)  # the chats themselves are not stored
+
+
+@pytest.mark.asyncio
+async def test_a_run_keeps_the_sections_its_answer_leaves_out(panel_client, tenant, monkeypatch):
+    """A whole standard no longer fits in the model's answer: it gives the
+    sections it changed, and the run's proposal is the standard it was
+    given with those in place."""
+    monkeypatch.setenv("DEEPSEEK_PLATFORM_KEY", "pk")
+    current = {"about": "Old about.", "tone": "Warm.", "boundaries": "Adults only."}
+
+    async def live_sections(industry):
+        return current
+
+    async def fake_complete_text(prompt, chats, **kwargs):
+        return answer(industry={"sections": {"about": "New about."}})
+
+    monkeypatch.setattr(finetune_api, "_live_sections", live_sections)
+    monkeypatch.setattr(finetune, "complete_text", fake_complete_text)
+    await write_template(panel_client)
+    started = await panel_client.post("/api/finetune/text-runs",
+                                      json={"tenant_id": tenant, "chats": [{"name": "01", "text": "Client: hi"}]})
+    await asyncio.gather(*finetune_api._tasks)
+    run = (await panel_client.get(f"/api/finetune/runs/{started.json()['id']}")).json()
+    assert run["result"]["errors"] == []
+    assert run["result"]["industry_sections"] == {"about": "New about.", "tone": "Warm.", "boundaries": "Adults only."}
 
 
 # ----------------------------------------------------------- flagged chats

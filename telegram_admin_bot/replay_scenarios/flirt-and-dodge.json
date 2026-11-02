@@ -158,8 +158,9 @@
    "steps": [
     {"customer": "hi", "details": false, "address": false},
     {"customer": "send video", "quiet": false},
-    {"customer": "send video", "quiet": false},
-    {"customer": "send video", "quiet": false},
+    {"customer": "send video"},
+    {"customer": "send video"},
+    {"customer": "send video"},
     {"customer": "send video", "quiet": true}
    ]
   },

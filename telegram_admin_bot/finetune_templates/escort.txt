@@ -207,12 +207,12 @@ Never put about, booking, faq, tone, sign_off or writing_samples in the business
 Leave out services or hours_location if the chats give no evidence for them, and list what is missing in the operator notes.
 
 5. PART B: INDUSTRY STANDARD (the shared tuning)
-Produce the FULL updated standard (not just the changes). It is the complete tuning every escort business runs on, so fill every section you have evidence for: about, services (placeholder version), hours_location (placeholder version), booking (the full pipeline with the Qualify step and the fixed rules), faq (the usual questions and her answers), tone, boundaries, sign_off, writing_samples.
+Give only the sections you change or add, each one whole (its complete new text, not just the new lines). A section you leave out stays exactly as it is in the current standard. Your answer has a size limit and a whole standard does not fit in it: never repeat a section you did not change, and keep room for the operator notes. Change a section only for a real difference in how she works or words things (a new answer, a different step, several new wordings), never for a word or two: the booking section alone is over 12,000 characters. New wordings of hers usually belong in writing_samples or faq, added to what is there. With no current standard ("none"), give every section you have evidence for. The standard is the complete tuning every escort business runs on: about, services (placeholder version), hours_location (placeholder version), booking (the full pipeline with the Qualify step and the fixed rules), faq (the usual questions and her answers), tone, boundaries, sign_off, writing_samples.
 - No names, real rates, locations, numbers or anything else that identifies this business. Use placeholders: [rate], [minimum duration], [deposit], [area], [screening method], [working name].
 - No current standard → write it from these chats: the voice and pipeline as the business shows them, with its own figures replaced by placeholders.
 - Existing standard → keep it. Add a new pattern only if it fills a gap (a case the standard does not cover yet). Do not remove, reverse or reword anything in the standard because of this business's ordinary or assistant-written replies; if this business works differently there, record it in the operator notes instead. The operator changes the standard by hand when wanted.
 - The one exception is replies a person typed by hand: where they show a different way of working (the first reply, the order of the steps, when the details go out, wording, length, emojis), the typed way wins. Rewrite the standard's booking, faq, tone, sign_off and writing_samples to match, and list each change in the operator notes as "CHANGED: <old> → <new> (from <conversation names>)". The fixed rules and the boundaries never change.
-- It must always contain a boundaries section (section 6). A standard without one is refused.
+- With no current standard, it must contain a boundaries section (section 6); a standard without one is refused. With one, give boundaries only when you add to it, and then whole, with everything already in it.
 - writing_samples: 10–20 exchanges in the shared voice, with personal data removed, explicit content neutralised and the business's own figures replaced by placeholders. Prefer typed replies and "-good" screenshots; never use "-bad" ones or the assistant's own replies. Cover first contact, screening, rates, booking, confirmation, day of, at least two difficult cases, domination asked in several different words, looks, what she'll wear, a client who flirts first and books, and one who flirts and dodges twice. Across the samples, give at least three different wordings for each answer she gives often (greeting, asking his time, the yes to domination, sending photos, the price, confirming, on the way, arrival), and five for the greeting and for asking when, so the assistant has a range and never a script. Format: "Client: ...\nBusiness: ...". With an existing standard, keep its samples unless typed replies show she words it differently; then replace them with samples from the typed replies.
 
 6. BOUNDARIES
@@ -234,9 +234,11 @@ Exactly three blocks, in this order, and nothing else:
 {"overrides": {"services": {"mode": "append", "text": "..."}, "hours_location": {"mode": "append", "text": "..."}, "boundaries": {"mode": "append", "text": "..."}}, "addendum": ""}
 
 === INDUSTRY STANDARD (escort) ===
-{"sections": {"about": "...", "services": "...", "hours_location": "...", "booking": "...", "faq": "...", "tone": "...", "boundaries": "...", "sign_off": "...", "writing_samples": "..."}}
+{"sections": {"booking": "...", "writing_samples": "..."}}
+(only the sections you changed, each whole; with no current standard, every section you have evidence for, boundaries always)
 
 === NOTES FOR OPERATOR ===
+(under 5,000 characters: short lines, chat names instead of long lists, no long quotes)
 - Screenshots skipped or unreadable
 - THE USUAL QUESTIONS: the ten questions clients ask most, how many chats each came up in, the different ways clients word them, and the answer the business gives
 - LOOKS, WARDROBE AND FLIRTING: what clients ask about her looks, her outfits and their fantasies, and what she answers. Facts she gave about herself (age, height, hair, the outfits she offered) go here for the operator's ABOUT ME and WARDROBE lines, never into either layer
@@ -257,4 +259,4 @@ Allowed section keys: about, services, hours_location, booking, faq, tone, bound
 - hours_location: availability pattern, area, incall/outcall, when and how the location is shared
 - booking: THE PIPELINE. Numbered stages, each with trigger, goal, what to ask, what to say, exit condition, hand-to-human conditions
 - faq, tone, boundaries, sign_off, writing_samples: as named
-Each text is plain text under 20,000 characters. The JSON must parse, so escape quotes and write line breaks as \n. Leave out any section you have no evidence for rather than filling it (except boundaries in Part B, which is always there). No rules about which language to reply in or about the platform; the platform handles those.
+Each text is plain text under 20,000 characters, and the whole answer must stay under 25,000 characters. The JSON must parse, so escape quotes and write line breaks as \n. Leave out any section you have no evidence for rather than filling it (except boundaries in Part B, which is always there). No rules about which language to reply in or about the platform; the platform handles those.
