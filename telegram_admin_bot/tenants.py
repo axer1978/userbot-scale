@@ -11,6 +11,14 @@ client. Saving creates version max+1 and points at it; a rollback moves the
 pointer back and never rewrites history. tenants.prompt_pin_version, when
 set, makes one tenant render with a fixed industry version instead of the
 industry's live one.
+
+Folders: an industry can sit inside another one (industries.parent_id), any
+levels deep. A sub-folder's template holds only its changes to its
+parent's, and its settings (own_config) only what it sets itself; its
+clients get the parent's with those on top (folder_sections, and
+default_config, kept up to date by save_industry_config). A client's own
+folder is still "its industry" everywhere: tenants.industry_id, runs,
+rules, examples.
 """
 
 from __future__ import annotations
@@ -70,10 +78,40 @@ def _industry(row: asyncpg.Record) -> dict[str, Any]:
     return {
         "id": row["id"],
         "name": row["name"],
+        # None for a top-level industry; else the folder this one sits in.
+        "parent_id": row["parent_id"],
         "template_version": row["template_version"],
+        # What its clients inherit: the parent's with own_config on top.
         "default_config": _json(row["default_config"]),
+        # What this folder sets itself (the same as default_config at the top).
+        "own_config": _json(row["own_config"]),
         "config_revision": row["config_revision"],
     }
+
+
+PATH_SEPARATOR = " › "
+
+# The folder and the folders above it (depth 0 = the folder itself). Folders
+# get their parent when they are made and never move, so there is no cycle;
+# the depth limit is there anyway.
+_CHAIN_SQL = """
+WITH RECURSIVE up AS (
+  SELECT i.*, 0 AS depth FROM industries i WHERE i.id = $1
+  UNION ALL
+  SELECT p.*, up.depth + 1 FROM industries p JOIN up ON p.id = up.parent_id WHERE up.depth < 50
+)
+SELECT * FROM up ORDER BY depth DESC
+"""
+
+# The folder and every folder under it, each after its parent.
+_SUBTREE_SQL = """
+WITH RECURSIVE down AS (
+  SELECT i.*, 0 AS depth FROM industries i WHERE i.id = $1
+  UNION ALL
+  SELECT c.*, down.depth + 1 FROM industries c JOIN down ON c.parent_id = down.id WHERE down.depth < 50
+)
+SELECT * FROM down ORDER BY depth, id
+"""
 
 
 def _version(row: asyncpg.Record) -> dict[str, Any]:
@@ -145,8 +183,47 @@ class TenantStore:
         return _industry(row)
 
     async def list_industries(self) -> list[dict[str, Any]]:
+        """Every folder, with its "path" ("escort › Tallinn"), sorted by it."""
         rows = await self._pool.fetch("SELECT * FROM industries ORDER BY lower(name), id")
+        folders = {r["id"]: _industry(r) for r in rows}
+
+        def path(folder: dict[str, Any], seen: frozenset = frozenset()) -> list[str]:
+            parent = folders.get(folder["parent_id"]) if folder["parent_id"] not in seen else None
+            return (path(parent, seen | {folder["id"]}) if parent else []) + [folder["name"]]
+
+        out = [{**f, "path": PATH_SEPARATOR.join(path(f))} for f in folders.values()]
+        return sorted(out, key=lambda f: ([part.lower() for part in f["path"].split(PATH_SEPARATOR)], f["id"]))
+
+    async def chain(self, industry_id: int) -> list[dict[str, Any]]:
+        """The folder and the folders above it, the top-level industry first."""
+        rows = await self._pool.fetch(_CHAIN_SQL, industry_id)
+        if not rows:
+            raise NotFound(f"no industry {industry_id}")
         return [_industry(r) for r in rows]
+
+    async def subtree(self, industry_id: int) -> list[dict[str, Any]]:
+        """The folder and every folder under it, each after its parent."""
+        rows = await self._pool.fetch(_SUBTREE_SQL, industry_id)
+        if not rows:
+            raise NotFound(f"no industry {industry_id}")
+        return [_industry(r) for r in rows]
+
+    async def folder_sections(
+        self, industry_id: int, version: Optional[int] = None, *, chain: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, str]:
+        """The template this folder hands its clients: the top-level
+        industry's sections with each sub-folder's changes on top, down to
+        this one. `version` replaces this folder's live version (a pin)."""
+        chain = chain or await self.chain(industry_id)
+        sections: dict[str, str] = {}
+        for n, folder in enumerate(chain):
+            wanted = version if version and n == len(chain) - 1 else folder["template_version"]
+            content = (await self.version(INDUSTRY, folder["id"], wanted))["content"]
+            if folder["parent_id"] is None:
+                sections = prompt_layers.validate_industry(content)["sections"]
+            else:
+                sections = prompt_layers.apply_folder(sections, content)
+        return sections
 
     async def versions(self, layer: str, ref_id: int) -> list[dict[str, Any]]:
         rows = await self._pool.fetch(
@@ -177,13 +254,17 @@ class TenantStore:
         validates; saves are validated, so that means someone edited the
         database by hand."""
         tenant = await self.get(tenant_id)
-        industry = await self.get_industry(tenant["industry_id"])
+        chain = await self.chain(tenant["industry_id"])
+        # The client's own folder, with the names of the folders above it.
+        industry = {**chain[-1], "path": PATH_SEPARATOR.join(f["name"] for f in chain),
+                    "root_id": chain[0]["id"], "root_name": chain[0]["name"]}
         inherited = tenant_config.resolve(industry["default_config"], None)
         resolved = tenant_config.resolve(industry["default_config"], tenant["config_json"])
 
         base = await self.base()
         industry_version = tenant["prompt_pin_version"] or industry["template_version"]
-        industry_content = (await self.version(INDUSTRY, industry["id"], industry_version))["content"]
+        industry_content = {"sections": await self.folder_sections(industry["id"], industry_version, chain=chain)}
+        parents = [(folder["id"], folder["template_version"]) for folder in chain[:-1]]
         client_content = {"overrides": {}, "addendum": ""}
         if tenant["prompt_version"]:
             client_content = (await self.version(CLIENT, tenant_id, tenant["prompt_version"]))["content"]
@@ -200,6 +281,7 @@ class TenantStore:
             language_policy=resolved.config.language_policy,
             versions=(base["version"], industry["id"], industry_version, tenant["prompt_version"]),
             rules=active_rules,
+            parents=parents,
         )
         return Bundle(
             tenant=tenant,
@@ -354,44 +436,140 @@ class TenantStore:
 
     # -------------------------------------------------------- industries
 
-    async def create_industry(self, name: str, *, actor: str, reason: str = "") -> dict[str, Any]:
+    async def create_industry(
+        self, name: str, *, parent_id: Optional[int] = None, actor: str, reason: str = "",
+    ) -> dict[str, Any]:
+        """A top-level industry, or with `parent_id` a sub-folder of that
+        folder. A sub-folder starts as a copy of nothing: its clients get
+        exactly what its parent hands down until it changes something, and
+        it requires review when its parent does."""
         name = (name or "").strip()
         if not name:
-            raise ValueError("An industry needs a name.")
+            raise ValueError("A folder needs a name." if parent_id is not None else "An industry needs a name.")
         async with self._pool.acquire() as con, con.transaction():
-            if await con.fetchval("SELECT 1 FROM industries WHERE lower(name) = lower($1)", name):
-                raise ValueError(f"An industry called {name!r} already exists.")
-            row = await con.fetchrow("INSERT INTO industries (name) VALUES ($1) RETURNING *", name)
+            parent = None
+            if parent_id is not None:
+                parent = await con.fetchrow("SELECT * FROM industries WHERE id = $1", parent_id)
+                if parent is None:
+                    raise NotFound(f"no industry {parent_id}")
+            if await con.fetchval(
+                "SELECT 1 FROM industries WHERE coalesce(parent_id, 0) = coalesce($2::int, 0) AND lower(name) = lower($1)",
+                name, parent_id,
+            ):
+                raise ValueError(f"{parent['name']} already has a folder called {name!r}." if parent
+                                 else f"An industry called {name!r} already exists.")
+            if parent is None:
+                row = await con.fetchrow("INSERT INTO industries (name) VALUES ($1) RETURNING *", name)
+                content = {"sections": {}}
+            else:
+                row = await con.fetchrow(
+                    "INSERT INTO industries (name, parent_id, default_config, requires_review) "
+                    "VALUES ($1, $2, $3::jsonb, $4) RETURNING *",
+                    name, parent_id, parent["default_config"]
+                    if isinstance(parent["default_config"], str) else json.dumps(parent["default_config"]),
+                    parent["requires_review"],
+                )
+                content = {"overrides": {}}
             await con.execute(
                 """
                 INSERT INTO prompt_versions (layer, ref_id, version, content, note, created_by)
-                VALUES ('industry', $1, 1, '{"sections": {}}'::jsonb, 'Created empty', $2)
+                VALUES ('industry', $1, 1, $2::jsonb, 'Created empty', $3)
                 """,
-                row["id"], actor,
+                row["id"], json.dumps(content), actor,
             )
             await audit.record(
                 con, tenant_id=None, actor=actor, event=audit.INDUSTRY_CREATED, reason=reason,
-                payload={"industry_id": row["id"], "name": name},
+                payload={"industry_id": row["id"], "name": name, "parent_id": parent_id},
             )
         return _industry(row)
 
+    async def rename_industry(self, industry_id: int, name: str, *, actor: str, reason: str = "") -> dict[str, Any]:
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("A folder needs a name.")
+        industry = await self.get_industry(industry_id)
+        if name == industry["name"]:
+            return industry
+        async with self._pool.acquire() as con, con.transaction():
+            if await con.fetchval(
+                "SELECT 1 FROM industries WHERE coalesce(parent_id, 0) = coalesce($2::int, 0) "
+                "AND lower(name) = lower($1) AND id <> $3",
+                name, industry["parent_id"], industry_id,
+            ):
+                raise ValueError(f"There is already a folder called {name!r} there.")
+            row = await con.fetchrow(
+                "UPDATE industries SET name = $2, updated_at = now() WHERE id = $1 RETURNING *", industry_id, name)
+            await audit.record(
+                con, tenant_id=None, actor=actor, event=audit.INDUSTRY_UPDATED, reason=reason,
+                payload={"industry_id": industry_id, "from": {"name": industry["name"]}, "to": {"name": name}},
+            )
+        return _industry(row)
+
+    async def delete_industry(self, industry_id: int, *, actor: str, reason: str = "") -> None:
+        """Only an empty sub-folder: no clients and no folders in it, and no
+        finetune runs, operator rules or reply examples made in it (their
+        history would point nowhere). Its template versions and finetune
+        template go with it."""
+        industry = await self.get_industry(industry_id)
+        if industry["parent_id"] is None:
+            raise ValueError("Only a sub-folder can be deleted, not a top-level industry.")
+        async with self._pool.acquire() as con, con.transaction():
+            if await con.fetchval("SELECT 1 FROM tenants WHERE industry_id = $1 LIMIT 1", industry_id):
+                raise ValueError("Move its clients to another folder first.")
+            if await con.fetchval("SELECT 1 FROM industries WHERE parent_id = $1 LIMIT 1", industry_id):
+                raise ValueError("Delete the folders inside it first.")
+            await con.execute("DELETE FROM prompt_versions WHERE layer = 'industry' AND ref_id = $1", industry_id)
+            await con.execute("DELETE FROM platform_settings WHERE key = $1", f"finetune_template:{industry_id}")
+            try:
+                async with con.transaction():
+                    await con.execute("DELETE FROM industries WHERE id = $1", industry_id)
+            except asyncpg.ForeignKeyViolationError:
+                raise ValueError("This folder has finetune runs, operator rules or reply examples of its own, "
+                                 "so it is kept. Leave it empty instead.") from None
+            await audit.record(
+                con, tenant_id=None, actor=actor, event=audit.INDUSTRY_DELETED, reason=reason,
+                payload={"industry_id": industry_id, "name": industry["name"], "parent_id": industry["parent_id"]},
+            )
+
     async def tenants_in_industry(self, industry_id: int) -> list[dict[str, Any]]:
         rows = await self._pool.fetch("SELECT * FROM tenants WHERE industry_id = $1 ORDER BY id", industry_id)
+        return [_tenant(r) for r in rows]
+
+    async def tenants_in_subtree(self, industry_id: int) -> list[dict[str, Any]]:
+        """The clients of this folder and of every folder under it: the ones
+        a change to this folder reaches."""
+        rows = await self._pool.fetch(
+            f"WITH folders AS ({_SUBTREE_SQL}) SELECT * FROM tenants WHERE industry_id IN (SELECT id FROM folders) "
+            "ORDER BY id", industry_id)
         return [_tenant(r) for r in rows]
 
     async def save_industry_config(
         self, industry_id: int, overrides: dict[str, Any], *, actor: str, reason: str = "",
         expected_revision: Optional[int] = None,
     ) -> dict[str, Any]:
-        """Replace the industry's default config. Refused if it would leave
-        any tenant in the industry with an invalid config."""
-        industry = await self.get_industry(industry_id)
+        """Replace what this folder sets itself. Its clients, and the folders
+        under it, inherit the result (default_config, recomputed here for
+        every one of them). Refused if it would leave any of their tenants
+        with an invalid config."""
+        folders = await self.subtree(industry_id)
+        industry = folders[0]
+        above = (await self.get_industry(industry["parent_id"]))["default_config"] if industry["parent_id"] else {}
+        handed: dict[int, dict[str, Any]] = {}
+        for folder in folders:
+            own = overrides if folder["id"] == industry_id else folder["own_config"]
+            handed[folder["id"]] = tenant_config.merge(
+                above if folder["id"] == industry_id else handed[folder["parent_id"]], own)
         before = tenant_config.resolve(industry["default_config"], None).as_dict()
-        after = tenant_config.resolve(overrides, None).as_dict()
+        after = tenant_config.resolve(handed[industry_id], None).as_dict()
         broken = []
-        for tenant in await self.tenants_in_industry(industry_id):
+        for folder in folders[1:]:
             try:
-                tenant_config.resolve(overrides, tenant["config_json"])
+                tenant_config.resolve(handed[folder["id"]], None)
+            except ConfigError as exc:
+                broken.append({"path": f"folder {folder['id']} ({folder['name']})", "message": str(exc)})
+        for tenant in await self.tenants_in_subtree(industry_id):
+            try:
+                tenant_config.resolve(handed[tenant["industry_id"]], tenant["config_json"])
             except ConfigError as exc:
                 broken.append({"path": f"tenant {tenant['id']} ({tenant['name']})", "message": str(exc)})
         if broken:
@@ -399,15 +577,19 @@ class TenantStore:
         async with self._pool.acquire() as con, con.transaction():
             row = await con.fetchrow(
                 """
-                UPDATE industries SET default_config = $2::jsonb, config_revision = config_revision + 1,
-                       updated_at = now()
-                 WHERE id = $1 AND ($3::int IS NULL OR config_revision = $3)
+                UPDATE industries SET own_config = $2::jsonb, default_config = $3::jsonb,
+                       config_revision = config_revision + 1, updated_at = now()
+                 WHERE id = $1 AND ($4::int IS NULL OR config_revision = $4)
                 RETURNING *
                 """,
-                industry_id, json.dumps(overrides), expected_revision,
+                industry_id, json.dumps(overrides), json.dumps(handed[industry_id]), expected_revision,
             )
             if row is None:
                 raise Conflict("This industry's config was changed by someone else; reload and try again.")
+            for folder in folders[1:]:
+                if handed[folder["id"]] != folder["default_config"]:
+                    await con.execute("UPDATE industries SET default_config = $2::jsonb, updated_at = now() "
+                                      "WHERE id = $1", folder["id"], json.dumps(handed[folder["id"]]))
             await audit.record(
                 con, tenant_id=None, actor=actor, event=audit.INDUSTRY_CONFIG_CHANGED, reason=reason,
                 payload={"industry_id": industry_id, "changes": tenant_config.diff(before, after),
@@ -415,13 +597,29 @@ class TenantStore:
             )
         return _industry(row)
 
+    async def save_folder_standard(
+        self, industry_id: int, sections: dict[str, str], *, actor: str, note: str = "",
+    ) -> dict[str, Any]:
+        """Save a whole standard (every section, as a finetune run or a fold
+        writes it) as this folder's template. A top-level industry takes it
+        as it is; a sub-folder keeps only what differs from its parent's
+        (prompt_layers.folder_changes), so it goes on inheriting the rest."""
+        industry = await self.get_industry(industry_id)
+        clean = prompt_layers.validate_industry({"sections": sections})
+        if industry["parent_id"] is not None:
+            parent = await self.folder_sections(industry["parent_id"])
+            clean = prompt_layers.folder_changes(parent, clean["sections"])
+        return await self.save_industry_template(industry_id, clean, actor=actor, note=note)
+
     async def save_industry_template(
         self, industry_id: int, content: dict[str, Any], *, actor: str, note: str = "",
     ) -> dict[str, Any]:
         """A new template version, made live at once. (Phase 6 puts the
-        replay harness between saving a version and making it live.)"""
-        clean = prompt_layers.validate_industry(content)
-        await self.get_industry(industry_id)
+        replay harness between saving a version and making it live.) A
+        sub-folder's content is only its changes (validate_folder)."""
+        industry = await self.get_industry(industry_id)
+        clean = (prompt_layers.validate_industry(content) if industry["parent_id"] is None
+                 else prompt_layers.validate_folder(content))
         async with self._pool.acquire() as con, con.transaction():
             version = await self._next_version(con, INDUSTRY, industry_id)
             await con.execute(

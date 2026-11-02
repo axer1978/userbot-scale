@@ -144,8 +144,9 @@ async def api_promote(item_id: int, body: PromoteBody) -> dict[str, Any]:
     store = tenants.TenantStore(pool)
     industry_id = known[item["tenant_id"]]["industry_id"]
     industry = await store.get_industry(industry_id)
-    current = (await store.version(tenants.INDUSTRY, industry_id, industry["template_version"]))["content"]
-    sections = dict(current.get("sections") or {})
+    # The FAQ the account's folder hands down; a sub-folder keeps only the
+    # new answer (and its own earlier ones) as its addition to it.
+    sections = await store.folder_sections(industry_id)
     faq = (sections.get("faq") or "").strip()
     block = faq_block(question, answer)
     new_faq = f"{faq}\n\n{block}" if faq else block
@@ -156,8 +157,8 @@ async def api_promote(item_id: int, body: PromoteBody) -> dict[str, Any]:
                    f"{prompt_layers.MAX_SECTION_CHARS}. Shorten the answer or tidy the FAQ first.",
         )
     try:
-        saved = await store.save_industry_template(
-            industry_id, {"sections": {**sections, "faq": new_faq}}, actor=ACTOR,
+        saved = await store.save_folder_standard(
+            industry_id, {**sections, "faq": new_faq}, actor=ACTOR,
             note=f"From the unanswered queue #{item_id}",
         )
     except prompt_layers.PromptError as exc:
