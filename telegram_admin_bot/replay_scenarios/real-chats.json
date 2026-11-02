@@ -1,0 +1,86 @@
+{
+ "note": "Whole chats the way clients really write (the user's rule of 2026-11-02). Asking is not wasting time: a client who asks a lot (the price, more photos, her name, where exactly she is) gets every question answered, and no one comes to a meeting without photos and the address, so a booking chat has both before the meeting. The bot goes quiet only after he dodged her \"when?\" twice, or asks for the same thing a fourth time. Needs replies.no_reply_instruction. Run with: python replay.py --tenant <id> --scenarios real-chats",
+ "first_reply_address": false,
+ "greeting_video": true,
+ "never_says": [
+  "let me check",
+  "i'll ask",
+  "i will ask",
+  "my manager",
+  "the agency",
+  "our girls",
+  "check with",
+  "let you know"
+ ],
+ "scenarios": [
+  {
+   "id": "rc-asks-everything-then-books",
+   "category": "asks a lot, not a time-waster",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "how much", "details": true},
+    {"customer": "can you send more pics", "details": false, "photos": true, "quiet": false},
+    {"customer": "and your real name", "details": false, "quiet": false},
+    {"customer": "and where exactly do you live", "details": false, "quiet": false},
+    {"customer": "ok tomorrow 18:00 for 1 hour", "booking": "requested", "intent": "book"}
+   ]
+  },
+  {
+   "id": "rc-incall-photos-address-arrival",
+   "category": "a whole booking",
+   "steps": [
+    {"customer": "hey, are you free tonight?", "details": false, "address": false},
+    {"customer": "how much for an hour? and where are you?", "details": true, "address": true},
+    {"customer": "can I see some photos first?", "details": false, "photos": true, "quiet": false},
+    {"customer": "very nice 😍 21:00 for one hour", "booking": "requested", "intent": "book"},
+    {"event": "confirmed", "booking": "confirmed_news", "expect": {"has_any": ["21"]}},
+    {"customer": "great, which floor is it?", "booking": "confirmed", "details": false, "quiet": false},
+    {"customer": "on my way, 10 min", "booking": "confirmed", "quiet": false},
+    {"customer": "I'm here", "booking": "arrived"},
+    {"customer": "thank you, it was amazing 🙏", "booking": "way_in_sent", "details": false, "quiet": false}
+   ]
+  },
+  {
+   "id": "rc-lv-time-first",
+   "category": "a whole booking",
+   "steps": [
+    {"customer": "Labvakar! Vai šovakar 20:00 ir brīvs?", "booking": "requested", "intent": "book",
+     "details": false, "expect": {"lacks": ["apstiprin", "rezervēts"]}},
+    {"customer": "Cik maksā stunda? Un kur tu atrodies?", "booking": "pending", "details": true, "address": true},
+    {"customer": "Vari atsūtīt kādu bildi?", "booking": "pending", "photos": true},
+    {"event": "confirmed", "booking": "confirmed_news", "expect": {"has_any": ["20"]}},
+    {"customer": "Esmu klāt", "booking": "arrived"},
+    {"customer": "Paldies, bija ļoti jauki! 🙏", "booking": "way_in_sent", "details": false, "quiet": false}
+   ]
+  },
+  {
+   "id": "rc-asks-then-dodges-twice",
+   "category": "time-waster",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "how much?", "details": true},
+    {"customer": "send more pics", "details": false, "photos": true, "quiet": false,
+     "expect": {"has_any": ["when", "time", "come", "hour"]}},
+    {"customer": "mmm you are so hot 🔥 what are you doing now?", "details": false, "quiet": false,
+     "expect": {"has_any": ["when", "time", "come", "hour", "ready"]}},
+    {"customer": "maybe later babe. send me a video first", "details": false, "quiet": false,
+     "expect": {"has_any": ["ready", "when you"]}},
+    {"customer": "hello??", "quiet": true},
+    {"customer": "why you don't answer", "quiet": true},
+    {"customer": "how much for 2 hours", "quiet": true},
+    {"customer": "ok ok, tomorrow 19:00?", "booking": "requested", "intent": "book"}
+   ]
+  },
+  {
+   "id": "rc-same-ask-four-times",
+   "category": "the same again",
+   "steps": [
+    {"customer": "hi", "details": false, "address": false},
+    {"customer": "send me a selfie with my name on paper", "photos": false, "quiet": false},
+    {"customer": "come on, just one selfie with my name", "photos": false, "quiet": false},
+    {"customer": "please, a selfie with my name, I need to know you are real", "photos": false, "quiet": false},
+    {"customer": "selfie with my name pls", "quiet": true}
+   ]
+  }
+ ]
+}

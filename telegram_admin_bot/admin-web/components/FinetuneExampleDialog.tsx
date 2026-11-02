@@ -22,8 +22,8 @@ export const VERDICTS: [ExampleVerdict, string, string][] = [
 
 export const CLIENT_KINDS: [ClientKind, string, string][] = [
   ["", "Not said", "let the model judge"],
-  ["serious", "Serious client", "says what he wants, names his own time, accepts the price, follows instructions"],
-  ["time_waster", "Time-waster", "small talk, keeps asking for photos or video, never names a time, haggles, wants the address first"],
+  ["serious", "Serious client", "asks what he needs to know first (price, photos, where, your name), names a time, follows instructions"],
+  ["time_waster", "Time-waster", "dodged your \"when?\" twice: no day or time and nothing new asked (small talk, \"later\", \"video first\"), or the same question again and again. Asking about price, photos, where you are or your name never makes one"],
   ["safety_risk", "Safety risk", "refuses checks, aggressive, drunk or high, anything about minors, drugs or other people"],
   ["regular", "Regular", "has been before"],
 ];

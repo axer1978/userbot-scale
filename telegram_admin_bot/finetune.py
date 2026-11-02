@@ -225,7 +225,8 @@ VERDICTS = {
 }
 CLIENT_KINDS = {
     "serious": "SERIOUS client",
-    "time_waster": "TIME-WASTER",
+    "time_waster": "TIME-WASTER (he dodged \"when?\" or asked the same thing again and again; questions alone never "
+                   "make one)",
     "safety_risk": "SAFETY RISK",
     "regular": "REGULAR (a returning client)",
 }
