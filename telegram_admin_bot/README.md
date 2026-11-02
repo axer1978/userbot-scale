@@ -669,6 +669,23 @@ the opening hours, the calendar link and AI usage.
   on WhatsApp the gateway does not even decrypt them. With
   `booking.owner_free_text` on, every message in the group costs one small
   model call to read.
+- **Bookers by the hour** (`booking.shifts`). One booker can take the
+  requests 16:00–24:00 and another the night: Clients → client → Config →
+  `booking.shifts` → **Add a shift** (from, to, who books — a number,
+  @username or a group, **Pick a group…** works here too — and the days it
+  starts on; none = every day). Times are in the account's time zone; an end
+  before the start runs past midnight, `24:00` is midnight, the same start
+  and end is the whole day; the first shift that matches is on duty, and
+  outside them all `booking.provider` is. The booker **on duty** gets every
+  new request and every update (he arrived, the taxi steps, his messages for
+  her, he cancelled, escalations). A request (or a move he asked for) still
+  waiting when the shift changes goes to the next booker too, headed
+  *⏳ Not answered on the shift before — passing it to you*; whoever answers
+  first decides it, and the other's answer after that is refused (*cannot
+  confirm booking #7: it is confirmed*). Every booker named is a booker at
+  any hour: her answer counts after her shift, and her chat never gets a
+  customer's reply. Billing notices and the weekly digest go to
+  `booking.provider` (else the booker on duty).
 - The request lists who asks, her name (`Girl:`), the **extras** he asked
   for in the chat (`Extras: domination +50, …`, read with the time; kept on
   the booking and shown on the Bookings page), when, and notes.

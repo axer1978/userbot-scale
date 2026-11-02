@@ -45,6 +45,7 @@ from typing import Any, Callable, Collection, Iterable, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 import ai_responder
+import booker_shifts
 import booking_states as bs
 import bookings
 import examples
@@ -616,12 +617,21 @@ def warnings(bundle: Any, notes: Notes = Notes(), boxes: Optional[list[dict[str,
 
     if booking["enabled"]:
         provider = (booking.get("provider") or "").strip()
-        if not provider:
+        shifts = booking.get("shifts") or []
+        network = tenant.get("channel") or transport.TELEGRAM
+        if not provider and not shifts:
             add("warn", "appointments", "Bookings are on but booking.provider is empty: booking requests reach "
                 "nobody.", config_link)
-        elif problem := provider_problem(provider, tenant.get("channel") or transport.TELEGRAM):
+        elif not provider:
+            add("info", "appointments", "booking.provider is empty: outside the booking.shifts hours nobody is on "
+                "duty, so a request waits until the next shift starts.", config_link)
+        elif problem := provider_problem(provider, network):
             add("warn", "appointments", f"booking.provider {problem}: booking requests cannot reach the booker.",
                 config_link)
+        for n, shift in enumerate(shifts, 1):
+            if problem := provider_problem(shift.get("provider") or "", network):
+                add("warn", "appointments", f"booking.shifts #{n} ({booker_shifts.describe(shift)}): the booker "
+                    f"{problem}: booking requests in those hours cannot reach her.", config_link)
     address = (booking.get("address") or "").strip()
     if booking["enabled"] and not address:
         add("warn", "appointments", "Bookings are on but booking.address is empty: [address] in a reply cannot be "

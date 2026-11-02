@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import types
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -2748,3 +2749,238 @@ async def test_typed_by_hand_in_the_booker_group_is_kept_and_takes_nothing_over(
     # The same in another group: nothing stored.
     await w.app.on_outgoing(GroupEvent("hi all", chat_id=OTHER_GROUP, outgoing=True))
     assert await w.db.get_messages(OTHER_GROUP) == []
+
+
+# ------------------------------------------------- bookers by the hour
+
+
+EVENING = 997
+
+
+@pytest_asyncio.fixture
+async def shift_world(world, monkeypatch):
+    """booking.provider (@owner, OWNER) books outside the shifts; @evening
+    (EVENING) books 16:00–24:00."""
+    chats = {"@owner": OWNER, "@evening": EVENING}
+
+    async def resolve(value):
+        return chats.get((value or "").strip())
+
+    flow = world.app.flow
+    monkeypatch.setattr(flow, "provider_chat_id", types.MethodType(booking_flow.BookingFlow.provider_chat_id, flow))
+    monkeypatch.setattr(flow, "_resolve", resolve)
+    world.app.config["booking"]["shifts"] = [{"start": "16:00", "end": "24:00", "provider": "@evening", "days": []}]
+    return world
+
+
+async def booker(w, chat_id, text, reply_to=None):
+    await w.app.on_incoming(FakeEvent(chat_id, text, reply_to))
+    await settle(w.app)
+
+
+async def test_the_booker_on_shift_gets_the_request_and_answers_it(shift_world):
+    w = shift_world
+    w.clock["now"] = NOW.replace(hour=17)
+    await customer(w, "at 19?", book("2030-03-04T19:00"))
+    [request] = w.sent[EVENING]
+    assert "Booking request #1" in request and "YES 1" in request
+    assert OWNER not in w.sent
+    assert (await only_booking(w))["provider_chat_id"] == EVENING
+
+    await booker(w, EVENING, "YES 1")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert w.sent[EVENING][-1].startswith("#1 confirmed")
+
+
+async def test_outside_the_shifts_the_provider_gets_it(shift_world):
+    w = shift_world
+    await customer(w, "tomorrow at 15?", book())
+    assert "Booking request #1" in w.sent[OWNER][0]
+    assert EVENING not in w.sent
+
+
+async def test_a_booker_off_shift_still_answers_and_never_gets_a_customers_reply(shift_world):
+    w = shift_world
+    await customer(w, "tomorrow at 15?", book())
+    calls = w.script["calls"]
+    # Off duty at noon: her small talk is read as a booker's, never answered
+    # like a customer's, and never queued as unanswered.
+    w.script["owner_answer"] = reading()
+    await booker(w, EVENING, "hi, I'm up early today")
+    assert w.script["calls"] == calls and EVENING not in w.sent
+    assert await unanswered.open_count(w.app.pool, w.app.tenant_id) == 0
+    # Her YES counts, though the request went to the other booker.
+    await booker(w, EVENING, "YES 1")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert w.sent[EVENING][-1].startswith("#1 confirmed")
+    # Written by hand in her chat on the account's phone: no takeover.
+    await w.app.on_outgoing(FakeEvent(EVENING, "ok"))
+    await settle(w.app)
+    assert w.app.takeover_until(await w.db.get_conversation(EVENING)) is None
+
+
+async def test_a_request_waiting_at_the_shift_change_goes_to_the_next_booker_too(shift_world):
+    w = shift_world
+    w.clock["now"] = NOW.replace(hour=15, minute=50)
+    await customer(w, "at 18?", book("2030-03-04T18:00"))
+    assert "Booking request #1" in w.sent[OWNER][0]
+
+    await tick(w, NOW.replace(hour=16, minute=1))
+    [handed] = w.sent[EVENING]
+    assert handed.startswith("⏳ Not answered on the shift before") and "Booking request #1" in handed
+    b = await only_booking(w)
+    assert b["state"] == bs.PENDING and b["provider_chat_id"] == EVENING
+    notes = [m["text"] for m in await w.db.get_messages(CUSTOMER)]
+    assert any("the booker's shift changed" in text for text in notes)
+    # Once is enough.
+    await tick(w, NOW.replace(hour=16, minute=2))
+    assert len(w.sent[EVENING]) == 1
+
+    # The first answer counts; the other one's is refused.
+    await booker(w, EVENING, "YES 1")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    await booker(w, OWNER, "NO 1")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    assert "it is confirmed" in w.sent[OWNER][-1]
+
+
+async def test_a_move_he_asks_for_is_handed_over_as_a_move(shift_world):
+    w = shift_world
+    await customer(w, "tomorrow at 15?", book())
+    await booker(w, OWNER, "YES 1")
+    await customer(w, "can we make it 17?", book("2030-03-05T17:00"))
+    assert "#1" in w.sent[OWNER][-1]
+
+    await tick(w, NOW.replace(hour=16, minute=1))
+    [handed] = w.sent[EVENING]
+    assert handed.startswith("⏳") and "YES 1" in handed and "Booking request" not in handed
+    await booker(w, EVENING, "YES 1")
+    b = await only_booking(w)
+    assert b["state"] == bs.CONFIRMED and b["starts_at"].astimezone(RIGA).hour == 17
+
+
+async def test_a_quote_of_the_first_request_still_counts_after_the_handover(shift_world):
+    w = shift_world
+    w.clock["now"] = NOW.replace(hour=15, minute=50)
+    await customer(w, "at 18?", book("2030-03-04T18:00"))
+    first = (await only_booking(w))["provider_message_id"]
+    await tick(w, NOW.replace(hour=16, minute=1))
+    assert (await only_booking(w))["provider_message_id"] != first
+
+    await booker(w, OWNER, "NO", reply_to=first)
+    assert (await only_booking(w))["state"] == bs.CANCELLED
+
+
+async def test_the_bots_question_is_answered_only_in_the_chat_it_was_asked_in(shift_world):
+    flow = shift_world.app.flow
+    flow._held[1] = booking_flow._Held(shift_world.app.utcnow(), None, (1,), chat_id=OWNER)
+    token = booking_flow._owner_chat.set(EVENING)
+    try:
+        assert flow._fresh_held(None) == {}
+    finally:
+        booking_flow._owner_chat.reset(token)
+    token = booking_flow._owner_chat.set(OWNER)
+    try:
+        assert list(flow._fresh_held(None)) == [1]
+    finally:
+        booking_flow._owner_chat.reset(token)
+
+
+async def test_news_about_a_booking_goes_to_the_booker_on_duty(shift_world):
+    w = shift_world
+    await customer(w, "today at 20?", book("2030-03-04T20:00"))
+    await booker(w, OWNER, "YES 1")
+    w.clock["now"] = NOW.replace(hour=17)
+    await customer(w, "sorry, can't come", {"intent": "cancel"})
+    assert (await only_booking(w))["state"] == bs.CANCELLED
+    assert any("#1" in text for text in w.sent[EVENING])
+
+
+async def test_with_nobody_on_duty_a_request_waits_for_the_next_shift(shift_world):
+    w = shift_world
+    w.app.config["booking"]["provider"] = ""
+    await customer(w, "today at 20?", book("2030-03-04T20:00"))
+    assert (await only_booking(w))["state"] == bs.REQUESTED and not w.sent.get(OWNER)
+    errors = [m["text"] for m in await w.db.get_messages(CUSTOMER)]
+    assert any("no booker is on shift now" in text for text in errors)
+
+    w.app.flow._submit_attempts.clear()
+    await tick(w, NOW.replace(hour=16, minute=1))
+    assert "Booking request #1" in w.sent[EVENING][0]
+    assert (await only_booking(w))["state"] == bs.PENDING
+
+
+async def test_a_time_the_booker_offered_instead_is_not_handed_over(shift_world):
+    w = shift_world
+    w.clock["now"] = NOW.replace(hour=15, minute=50)
+    await customer(w, "at 18?", book("2030-03-04T18:00"))
+    await booker(w, OWNER, "1 19:00")
+    assert (await only_booking(w))["proposed_by"] == bs.OWNER
+    await tick(w, NOW.replace(hour=16, minute=1))
+    assert EVENING not in w.sent
+    b = await only_booking(w)
+    assert b["proposed_by"] == bs.OWNER and b["provider_chat_id"] == OWNER
+
+
+async def test_a_bare_answer_from_a_booker_not_sent_the_request_decides_nothing(shift_world):
+    w = shift_world
+    w.clock["now"] = NOW.replace(hour=17)
+    await customer(w, "at 19?", book("2030-03-04T19:00"))
+    assert OWNER not in w.sent
+    # Her own words read: a bare YES she was never sent is not put on it.
+    await booker(w, OWNER, "YES")
+    assert (await only_booking(w))["state"] == bs.PENDING
+    # Commands only: the same.
+    w.app.config["booking"]["owner_free_text"] = False
+    await booker(w, OWNER, "no")
+    assert (await only_booking(w))["state"] == bs.PENDING
+    # The booker it went to: as always.
+    await booker(w, EVENING, "yes")
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+
+
+async def test_a_booker_who_has_the_request_is_not_sent_it_again(shift_world):
+    w = shift_world
+    w.clock["now"] = NOW.replace(hour=15, minute=50)
+    await customer(w, "tomorrow at 15?", book("2030-03-05T15:00"))
+    await tick(w, NOW.replace(hour=16, minute=1))
+    assert len(w.sent[EVENING]) == 1
+    # Midnight: the provider is on duty again, and has it already.
+    await tick(w, NOW.replace(hour=23, minute=59) + timedelta(minutes=2))
+    assert len(w.sent[OWNER]) == 1
+
+
+async def test_a_request_that_changes_while_it_is_handed_over_is_left_where_it_was(shift_world, monkeypatch):
+    w = shift_world
+    w.clock["now"] = NOW.replace(hour=15, minute=50)
+    await customer(w, "at 18?", book("2030-03-04T18:00"))
+    b = await only_booking(w)
+    send = w.app.send_as_me
+
+    async def meanwhile(chat_id, text, **kw):
+        if chat_id == EVENING:
+            # His time changes while the handed request is on its way.
+            hour = timedelta(hours=1)
+            await w.store.set_fields(b["id"], starts_at=b["starts_at"] + hour, ends_at=b["ends_at"] + hour,
+                                     blocked_until=b["blocked_until"] + hour)
+        return await send(chat_id, text, **kw)
+
+    monkeypatch.setattr(w.app, "send_as_me", meanwhile)
+    await tick(w, NOW.replace(hour=16, minute=1))
+    assert len(w.sent[EVENING]) == 1
+    after = await only_booking(w)
+    assert after["provider_chat_id"] == OWNER and after["provider_message_id"] == b["provider_message_id"]
+    notes = [m["text"] for m in await w.db.get_messages(CUSTOMER)]
+    assert not any("the booker's shift changed" in text for text in notes)
+
+
+async def test_a_shift_booker_who_cannot_be_found_leaves_it_to_the_provider(shift_world):
+    w = shift_world
+    w.app.config["booking"]["shifts"][0]["provider"] = "@nobody"
+    w.clock["now"] = NOW.replace(hour=17)
+    await customer(w, "at 19?", book("2030-03-04T19:00"))
+    assert "Booking request #1" in w.sent[OWNER][0]
+    w.app.config["booking"]["provider"] = ""
+    await customer(w, "at 21?", book("2030-03-04T21:00"), chat=43)
+    errors = [m["text"] for m in await w.db.get_messages(43)]
+    assert any("the booker on shift now (booking.shifts) cannot be found" in text for text in errors)

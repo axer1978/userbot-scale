@@ -193,6 +193,8 @@ TEXTS: dict[str, dict[str, str]] = {
     "ack_outcall_ready": {"en": "It's an outcall: send READY {n} when you're ready, and {who} is told to order the "
                                 "taxi."},
     "from_panel": {"en": "(from the panel)"},
+    # --- a request handed to the booker on duty (booking.shifts)
+    "handed_over": {"en": "⏳ Not answered on the shift before — passing it to you:"},
     # --- where an outcall's taxi steps stand
     "step_in_taxi": {"en": "in the taxi"},
     "step_taxi_link": {"en": "taxi link sent — send IN {n} when you're in"},
@@ -365,6 +367,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "ack_outcall_ready": ("Это выезд: напиши ГОТОВА {n}, когда будешь готова, и {who} получит просьбу "
                               "заказать такси."),
         "from_panel": "(из панели)",
+        "handed_over": "⏳ Прошлая смена не ответила — передаю тебе:",
         "step_in_taxi": "в такси",
         "step_taxi_link": "ссылка на такси пришла — напиши В ТАКСИ {n}, когда сядешь",
         "step_proof_came": "его фото пришло — ждём ссылку на такси",
@@ -517,6 +520,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "ack_outcall_ready": ("Tas ir izbraukums: sūti GATAVA {n}, kad esi gatava, un {who} tiks palūgts pasūtīt "
                               "taksi."),
         "from_panel": "(no paneļa)",
+        "handed_over": "⏳ Iepriekšējā maiņa neatbildēja — nododu tev:",
         "step_in_taxi": "taksī",
         "step_taxi_link": "taksi saite atsūtīta — sūti TAKSĪ {n}, kad esi iekšā",
         "step_proof_came": "viņa foto ir atnācis — gaidām taksi saiti",
@@ -667,6 +671,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "ack_outcall_ready": ("Es una salida: envía READY {n} cuando estés lista y {who} recibirá el aviso de "
                               "pedir el taxi."),
         "from_panel": "(desde el panel)",
+        "handed_over": "⏳ El turno anterior no respondió — te lo paso:",
         "step_in_taxi": "en el taxi",
         "step_taxi_link": "llegó el enlace del taxi — envía TAXI {n} cuando estés dentro",
         "step_proof_came": "llegó su foto — esperando el enlace del taxi",

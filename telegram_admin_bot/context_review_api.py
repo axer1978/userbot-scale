@@ -250,15 +250,16 @@ async def _bundles(tenant_id: int, also: Sequence[int]) -> dict[int, tenants.Bun
 
 
 def _owner_chats(bundle: tenants.Bundle, provider_chats: set[int]) -> Callable[[Any], bool]:
-    """Whether a conversation is the booker's chat (booking commands, not a
-    client): one that requests went to, or booking.provider itself."""
-    owner_id, owner_name = examples.owner_chat(bundle.config["booking"].get("provider", ""))
+    """Whether a conversation is a booker's chat (booking commands, not a
+    client): one that requests went to, or a booker the settings name
+    (booking.provider, booking.shifts)."""
+    owner_ids, owner_names = examples.owner_chats(bundle.config["booking"])
     service = transport.TELEGRAM_SERVICE_ID if bundle.tenant.get("channel") != transport.WHATSAPP else None
 
     def is_owner(person: Any) -> bool:
         chat_id = person["chat_id"]
-        return (chat_id in provider_chats or chat_id == owner_id or chat_id == service
-                or (bool(owner_name) and (person["username"] or "").lower() == owner_name))
+        return (chat_id in provider_chats or chat_id in owner_ids or chat_id == service
+                or (person["username"] or "").lower() in owner_names)
     return is_owner
 
 

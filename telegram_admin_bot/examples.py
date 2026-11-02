@@ -74,6 +74,7 @@ import httpx
 
 import ai_responder
 import audit
+import booker_shifts
 import booking_states as bs
 import embeddings
 import finetune
@@ -524,6 +525,19 @@ def owner_chat(provider: str) -> tuple[Optional[int], str]:
     return None, value.lstrip("@").lower()
 
 
+def owner_chats(booking: dict[str, Any]) -> tuple[list[int], list[str]]:
+    """Every booker the booking settings name (booking.provider and each
+    shift's, booker_shifts) as chat ids and usernames."""
+    ids, names = [], []
+    for value in booker_shifts.all_bookers(booking):
+        chat_id, name = owner_chat(value)
+        if chat_id is not None:
+            ids.append(chat_id)
+        elif name:
+            names.append(name)
+    return ids, names
+
+
 _CHATS = f"""
 SELECT c.chat_id, c.display_name, {wa_store.push_name_sql("c")} AS person_name, c.username, a.active_at,
        f.verdict, f.upto_message_id, f.corrections, f.outcome, f.client_kind
@@ -532,7 +546,7 @@ SELECT c.chat_id, c.display_name, {wa_store.push_name_sql("c")} AS person_name, 
  CROSS JOIN LATERAL (SELECT GREATEST(c.last_message_at, f.updated_at) AS active_at) a
  WHERE c.tenant_id = $1 AND NOT c.is_bot
    AND a.active_at <= $4 AND (a.active_at, c.chat_id) > ($2::timestamptz, $3::bigint)
-   AND NOT (c.chat_id = ANY($5::bigint[])) AND ($6 = '' OR lower(coalesce(c.username, '')) <> $6)
+   AND NOT (c.chat_id = ANY($5::bigint[])) AND NOT (lower(coalesce(c.username, '')) = ANY($6::text[]))
    AND (f.verdict IS NULL OR f.verdict <> 'bad')
    AND (f.verdict = 'good' OR EXISTS (
         SELECT 1 FROM messages m WHERE m.tenant_id = c.tenant_id AND m.chat_id = c.chat_id
@@ -661,7 +675,7 @@ async def ingest_account(pool: asyncpg.Pool, tenant_id: int, *, now: Optional[da
     industry_id = bundle.tenant["industry_id"]
     fixed = ai_responder.fixed_blocks(bundle.prompt.text, 1)
     booking = config.get("booking") or {}
-    owner_id, owner_name = owner_chat(booking.get("provider", ""))
+    owner_ids, owner_names = owner_chats(booking)
     mark = None if from_start else await _setting(pool, watermark_key(tenant_id))
     after_at = _when((mark or {}).get("through")) or _EPOCH
     after_chat = int((mark or {}).get("chat", _FIRST_CHAT))
@@ -671,8 +685,8 @@ async def ingest_account(pool: asyncpg.Pool, tenant_id: int, *, now: Optional[da
     async with pool.acquire() as con:
         owners = [r["provider_chat_id"] for r in await con.fetch(
             "SELECT DISTINCT provider_chat_id FROM bookings WHERE tenant_id = $1 AND provider_chat_id IS NOT NULL",
-            tenant_id)] + ([owner_id] if owner_id is not None else [])
-        chats = await con.fetch(_CHATS, tenant_id, after_at, after_chat, cutoff, owners, owner_name, max_chats)
+            tenant_id)] + owner_ids
+        chats = await con.fetch(_CHATS, tenant_id, after_at, after_chat, cutoff, owners, owner_names, max_chats)
         counts["chats"] = len(chats)
         chat_ids = [c["chat_id"] for c in chats]
         rows = await _chat_rows(con, tenant_id, chat_ids) if chats else {}
