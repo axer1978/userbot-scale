@@ -84,6 +84,7 @@ import llm_usage
 import media
 import pg
 import policy
+import repeats
 import scheduler
 import stylecard
 import tenant_config
@@ -137,6 +138,10 @@ BOT_SKIP = "the message only asks whether it is a bot"
 # ... and while a time they asked for waits for the owner, with
 # booking.quiet_until_answered on: the owner's answer is the reply.
 OWNER_SKIP = "their time waits for the owner's answer"
+# ... and for a message they keep sending, already answered
+# replies.max_same_answers times in the last day (repeats.py). Queued like
+# the others, so the operator sees the bot stopped.
+REPEAT_SKIP = "they sent the same message again, and it was already answered enough times"
 # In staging, a chat that is not a test chat gets this note at most once an
 # hour, so a busy chat's history isn't all notes.
 STAGING_NOTE = "Staging: not answered — not a test chat."
@@ -985,6 +990,43 @@ class SessionRuntime:
             return text
         return variation.vary_reply(text, settings, self.fixed_blocks(min_lines=1))
 
+    def avoids_repeats(self) -> bool:
+        """variation.avoid_repeats: a reply line already used is written again
+        in other words (repeats.py)."""
+        return bool((self.config.get("variation") or {}).get("avoid_repeats"))
+
+    async def lines_used_elsewhere(self, chat_id: int) -> list[str]:
+        """The bot's lines sent to variation.repeat_chats or more of the
+        account's other chats in the last variation.repeat_days days, most
+        used first. Never the prompt's blocks, the address or the way in
+        (those go out word for word on purpose), nor a fallback phrase (left
+        as it is, for the unanswered queue)."""
+        settings = self.config["variation"]
+        booking = self.config.get("booking") or {}
+        rows = await repeats.sent_elsewhere(self.pool, self.tenant_id, chat_id, settings["repeat_days"])
+        skip = [*self.fixed_blocks(min_lines=1), booking.get("address") or "",
+                booking.get("arrival_instructions") or "", *self.config["unanswered"]["fallback_phrases"]]
+        return [text for text, _ in repeats.overused(rows, settings["repeat_chats"], skip)]
+
+    def repeated_lines(self, text: str, history: list[dict[str, Any]], used_elsewhere: list[str]) -> list[str]:
+        """The reply's own lines this chat already had or that are overused
+        with other clients (repeats.repeated_lines); a fallback phrase never
+        counts."""
+        return repeats.repeated_lines(text, chat_keys=repeats.said_in_chat(history), used_elsewhere=used_elsewhere,
+                                      fixed=self.fixed_blocks(min_lines=1),
+                                      skip=self.config["unanswered"]["fallback_phrases"])
+
+    def vary_fresh(self, text: str, history: list[dict[str, Any]], used_elsewhere: list[str]) -> str:
+        """vary(), but a variation that swaps a phrase back into a line this
+        chat already had, or an overused one, is rolled again (up to three
+        times); if each one does, the reply goes out as the model wrote it."""
+        before = {repeats.key(line) for line in self.repeated_lines(text, history, used_elsewhere)}
+        for _ in range(3):
+            varied = self.vary(text)
+            if {repeats.key(line) for line in self.repeated_lines(varied, history, used_elsewhere)} <= before:
+                return varied
+        return text
+
     def staging_on(self) -> bool:
         return bool(self.config["staging"]["enabled"])
 
@@ -1779,7 +1821,7 @@ class SessionRuntime:
                 await self.queue_unanswered(chat_id, unanswered.SOFT_OFF, limit)
                 return
             if not note.has_news:
-                skip = await self.reply_skip_reason(chat_id, history)
+                skip = await self.reply_skip_reason(chat_id, history, sent_at)
                 if skip:
                     await self.skip_reply(chat_id, skip)
                     return
@@ -1800,8 +1842,11 @@ class SessionRuntime:
             # threesome or to see her: (their ids, the line for the reply).
             threesome = None if photos_only else await self.threesome_media(history)
             # The tenant's "when not to answer" instruction is only offered
-            # when there is nothing the reply must pass on.
-            no_reply = ("" if note.has_news or photos_only or threesome
+            # when there is no booking news to pass on, and never for a
+            # message that names a time or a day: whatever came before, that
+            # client gets his answer. (A reply it stops takes the threesome
+            # girl's files with it: a time-waster gets nothing.)
+            no_reply = ("" if note.has_news or photos_only or repeats.names_when_now(history)
                         else self.config["replies"]["no_reply_instruction"])
 
             media_note = self.media_prompt()
@@ -1820,6 +1865,11 @@ class SessionRuntime:
             # (config retrieval): the note, and the replies in it for the
             # copy guard below.
             shown = examples.NOTHING if photos_only else await examples.note_for(self, chat_id, history)
+            # The bot's own lines (variation.avoid_repeats): the ones it sent
+            # to many other chats lately are shown to the model before it
+            # writes, and checked again with this chat's after.
+            avoid = not photos_only and self.avoids_repeats()
+            used_elsewhere = await self.lines_used_elsewhere(chat_id) if avoid else []
 
             if photos_only:
                 text = "\n".join(f"[send {item['id']}]" for item in photos_only[:media.MAX_ATTACHMENTS_PER_REPLY])
@@ -1842,6 +1892,7 @@ class SessionRuntime:
                     no_reply_instruction=no_reply,
                     style_note=self.style_note,
                     clock=ai_responder.Clock(now=self.local_now(), sent_at=sent_at, zone=self.config["timezone"]),
+                    avoid_lines=repeats.shown(used_elsewhere),
                 )
                 async with self.ai_gate():
                     text = await ai_responder.generate_reply(
@@ -1855,6 +1906,19 @@ class SessionRuntime:
                                  self.session_id, ", ".join(f"#{i}" for i in shown.ids))
                         text = await ai_responder.generate_reply(**reply_args,
                                                                  usage_sink=self.usage_sink("reply_rewrite"))
+                    # The repeat guard (variation.avoid_repeats): a line this
+                    # chat already had, or one sent to many other clients, is
+                    # written once more in other words, without the examples
+                    # (new words must not be an example's). Whatever the
+                    # second try says goes on as it is.
+                    again = [] if not avoid or ai_responder.is_no_reply(text) else self.repeated_lines(
+                        text, history, used_elsewhere)
+                    if again:
+                        log.info("[%s]   the reply repeats %d line(s) already used; writing it again in other "
+                                 "words.", self.session_id, len(again))
+                        text = await ai_responder.generate_reply(
+                            **{**reply_args, "avoid_lines": repeats.shown([*again, *used_elsewhere])},
+                            usage_sink=self.usage_sink("reply_rewrite"))
 
             if no_reply and ai_responder.is_no_reply(text):
                 await self.skip_reply(chat_id, "the no-reply instruction applies to this message")
@@ -1870,7 +1934,7 @@ class SessionRuntime:
             fallback = self.fallback_phrase(text)
             # Before the policy check and the draft: what goes out (or waits
             # for approval) is the varied text. The address is a block by now.
-            text = self.vary(text)
+            text = self.vary_fresh(text, history, used_elsewhere) if avoid else self.vary(text)
             # Only what the AI was offered: never an arrival item (the way
             # in), never the threesome girl's (the system sends hers).
             attachments = [i for i in attachments
@@ -1993,8 +2057,11 @@ class SessionRuntime:
         log.info("[%s]   quiet hours: the reply to chat %s waits %.0f min.", self.session_id, chat_id, seconds / 60)
         await self.hub.broadcast({"type": "drafting", "chat_id": chat_id, "delay_seconds": round(seconds, 1)})
 
-    async def reply_skip_reason(self, chat_id: int, history: list[dict[str, str]]) -> str:
-        """Why this message should get no reply (replies.* in the config), or ""."""
+    async def reply_skip_reason(self, chat_id: int, history: list[dict[str, str]],
+                                sent_at: tuple[Optional[datetime], ...] = ()) -> str:
+        """Why this message should get no reply (replies.* in the config), or "".
+        `sent_at` says when each history message was stored (the window of
+        replies.max_same_answers)."""
         replies = self.config["replies"]
         if self.flow.answered_by_way_in(chat_id):
             return WAY_IN_SKIP
@@ -2004,6 +2071,9 @@ class SessionRuntime:
             return ACK_SKIP
         if replies["skip_bot_questions"] and ai_limits.bot_question_only(history):
             return BOT_SKIP
+        if repeats.repeated_ask(history, sent_at, self.utcnow(), replies.get("max_same_answers", 0),
+                                replies["acknowledgements"]):
+            return REPEAT_SKIP
         return await ai_limits.reply_limit(self.pool, self.tenant_id, chat_id, replies)
 
     async def skip_reply(self, chat_id: int, reason: str) -> None:

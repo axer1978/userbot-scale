@@ -106,6 +106,12 @@ async def _live_sections(industry: dict[str, Any]) -> dict[str, str]:
     return live["content"].get("sections") or {}
 
 
+def _against(current: dict[str, str]) -> Callable[[str], dict[str, Any]]:
+    """A run's answer read against the standard it was given: a section
+    the answer leaves out keeps its text (finetune.parse_output)."""
+    return lambda raw: finetune.parse_output(raw, current_sections=current)
+
+
 def _run(row: Any, *, full: bool = True) -> dict[str, Any]:
     run = {
         "id": row["id"], "tenant_id": row["tenant_id"], "industry_id": row["industry_id"],
@@ -261,12 +267,13 @@ async def api_start(body: RunBody) -> dict[str, Any]:
             images.append((shot.name, base64.b64decode(shot.data, validate=True)))
         except (binascii.Error, ValueError):
             raise HTTPException(status_code=400, detail=f"{shot.name} did not arrive intact.") from None
+    current = await _live_sections(industry)
     try:
         images = finetune.check_images(images)
         prompt = finetune.fill_template(
             template, business_name=bundle.tenant["name"],
             businesses_so_far=await businesses_so_far(industry["id"]),
-            industry_sections=await _live_sections(industry),
+            industry_sections=current,
         )
     except finetune.FinetuneError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -275,6 +282,7 @@ async def api_start(body: RunBody) -> dict[str, Any]:
         body.tenant_id, industry, model=model, source="screenshots", files=[name for name, _ in images],
         call=lambda meter: finetune.complete(prompt, images, api_url=api_url, api_key=api_key, model=model,
                                              usage_sink=meter),
+        parse=_against(current),
     )
 
 
@@ -302,12 +310,13 @@ async def api_start_text(body: TextRunBody) -> dict[str, Any]:
     api_key = platform_api.platform_key()
     if not api_key:
         raise HTTPException(status_code=400, detail="DEEPSEEK_PLATFORM_KEY must be set in .env to read transcripts.")
+    current = await _live_sections(industry)
     try:
         chats = finetune.check_chats([(c.name, c.text) for c in body.chats])
         prompt = finetune.fill_template(
             template, business_name=bundle.tenant["name"],
             businesses_so_far=await businesses_so_far(industry["id"]),
-            industry_sections=await _live_sections(industry),
+            industry_sections=current,
         )
     except finetune.FinetuneError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -315,6 +324,7 @@ async def api_start_text(body: TextRunBody) -> dict[str, Any]:
     return await _launch(
         body.tenant_id, industry, model=model, source="text", files=[name for name, _ in chats],
         call=lambda meter: finetune.complete_text(prompt, chats, api_key=api_key, model=model, usage_sink=meter),
+        parse=_against(current),
     )
 
 
@@ -662,12 +672,13 @@ async def api_start_examples(body: ExampleRunBody) -> dict[str, Any]:
             except HTTPException:
                 raise HTTPException(status_code=400, detail=f"The chat flagged as {name} is gone (its account was "
                                                             "removed). Remove the flag and start again.") from None
+    current = await _live_sections(industry)
     try:
         chats = finetune.check_chats(chats)
         prompt = finetune.fill_template(
             template, business_name=bundle.tenant["name"],
             businesses_so_far=await businesses_so_far(industry["id"]),
-            industry_sections=await _live_sections(industry),
+            industry_sections=current,
         )
     except finetune.FinetuneError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -676,6 +687,7 @@ async def api_start_examples(body: ExampleRunBody) -> dict[str, Any]:
         body.tenant_id, industry, model=model, source="examples", files=[name for name, _ in chats],
         call=lambda meter: finetune.complete_text(prompt, chats, api_key=api_key, model=model, flagged=True,
                                                   usage_sink=meter),
+        parse=_against(current),
     )
     await pool.execute("UPDATE finetune_examples SET last_run_id = $1 WHERE id = ANY($2::bigint[])",
                        run["id"], wanted)
@@ -815,12 +827,13 @@ async def api_start_hand(body: HandRunBody) -> dict[str, Any]:
     if not chosen:
         raise HTTPException(status_code=400, detail="No chats with replies typed by hand yet: answer some clients "
                                                     "yourself on the phone or from the panel first.")
+    current = await _live_sections(industry)
     try:
         chats = finetune.check_chats([(c["name"], c["text"]) for c in chosen])
         prompt = finetune.fill_template(
             template, business_name=bundle.tenant["name"],
             businesses_so_far=await businesses_so_far(industry["id"]),
-            industry_sections=await _live_sections(industry),
+            industry_sections=current,
         )
     except finetune.FinetuneError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -829,6 +842,7 @@ async def api_start_hand(body: HandRunBody) -> dict[str, Any]:
         body.tenant_id, industry, model=model, source="hand", files=[name for name, _ in chats],
         call=lambda meter: finetune.complete_text(prompt, chats, api_key=api_key, model=model, hand=True,
                                                   usage_sink=meter),
+        parse=_against(current),
     )
 
 

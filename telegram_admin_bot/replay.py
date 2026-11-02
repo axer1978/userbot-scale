@@ -42,6 +42,10 @@ and per step, optionally:
     "threesome":  true: the threesome girl's photo or video goes with this
                   reply; false: none of hers does (in a file with
                   "threesome_girl": true)
+    "quiet":      true: no reply at all (the model answers [NO_REPLY] under
+                  replies.no_reply_instruction, or the same message came
+                  again after replies.max_same_answers answers); false: a
+                  reply goes out
 
 A scenario with "outcall": true is an outcall from the start (else it
 becomes one when the extractor reads the request as one, or at a taxi step).
@@ -109,6 +113,7 @@ import media
 import pg
 import policy
 import prompt_layers
+import repeats
 import tenant_config
 import tenants
 
@@ -528,6 +533,16 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
             result.turns.append({"said": step.get("customer", ""), "reply": [], "auto": [], "failed": failed,
                                  "skipped": "bot question"})
             continue
+        if (not (state or "").endswith("_news")
+                and repeats.repeated_ask(history, (), now, ctx.config["replies"].get("max_same_answers", 0),
+                                         ctx.config["replies"]["acknowledgements"])):
+            # As in the runtime: the same message again, after it was
+            # answered replies.max_same_answers times, is not answered.
+            if step.get("quiet") is False:
+                failed.append("not answered: read as the same message again")
+            result.turns.append({"said": step.get("customer", ""), "reply": [], "auto": [], "failed": failed,
+                                 "skipped": "the same message again"})
+            continue
         # As in the runtime: the greeting files go with the first reply.
         greeting = ([item for item in library if item.get("greeting")]
                     if library_note and not any(m["role"] == "assistant" for m in history) else [])
@@ -541,7 +556,11 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
                 threesome, threesome_line = picked, media.threesome_line(picked, show)
         media_note = "\n".join(filter(None, [library_note, library_note and media.sent_line(library, history),
                                              greeting and media.greeting_line(greeting), threesome_line]))
-        text = await ai_responder.generate_reply(
+        # As in the runtime: the "when not to reply" instruction, never with
+        # news to pass on or for a time or a day he names.
+        no_reply = ("" if (state or "").endswith("_news") or repeats.names_when_now(history)
+                    else ctx.config["replies"].get("no_reply_instruction", ""))
+        reply_args = dict(
             api_key=ctx.key, history=[dict(m) for m in history], persona={}, ai_config=ctx.config["ai"],
             client=ctx.http, adaptive_style=ctx.config["human"]["adaptive_style"],
             booking_note=booking_note(state, now, ctx.tz, start,
@@ -552,7 +571,25 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
             system_prompt=ctx.prompt.text,
             media_note=media_note,
             language_locked=ctx.config["language_policy"] != "mirror", burst_max=burst["max_messages"],
-            burst_keep_together=burst.get("keep_together", True))
+            burst_keep_together=burst.get("keep_together", True),
+            no_reply_instruction=no_reply)
+        text = await ai_responder.generate_reply(**reply_args)
+        if no_reply and ai_responder.is_no_reply(text):
+            if step.get("quiet") is False:
+                failed.append("stayed quiet ([NO_REPLY]) but should have answered")
+            result.turns.append({"said": step.get("customer", ""), "reply": [], "auto": [], "failed": failed,
+                                 "skipped": "no reply"})
+            continue
+        if step.get("quiet") is True:
+            failed.append("answered, but should have stayed quiet")
+        # As in the runtime (variation.avoid_repeats): a line this chat
+        # already had is written once more in other words. (Lines sent to
+        # other chats are not replayed: there are none here.)
+        if ctx.config["variation"].get("avoid_repeats") and not ai_responder.is_no_reply(text) and (
+                again := repeats.repeated_lines(text, chat_keys=repeats.said_in_chat(history), used_elsewhere=[],
+                                                fixed=ai_responder.fixed_blocks(ctx.prompt.text, 1),
+                                                skip=ctx.config["unanswered"]["fallback_phrases"])):
+            text = await ai_responder.generate_reply(**{**reply_args, "avoid_lines": repeats.shown(again)})
         known = {item["id"]: item for item in library}
         text, ids = media.split_attachments(ai_responder.without_no_reply(text))
         system = [*greeting, *threesome]

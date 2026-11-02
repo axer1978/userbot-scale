@@ -130,6 +130,17 @@ class Variation(_Strict):
         "Chance that the full stop, ! or ? at the end of a message is left out."))
     merge_messages: float = Field(0.25, ge=0, le=1, description=(
         "Chance that two short messages in a row go out as one."))
+    # repeats.py; a switch of its own, on whether or not `enabled` is.
+    avoid_repeats: bool = Field(True, description=(
+        "Before a reply goes out, compare its lines with what was already said in this chat and with what "
+        "the bot sent other clients lately; a line already used is written again in other words (one more "
+        "AI call). The lines used most lately are shown to the AI before it writes. Rates, extras, the "
+        "address, other [block] messages and lines under 4 words don't count."))
+    repeat_chats: int = Field(3, ge=1, le=100, description=(
+        "A line counts as overused once the bot has sent it to this many other chats in the last "
+        "repeat_days days."))
+    repeat_days: int = Field(7, ge=1, le=60, description=(
+        "How many days back the bot's lines to other chats are counted."))
 
     @field_validator("emoji_families", "phrases")
     @classmethod
@@ -427,9 +438,16 @@ class Replies(_Strict):
     # talking to a bot, an AI or a real person (ai_limits.is_bot_question):
     # no answer and no tokens. Their first message still gets the first reply.
     skip_bot_questions: bool = False
+    # A client who keeps sending the same message (repeats.py): once it has
+    # been answered this many times in the last 24 hours, it gets no reply
+    # any more (noted in the chat, queued as unanswered). Anything new he
+    # writes is answered as usual; never stopped: a time or a day, "I'm
+    # here", "where are you", a photo, one word ("yes", "ok"). 0 = no limit.
+    max_same_answers: int = Field(3, ge=0, le=50)
     # When the bot should not answer, in your own words. Empty = it always
     # answers. When set, the reply writer may decline to answer a message
-    # that matches; each time is noted in the chat and in the audit log.
+    # that matches; each time is noted in the chat and in the audit log. It
+    # is not offered for a message that names a time: that one is answered.
     no_reply_instruction: str = Field("", max_length=2000)
 
 

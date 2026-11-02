@@ -206,10 +206,11 @@ def test_the_fixed_messages_a_reply_sent_are_found_whole_or_nearly():
     assert replay.details_sent(["yes love I can, domination +50 so 1 hour is 250"], PROMPT) == []
 
 
-async def _replay(monkeypatch, tmp_path, steps, replies, **file_flow):
+async def _replay(monkeypatch, tmp_path, steps, replies, *, config_replies=None, **file_flow):
 
     config = tenant_config.resolve().config.model_dump(mode="json")
     config["booking"]["address"] = ADDRESS
+    config["replies"].update(config_replies or {})
     script, seen = iter(replies), []
 
     async def fake_reply(**kw):
@@ -296,3 +297,44 @@ async def test_the_threesome_girl_goes_with_the_reply_as_in_the_runtime(monkeypa
 async def test_the_old_flow_still_wants_the_address_in_the_first_reply(monkeypatch, tmp_path):
     result, _ = await _replay(monkeypatch, tmp_path, [{"customer": "hi"}], ["hi love 😘 what time?"])
     assert "the address was not sent with the prices in the first reply" in result.turns[0]["failed"]
+
+
+def test_the_flirting_chats_load_with_the_new_flow():
+    [*chats] = replay.load(replay.SCENARIO_DIR / "flirt-and-dodge.json")["scenarios"]
+    assert len(chats) >= 15
+    assert all(s["greeting_video"] and not s["first_reply_address"] for s in chats)
+    assert any(step.get("quiet") is True for s in chats for step in s["steps"])
+
+
+@pytest.mark.asyncio
+async def test_staying_quiet_is_checked_both_ways_as_in_the_runtime(monkeypatch, tmp_path):
+    steps = [{"customer": "hi"}, {"customer": "why not?", "quiet": True}, {"customer": "hello?", "quiet": False},
+             {"customer": "ok at 21?", "quiet": False}]
+    result, seen = await _replay(monkeypatch, tmp_path, steps,
+                                 ["hi love 😘 when?", "[NO_REPLY]", "[NO_REPLY]", "ok love 😘"],
+                                 config_replies={"no_reply_instruction": "He is a time-waster."},
+                                 first_reply_address=False)
+    first, quiet, wrong, timed = result.turns
+    assert quiet["skipped"] == "no reply" and quiet["failed"] == [] and quiet["reply"] == []
+    assert wrong["failed"] == ["stayed quiet ([NO_REPLY]) but should have answered"]
+    # A time he names is always answered: the instruction is not offered.
+    assert [kw["no_reply_instruction"] for kw in seen] == ["He is a time-waster."] * 3 + [""]
+    assert timed["failed"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_same_message_after_three_answers_is_not_replayed(monkeypatch, tmp_path):
+    steps = [{"customer": "send video"}] * 3 + [{"customer": "send video", "quiet": True}]
+    result, seen = await _replay(monkeypatch, tmp_path, steps, ["no love 😘", "you'll see me", "come and see"],
+                                 first_reply_address=False)
+    assert result.turns[-1]["skipped"] == "the same message again" and result.turns[-1]["failed"] == []
+    assert len(seen) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_line_the_chat_already_had_is_written_again_as_in_the_runtime(monkeypatch, tmp_path):
+    result, seen = await _replay(monkeypatch, tmp_path, [{"customer": "hi"}, {"customer": "domination?"}],
+                                 ["hi love what time do you want to come?", "yes +50\nwhat time do you want to come?",
+                                  "yes +50\nso when are you coming babe?"], first_reply_address=False)
+    assert seen[2]["avoid_lines"] == ["what time do you want to come?"]
+    assert result.turns[1]["reply"] == ["yes +50", "so when are you coming babe?"]

@@ -646,10 +646,16 @@ def check_industry_sections(sections: Any) -> dict[str, str]:
     return clean
 
 
-def parse_output(text: str) -> dict[str, Any]:
+def parse_output(text: str, current_sections: Optional[dict[str, str]] = None) -> dict[str, Any]:
     """What the run proposes, plus every problem found. A block that parses
     but does not validate is still returned, so the admin can fix it by
-    hand instead of paying for another run."""
+    hand instead of paying for another run.
+
+    `current_sections` is the industry standard the run was given: a
+    section the answer leaves out keeps that text. A whole standard does
+    not fit in one answer any more (the model's output is cut off near
+    30,000 characters), so a template may ask for the changed sections
+    only."""
     blocks = split_blocks(text)
     errors: list[str] = []
     business: Optional[dict[str, Any]] = None
@@ -670,6 +676,8 @@ def parse_output(text: str) -> dict[str, Any]:
         try:
             parsed = _json_object(blocks["industry"], "industry standard")
             industry = parsed.get("sections", parsed)
+            if current_sections and isinstance(industry, dict):
+                industry = {**current_sections, **industry}
             industry = check_industry_sections(industry)
         except FinetuneError as exc:
             errors.append(str(exc))
