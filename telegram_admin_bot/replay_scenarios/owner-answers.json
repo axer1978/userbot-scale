@@ -336,6 +336,14 @@
      "expect": "yes 3", "tell": {"3": [["efectivo", "cash"]]}},
     {"id": "es-pair-quoted-tell-the-other", "bookings": "pair", "reply_to": 3,
      "latest": "sí. al otro dile que llego 10 min tarde", "expect": ["yes 3 + unclear -", "yes 3 + none 4"],
-     "words": {"3": false}, "tell": ["10"]}
+     "words": {"3": false}, "tell": ["10"]},
+    {"id": "en-context-which-by-name", "bookings": "pair", "latest": "Marco", "chat": [{"them": "yes"}, {"me_which": [3, 4]}], "expect": "yes 4"},
+    {"id": "en-context-which-by-time", "bookings": "pair", "latest": "the 21:00 one", "chat": [{"them": "yes"}, {"me_which": [3, 4]}], "expect": "yes 3"},
+    {"id": "lv-context-which-by-name", "bookings": "pair", "latest": "Khan", "chat": [{"them": "jā"}, {"me_which": [3, 4]}], "expect": "yes 3"},
+    {"id": "en-later-bare", "bookings": "one", "latest": "later", "expect": "unclear 8"},
+    {"id": "en-later-with-time", "bookings": "one", "latest": "later, 15:00", "expect": "propose 8 15:00"},
+    {"id": "ru-later-bare", "bookings": "one", "latest": "позже", "expect": "unclear 8"},
+    {"id": "lv-later-bare", "bookings": "one", "latest": "vēlāk", "expect": "unclear 8"},
+    {"id": "es-later-bare", "bookings": "one", "latest": "más tarde", "expect": "unclear 8"}
   ]
 }

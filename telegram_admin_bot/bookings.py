@@ -110,7 +110,7 @@ def describe_until(starts_at: datetime, now: datetime) -> str:
 # (when_for, span_for, ...); describe_when and the others stay English for
 # the model and the panel.
 
-# The commands line of a request, in English ({n}: the booking number).
+# The question that ends a request, in English (with her own words read).
 ANSWER_HELP = booker_texts.TEXTS["answer_help"]["en"]
 
 
@@ -176,7 +176,7 @@ def _blanks(booking: Mapping[str, Any], t: booker_texts.Texts, *, name: str = ""
     }
 
 
-def format_request(booking: Mapping[str, Any], *, changed: bool = False, name: str = "",
+def format_request(booking: Mapping[str, Any], *, changed: bool = False, name: str = "", forms: bool = False,
                    t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """A new request, or one whose time the customer changed before you
     answered: who asks, for whom (her name, else the account's), the extras
@@ -187,14 +187,14 @@ def format_request(booking: Mapping[str, Any], *, changed: bool = False, name: s
         changed=t.say("request_new_time") if changed else "",
         extras=booking.get("extras") or t.say("request_no_extras"),
         service=booking.get("service") or "", notes=booking.get("notes") or "",
-        commands=t.say("answer_help", n=n))
+        commands=t.say("answer_forms" if forms else "answer_help", n=n))
 
 
-def format_move_request(booking: Mapping[str, Any], *, name: str = "",
+def format_move_request(booking: Mapping[str, Any], *, name: str = "", forms: bool = False,
                         t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
     """The customer asks to move a confirmed booking."""
     return t.template("move_request", **_blanks(booking, t, name=name), to=proposal_for(booking, t),
-                      commands=t.say("move_commands", n=booking["number"]))
+                      commands=t.say("move_forms" if forms else "move_commands", n=booking["number"]))
 
 
 def format_owner_update(booking: Mapping[str, Any], what: str, *, name: str = "",
@@ -596,8 +596,9 @@ OWNER_ANSWER_SYSTEM_PROMPT = (
     "minutes', 'give me half an hour', 'I can meet in 1 hour', 'free after 15:00', 'yes but in 40 "
     "min'. A delay goes in in_minutes (counted from their latest message), a clock time in start.\n"
     "- time: they put forward a different meeting time: 'can he come at 15:30?', 'tomorrow 12:00 "
-    "instead', 'better at 8', 'not today, tomorrow any time after 2' (the earliest time they name "
-    "goes in start: tomorrow 14:00).\n"
+    "instead', 'better at 8', 'later, 22:00', 'not today, tomorrow any time after 2' (the earliest "
+    "time they name goes in start: tomorrow 14:00). A bare 'later' ('позже', 'vēlāk', 'más "
+    "tarde') without a time is time with start null: I will ask them which time.\n"
     "- cancel: they call off a booking that is already confirmed.\n"
     "- done / noshow: after the meeting: it happened / the customer did not come.\n"
     "- ready: an outcall, and they are ready to leave NOW ('I'm ready', 'ready, he can order the "
@@ -1415,7 +1416,7 @@ def format_which_one(rows: Sequence[Mapping[str, Any]], cmd: Optional[OwnerComma
     it, `cmd`, repeated.)"""
     if not rows:
         return t.say("which_about") + _held(cmd, t)
-    named = [f"#{b['number']} {b.get('customer_name') or t.say('unknown')}, {_short_when(b, t)}" for b in rows]
+    named = [f"{b.get('customer_name') or t.say('unknown')}, {_short_when(b, t)}" for b in rows]
     listed = named[0] if len(named) == 1 else t.say("or_last", items=", ".join(named[:-1]), last=named[-1])
     return t.say("which_one", listed=listed) + _held(cmd, t)
 
@@ -1582,19 +1583,16 @@ def refused_extras_line(extras: Sequence[str]) -> str:
 
 # ------------------------------------------------------- the customer's side
 
-REMINDER_YES = {"1", "1.", "yes", "jā", "да", "👍", "✅"}
-REMINDER_NO = {"2", "2."}
+REMINDER_YES = {"yes", "jā", "да", "👍", "✅"}
 
 
 def reminder_answer(text: str) -> Optional[str]:
-    """A bare 1 / 2 after a reminder: 'confirm' or 'cancel'. Anything else
-    goes through the normal extraction."""
+    """A bare yes after a reminder ("still coming?"): 'confirm'. Anything
+    else (no, later, another time, a number: "2" may be minutes) goes
+    through the normal extraction, which reads a cancel or a new time in
+    his own words."""
     word = (text or "").strip().lower()
-    if word in REMINDER_YES:
-        return "confirm"
-    if word in REMINDER_NO:
-        return "cancel"
-    return None
+    return "confirm" if word in REMINDER_YES else None
 
 
 EXTRACT_SYSTEM_PROMPT = (
@@ -1739,9 +1737,15 @@ def requested_slot(
 
 # ----------------------------------------------- what the reply writer knows
 
+# How the notes are put to the customer: plain words, the way a person
+# texts, never the language of a booking system.
+PLAIN_WORDS = ("Talk about it the way a person texts: never the words confirmed, booked, booking, appointment "
+               "or reservation.")
+
+
 def own_name_line(name: str) -> str:
     """booking.name, for the customer: who they are meeting."""
-    return (f"Your name is {name}. Tell them once when you tell them an appointment is confirmed, and again "
+    return (f"Your name is {name}. Tell them once when you tell them yes to their time, and again "
             "when they say they have arrived, so they know who they are meeting.")
 
 
@@ -1751,31 +1755,54 @@ NO_DIRECTIONS_RULE = (
 )
 
 _NOTICE_TEXT = {
-    bs.NOTICE_CONFIRMED: "the appointment on {when} has just been CONFIRMED. Tell them it is booked, restating the day and time.",
-    bs.NOTICE_DECLINED: "the appointment on {when} is NOT available after all. Say so politely and ask what other day or time would suit them.",
+    bs.NOTICE_CONFIRMED: ("the business said YES to {when}. Tell them in plain, warm words that they can come then, "
+                          "with the time ('yes, come at {clock}'). " + PLAIN_WORDS),
+    bs.NOTICE_DECLINED: ("the time they asked for ({when}) does not work after all. Say so in plain words and ask "
+                         "what other day or time would suit them."),
     bs.NOTICE_PROPOSED: "the requested time does not work; the business proposes {proposal} instead. Ask whether that suits them.",
-    bs.NOTICE_RESCHEDULED: "the appointment has been MOVED; it is now on {when}. Tell them, restating the new day and time.",
-    bs.NOTICE_CANCELLED: "the appointment on {when} has been CANCELLED. Tell them so.",
-    bs.NOTICE_EXPIRED: "the request for {when} could not be confirmed in time and has lapsed. Apologise briefly and offer to find another time.",
-    bs.NOTICE_REQUESTED: "their request for {when} has been passed on; it is NOT confirmed yet. Say you will confirm it in a moment.",
-    bs.NOTICE_KEPT: "the appointment could not be moved; it stays on {when}. Tell them so.",
-    bs.NOTICE_LENGTH: "the appointment now lasts a different time: it is {when}. Tell them, restating when it starts and ends.",
+    bs.NOTICE_RESCHEDULED: ("the time is now {when}: the business said YES to it. Tell them in plain words to come "
+                            "then, with the new day and time. " + PLAIN_WORDS),
+    bs.NOTICE_CANCELLED: "the meeting on {when} is off. Tell them so in plain words. " + PLAIN_WORDS,
+    bs.NOTICE_EXPIRED: ("no answer came in time for {when}, so that time is off. Say sorry, it doesn't work after "
+                        "all, and ask what other time would suit them."),
+    bs.NOTICE_KEPT: "the time could not be moved; it stays {when}. Tell them so in plain words.",
+    bs.NOTICE_LENGTH: "the meeting now lasts a different time: it is {when}. Tell them when it starts and ends.",
 }
 
 
 def quiet_request_line(booking: Mapping[str, Any]) -> str:
     """The request notice when the business answers before anything else
     is said (booking.quiet_until_answered)."""
-    return (f"Their request for {describe_when(booking)} has gone to the business and is NOT confirmed. "
-            "Say nothing about that time now: the answer comes in a later message.")
+    return (f"Their time ({describe_when(booking)}) has gone to the business, with no answer yet. "
+            "Say nothing about that time now, and never that you will check, ask or confirm it: the answer "
+            "comes in a later message.")
+
+
+def waiting_line(booking: Mapping[str, Any]) -> str:
+    """Their time has just gone to the business (booking.quiet_until_answered
+    off). Not news: nothing about that time is said until the answer comes."""
+    return (f"Their time ({describe_when(booking)}) has gone to the business, with no answer yet. This is not "
+            "news to pass on: say nothing about that time, no yes, no no, and never that you will check, ask "
+            "or confirm it. Answer only the rest of their message; if there is nothing else in it, one short "
+            "warm line that is not about the time.")
 
 
 def notice_line(booking: Mapping[str, Any]) -> str:
-    template = _NOTICE_TEXT.get(booking.get("customer_notice") or "")
+    notice = booking.get("customer_notice") or ""
+    if notice == bs.NOTICE_REQUESTED:
+        return waiting_line(booking)
+    template = _NOTICE_TEXT.get(notice)
     if not template:
         return ""
     proposal = describe_proposal(booking) if booking.get("proposed_starts_at") else ""
-    return "NEWS TO PASS ON IN THIS REPLY: " + template.format(when=describe_when(booking), proposal=proposal)
+    return "NEWS TO PASS ON IN THIS REPLY: " + template.format(when=describe_when(booking), proposal=proposal,
+                                                              clock=_clock(booking))
+
+
+def _clock(booking: Mapping[str, Any]) -> str:
+    """'21:00': when it starts, in the booking's zone (the examples in the
+    lines to the reply writer use its own time, never one it could copy)."""
+    return f"{booking['starts_at'].astimezone(tzinfo_for(booking['tz'])):%H:%M}"
 
 
 def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False, proof: bool = False,
@@ -1784,16 +1811,18 @@ def standing_line(booking: Mapping[str, Any], *, outcall_taxi: bool = False, pro
     state = booking["state"]
     if state in (bs.REQUESTED, bs.PENDING):
         if booking.get("proposed_by") == bs.OWNER:
-            return (f"The business proposed {describe_proposal(booking)} instead of {when}; waiting for "
-                    "their answer. Do NOT say anything is confirmed.")
-        return (f"An appointment on {when} has been requested and is waiting for confirmation. Do NOT "
-                "say it is confirmed or booked. If they ask, say you will confirm it in a moment.")
+            return (f"The business offered {describe_proposal(booking)} instead of {when}; waiting for "
+                    "their answer. Do not say yes to any time yourself.")
+        return (f"They asked for {when}; the business has not answered yet. Say nothing about that time: no "
+                "yes, no no, never that you will check, ask or confirm it. If they ask about it, a few warm "
+                "words without an answer.")
     if state == bs.CONFIRMED:
-        line = f"The appointment on {when} is confirmed."
+        line = f"The business said yes to {when}: they come then."
         if booking.get("proposed_by") == bs.CUSTOMER:
-            line += f" They asked to move it to {describe_proposal(booking)}; that is NOT confirmed yet."
+            line += (f" They asked to move it to {describe_proposal(booking)}; the business has not answered "
+                     "that yet.")
         elif booking.get("proposed_by") == bs.OWNER:
-            line += f" The business proposed moving it to {describe_proposal(booking)}; waiting for their answer."
+            line += f" The business offered to move it to {describe_proposal(booking)}; waiting for their answer."
         if outcall_taxi and is_outcall(booking):
             return line + " " + outcall_taxi_line(booking, proof=proof)
         if booking.get("instructions_sent_at"):
@@ -1814,12 +1843,12 @@ def unavailable_line(requested: datetime, reason: str, alternatives: Sequence[da
     why = {
         "past": "that time has already passed",
         "too_soon": "that is too short notice",
-        "too_far": "that is too far ahead to book yet",
+        "too_far": "that is too far ahead yet",
         "closed_day": "the business is closed that day",
         "outside_hours": "that is outside opening hours",
         "conflict": "that time is already taken",
     }.get(reason, "that time is not available")
-    line = f"NEWS TO PASS ON IN THIS REPLY: they asked for {when}, but {why}. It is NOT booked."
+    line = f"NEWS TO PASS ON IN THIS REPLY: they asked for {when}, but {why}. That time does not work."
     if alternatives:
         options = ", ".join(a.astimezone(zone).strftime("%a %d %b %H:%M") for a in alternatives)
         line += f" Offer these free times instead: {options}."
@@ -1830,9 +1859,11 @@ def unavailable_line(requested: datetime, reason: str, alternatives: Sequence[da
 
 def reminder_line(booking: Mapping[str, Any], instruction: str, now: datetime, page_url: str = "") -> str:
     when = describe_when(booking)
-    base = (instruction or "").strip() or "Ask, briefly and naturally, whether they are still coming."
-    line = (f"SEND NOW: their appointment on {when} is {describe_until(booking['starts_at'], now)}. "
-            f"{base} Say they can reply 1 to confirm or 2 to cancel.")
+    base = (instruction or "").strip() or "Ask in one short question whether they are still coming."
+    line = (f"SEND NOW: they are coming {describe_until(booking['starts_at'], now)} ({when}). {base} Ask "
+            f"it the way a person texts ('still coming at {_clock(booking)}?'): never a list of answers to "
+            "choose from, "
+            "never 'reply 1 or 2'. " + PLAIN_WORDS)
     if page_url:
         line += f" Include this link to their booking exactly as written: {page_url}"
     return line + " " + NO_DIRECTIONS_RULE
@@ -1840,18 +1871,20 @@ def reminder_line(booking: Mapping[str, Any], instruction: str, now: datetime, p
 
 def waitlist_offer_line(starts_at: datetime, ends_at: datetime, tz_name: str) -> str:
     return (f"NEWS TO PASS ON IN THIS REPLY: a time they were waiting for has freed up: "
-            f"{describe_span(starts_at, ends_at, tz_name)}. Ask whether they want it. It is NOT booked until they say yes.")
+            f"{describe_span(starts_at, ends_at, tz_name)}. Ask whether they want it. Nothing is settled until they "
+            "say yes.")
 
 
 # Always in the reply prompt while bookings are on: only the owner confirms,
 # so the reply may never say a time is booked on its own — even when the
 # chat's own booking section (or its writing samples) would.
 ONLY_OWNER_CONFIRMS_RULE = (
-    "Only the business confirms appointments, and you will be told here when it has. "
-    "Unless a line below says an appointment is CONFIRMED, do not agree to their time in "
-    "any words: no 'ok', 'deal', 'booked', 'confirmed', 'see you then', 'come over', and "
+    "Only the business says yes to a time, and you will be told here when it has. "
+    "Unless a line below says the business said YES, do not agree to their time in "
+    "any words: no 'ok', 'deal', 'see you then', 'come over', and "
     "no arrival steps such as 'text me before you come'. When they name a day and time, "
-    "say only that you will confirm it in a moment — nothing more about the time."
+    "say nothing about it: no yes, no no, and never that you will check, ask or confirm it. "
+    + PLAIN_WORDS
 )
 
 ADDRESS_FOLLOWS_LINE = (
@@ -1948,15 +1981,18 @@ def outcall_notice_line(booking: Mapping[str, Any], *, now: datetime, ready_minu
                         "if they have not given it, the room or flat number, the floor, how to get in. Do not "
                         "write [address].")
     if proof:
-        return _NEWS + (f"the outcall on {when} has just been CONFIRMED. In your own words, short: tell them it "
-                        "is booked, and ask for a photo that shows they are at the place you are coming to (the "
+        return _NEWS + (f"the business said YES to the outcall on {when}. In your own words, short: yes, you are "
+                        "coming to them then (plain words: never confirmed, booked, booking, appointment or "
+                        "reservation), and ask for a photo that shows they are at the place you are coming to (the "
                         "hotel room key card, or the building or door). As soon as it comes they order your "
                         "taxi; do not ask for the taxi yet.")
     soon = booking["starts_at"] - now <= timedelta(minutes=ready_minutes + 60)
     getting_ready = (f"You need about {ready_minutes} minutes to get ready; say you will text them as soon as "
                      "you are ready" if soon else "Say you will text them when you are getting ready")
-    return _NEWS + (f"the outcall on {when} has just been CONFIRMED. In your own words: tell them it is booked "
-                    f"for that day and time. {getting_ready}, and that they then order the taxi to pick you up. "
+    return _NEWS + (f"the business said YES to the outcall on {when}. In your own words: yes, you are coming "
+                    "to them then, with the day and time (plain words: never confirmed, booked, booking, "
+                    f"appointment or reservation). {getting_ready}, and that they then order the taxi to pick "
+                    "you up. "
                     "Do not ask them to order it before that.")
 
 

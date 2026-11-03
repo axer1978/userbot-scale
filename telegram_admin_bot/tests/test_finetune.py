@@ -439,7 +439,7 @@ def test_a_flagged_chat_carries_the_operators_judgement_and_corrections():
     from zoneinfo import ZoneInfo
 
     example = {"verdict": "bad", "client_kind": "time_waster", "outcome": "never_booked",
-               "note": "Toms asked for photos 3 times, never named a time.\nShould have asked for his time.",
+               "note": "Toms dodged my \"when?\" twice, never named a time.\nShould have asked for his time.",
                "corrections": {"2": "should have been: send me a voice message love and tell me your time 😘"}}
     lines = finetune.chat_lines([
         msg(1, "in", "received", "I want to see your energy first", at="2026-10-12T20:59:00+00:00"),
@@ -451,9 +451,9 @@ def test_a_flagged_chat_carries_the_operators_judgement_and_corrections():
     assert text == (
         "OPERATOR'S JUDGEMENT (not part of the chat):\n"
         f"- Handled: {finetune.VERDICTS['bad']}\n"
-        "- Client: TIME-WASTER\n"
+        f"- Client: {finetune.CLIENT_KINDS['time_waster']}\n"
         "- Ended: he never booked\n"
-        "- Why: [client] asked for photos 3 times, never named a time.\n  Should have asked for his time.\n\n"
+        "- Why: [client] dodged my \"when?\" twice, never named a time.\n  Should have asked for his time.\n\n"
         "— Mon 12.10.2026 —\n"
         "[23:59] Client: I want to see your energy first\n"
         "— Tue 13.10.2026 —\n"
@@ -511,7 +511,7 @@ async def test_flag_a_chat_and_run_from_it(panel_client, pg_pool, tenant, monkey
     assert bad.status_code == 400
     saved = await panel_client.put(path, json={
         "verdict": "bad", "client_kind": "time_waster", "outcome": "never_booked",
-        "note": "Toms only collects photos.", "corrections": {str(ids[3]): "ask for his time instead"}})
+        "note": "Toms dodged when twice.", "corrections": {str(ids[3]): "ask for his time instead"}})
     assert saved.status_code == 200, saved.text
     flagged = saved.json()
     example = flagged["example"]
@@ -519,7 +519,7 @@ async def test_flag_a_chat_and_run_from_it(panel_client, pg_pool, tenant, monkey
     assert (await panel_client.get("/api/finetune/sessions/acct/flags")).json() == {"501": "bad"}
     preview = flagged["preview"]
     assert "Client: Hi, [client] here, free tonight? [number]" in preview
-    assert "- Why: [client] only collects photos." in preview
+    assert "- Why: [client] dodged when twice." in preview
     assert "Business: okay love\nANNOTATION FOR MODEL: ask for his time instead" in preview
 
     # Messages after the flag are not part of it until it is saved again.

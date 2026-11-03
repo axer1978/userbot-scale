@@ -315,14 +315,10 @@ class BookingFlow:
         """Every text a customer sends while bookings are on, before the
         reply is drafted (the draft waits for this to finish)."""
         self.let_in.discard(chat_id)
-        answer = bookings.reminder_answer(text)
-        if answer is not None:
+        if bookings.reminder_answer(text) == "confirm":
             booking = await self._reminded_booking(chat_id)
             if booking is not None:
-                if answer == "confirm":
-                    await self.customer_action(booking, "confirm_attendance", via=VIA_CHAT)
-                else:
-                    await self.customer_action(booking, "cancel", via=VIA_CHAT)
+                await self.customer_action(booking, "confirm_attendance", via=VIA_CHAT)
                 return
         self.schedule_scan(chat_id)
 
@@ -495,7 +491,7 @@ class BookingFlow:
                 booking = await self.store.apply(confirmed, change, actor=bs.CUSTOMER)
                 await self.announce(booking, f"🔁 Booking #{booking['number']}: the customer asks to move it to "
                                              f"{bookings.describe_proposal(booking)}; asking the owner.")
-                await self.tell_owner(booking, bookings.format_move_request(booking, name=self.owner_name(),
+                await self.tell_owner(booking, bookings.format_move_request(booking, name=self.owner_name(), forms=not self.reads_her_words(),
                                                                             t=self.texts()), remember=True)
             else:
                 conversation = await self.rt.db.get_conversation(chat_id) or {}
@@ -729,7 +725,8 @@ class BookingFlow:
             await self.broadcast(booking)
             return False
         try:
-            request = bookings.format_request(booking, changed=changed, name=self.owner_name(), t=self.texts())
+            request = bookings.format_request(booking, changed=changed, name=self.owner_name(), t=self.texts(),
+                                              forms=not self.reads_her_words())
             row = await self.rt.send_as_me(provider, request, reason="booking request to the owner")
             self._remember(row, booking["number"])
         except Exception as exc:
@@ -1292,7 +1289,14 @@ class BookingFlow:
             return bookings.format_which_one([b for b in rows if b is not None], cmd, t=t)
         if cmd.kind == "unclear":
             return bookings.format_question(cmd, t=t)
+        if self.reads_her_words() and cmd.kind in ("yes", "no", "propose", "stays", "none"):
+            # Her own words are read: asked by his name and time, never "add its number".
+            return bookings.format_which_one(await self.store.awaiting_owner(), cmd, t=t)
         return bookings.format_which(cmd.kind if cmd.kind not in ("propose", "stays", "none") else "yes", t=t)
+
+    def reads_her_words(self) -> bool:
+        """booking.owner_free_text: her answers are read in her own words."""
+        return bool(self.settings.get("owner_free_text", True))
 
     async def _target(self, cmd: bookings.OwnerCommand, reply_to: Any) -> Optional[dict[str, Any]]:
         if cmd.number is not None:
@@ -2227,7 +2231,7 @@ class BookingFlow:
                                               wanted_from=start, wanted_to=end, service=str(data.get("service") or ""))
         span = bookings.describe_span(entry["wanted_from"], entry["wanted_to"], self.tz)
         self.add_line(chat_id, f"NEWS TO PASS ON IN THIS REPLY: they are now on the waitlist for {span}; tell them "
-                      "they will hear if a time frees up. Nothing is booked yet.")
+                      "they will hear if a time frees up. Nothing is settled yet.")
         await self.rt.post_note(chat_id, f"⏳ Added to the waitlist for {span}.")
         await self.rt.hub.broadcast({"type": "waitlist"})
 

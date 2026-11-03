@@ -108,7 +108,7 @@ def test_the_taxi_steps_are_told_to_the_reply_as_in_the_runtime():
         return replay.booking_note(state, now, "Europe/Riga", address_set=True, **kw)
 
     confirmed = note("confirmed_news", outcall=True)
-    assert "outcall" in confirmed and "CONFIRMED" in confirmed and "Do not ask them to order" in confirmed
+    assert "the business said YES to the outcall" in confirmed and "Do not ask them to order" in confirmed
     # Without the outcall (or with the taxi steps off) it is the plain confirmation.
     assert "outcall" not in note("confirmed_news")
     assert "Do not ask them to order" not in note("confirmed_news", outcall=True, outcall_taxi=False)
@@ -304,6 +304,28 @@ def test_the_flirting_chats_load_with_the_new_flow():
     assert len(chats) >= 15
     assert all(s["greeting_video"] and not s["first_reply_address"] for s in chats)
     assert any(step.get("quiet") is True for s in chats for step in s["steps"])
+
+
+def test_the_real_chats_answer_every_question_and_book_with_photos_and_the_address():
+    data = replay.load(replay.SCENARIO_DIR / "real-chats.json")
+    assert replay.validate(data) == []
+    chats = {s["id"]: s for s in data["scenarios"]}
+    assert all(s["greeting_video"] and not s["first_reply_address"] for s in chats.values())
+    # Asking for photos, her name and where she is never makes him a time-waster.
+    asks = chats["rc-asks-everything-then-books"]["steps"]
+    assert not any(step.get("quiet") for step in asks)
+    assert [step.get("photos") for step in asks].count(True) == 1 and asks[-1]["booking"] == "requested"
+    # Nobody comes without photos and the address: both go out before the time is confirmed.
+    for name in ("rc-incall-photos-address-arrival", "rc-lv-time-first"):
+        steps = chats[name]["steps"]
+        confirmed = next(n for n, step in enumerate(steps) if step.get("booking") == "confirmed_news")
+        assert any(step.get("photos") for step in steps[:confirmed])
+        assert any(step.get("address") for step in steps[:confirmed])
+        assert any(step.get("booking") == "arrived" for step in steps[confirmed:])
+    # Quiet only after two dodges of "when?", or the same ask a fourth time.
+    dodges = chats["rc-asks-then-dodges-twice"]["steps"]
+    assert [step.get("quiet") for step in dodges[:5]] == [None, None, False, False, False]
+    assert all(step.get("quiet") is True for step in dodges[5:8])
 
 
 @pytest.mark.asyncio

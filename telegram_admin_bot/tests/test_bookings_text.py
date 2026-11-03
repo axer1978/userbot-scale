@@ -108,7 +108,8 @@ def test_an_outcall_confirmation_says_she_needs_time_to_get_ready():
     soon = bookings.outcall_notice_line(outcall(customer_notice=bs.NOTICE_CONFIRMED),
                                         now=datetime(2026, 10, 1, 20, 30, tzinfo=RIGA), ready_minutes=20,
                                         has_address=True)
-    assert "CONFIRMED" in soon and "about 20 minutes to get ready" in soon and "Do not ask them to order" in soon
+    assert "the business said YES to the outcall" in soon and "about 20 minutes to get ready" in soon
+    assert "Do not ask them to order" in soon and "never confirmed, booked" in soon
     later = bookings.outcall_notice_line(outcall(customer_notice=bs.NOTICE_CONFIRMED),
                                          now=datetime(2026, 10, 1, 15, 0, tzinfo=RIGA), ready_minutes=20,
                                          has_address=True)
@@ -142,7 +143,8 @@ def test_with_the_proof_he_is_asked_for_a_photo_of_the_place_before_the_taxi():
     now = datetime(2026, 10, 1, 20, 30, tzinfo=RIGA)
     confirmed = bookings.outcall_notice_line(outcall(customer_notice=bs.NOTICE_CONFIRMED), now=now,
                                              ready_minutes=20, has_address=True, proof=True)
-    assert "CONFIRMED" in confirmed and "hotel room key card" in confirmed and "do not ask for the taxi yet" in confirmed
+    assert "the business said YES to the outcall" in confirmed and "hotel room key card" in confirmed
+    assert "do not ask for the taxi yet" in confirmed and "never confirmed, booked" in confirmed
     assert "get ready" not in confirmed
     waiting = bookings.standing_line(outcall(), outcall_taxi=True, proof=True)
     assert "No taxi until it comes" in waiting
@@ -237,11 +239,11 @@ def test_asap_and_a_time_that_just_passed_both_mean_now():
     assert bookings.requested_slot({"asap": True}, tz_name="Europe/Riga", default_duration=60) is None
 
 
-def test_reminder_answers_are_only_bare_1_or_2():
-    assert bookings.reminder_answer("1") == "confirm"
-    assert bookings.reminder_answer(" 2 ") == "cancel"
-    assert bookings.reminder_answer("1 or 2?") is None
-    assert bookings.reminder_answer("I'll be 2 minutes late") is None
+def test_only_a_bare_yes_answers_a_reminder_in_code():
+    assert [bookings.reminder_answer(w) for w in ("yes", " Yes ", "jā", "да", "👍")] == ["confirm"] * 5
+    # No numbers any more ("2" may be minutes), and a no or a later is read in his own words.
+    for text in ("1", " 2 ", "no", "later", "yes but at 22", "I'll be 2 minutes late"):
+        assert bookings.reminder_answer(text) is None, text
 
 
 def _b(**extra):
@@ -252,11 +254,13 @@ def _b(**extra):
             "customer_notice": None, "instructions_sent_at": None, **extra}
 
 
-def test_the_owner_request_names_the_number_and_how_to_answer():
+def test_the_owner_request_names_the_number_and_asks_yes_no_or_later():
     text = bookings.format_request(_b())
     assert "Booking request #7" in text and "Anna (@anna)" in text
     assert "Sun 04 Oct 2026, 15:00–16:00" in text
-    assert "YES 7" in text and "NO 7" in text and "7 15:30" in text
+    assert text.endswith("\n\nYes, no or later?")
+    # No list of reply forms to copy.
+    assert "YES 7" not in text and "NO 7" not in text and "7 15:30" not in text
 
 
 def test_the_request_names_her_and_the_extras_he_asked_for():
@@ -270,7 +274,7 @@ def test_the_request_names_her_and_the_extras_he_asked_for():
         "When: Sun 04 Oct 2026, 15:00–16:00",
         "Notes: Asked for now first.",
     ]
-    assert text.endswith("Reply YES 7 or NO 7, or a new time like 7 15:30 or 7 04.10 15:30.")
+    assert text.endswith("\n\nYes, no or later?")
     assert "Booking request #7 (new time)" in bookings.format_request(_b(), changed=True, name="Lola")
     # No extras in the chat: said so. No name: no line.
     assert "Extras: none mentioned" in bookings.format_request(_b())
@@ -409,16 +413,19 @@ def test_the_owner_reader_sees_each_booking_and_what_he_asked_for():
 
 def test_her_name_line_says_when_to_tell_it():
     line = bookings.own_name_line("Lola")
-    assert "Your name is Lola" in line and "confirmed" in line and "arrived" in line
+    assert "Your name is Lola" in line and "yes to their time" in line and "arrived" in line
 
 
 def test_a_pending_booking_is_never_presented_as_confirmed():
     line = bookings.standing_line(_b())
-    assert "Do NOT say it is confirmed" in line
+    assert "the business has not answered yet" in line and "no yes, no no" in line
+    # Nor does she say she will check or confirm it.
+    assert "never that you will check, ask or confirm it" in line and "in a moment" not in line
 
 
 def test_news_lines_carry_the_change():
-    assert "CONFIRMED" in bookings.notice_line(_b(state=bs.CONFIRMED, customer_notice=bs.NOTICE_CONFIRMED))
+    yes = bookings.notice_line(_b(state=bs.CONFIRMED, customer_notice=bs.NOTICE_CONFIRMED))
+    assert "the business said YES to Sun 04 Oct 2026, 15:00–16:00" in yes and bookings.PLAIN_WORDS in yes
     proposed = _b(customer_notice=bs.NOTICE_PROPOSED, proposed_by=bs.OWNER,
                   proposed_starts_at=datetime(2026, 10, 4, 13, 0, tzinfo=timezone.utc),
                   proposed_ends_at=datetime(2026, 10, 4, 14, 0, tzinfo=timezone.utc))
@@ -434,10 +441,14 @@ def test_an_unavailable_time_offers_alternatives_and_the_waitlist():
     assert "waitlist" not in bookings.unavailable_line(requested, "closed_day", [], "Europe/Riga", waitlist=False)
 
 
-def test_the_reminder_line_asks_for_1_or_2_and_uses_the_instruction():
+def test_the_reminder_line_asks_one_plain_question_and_uses_the_instruction():
     now = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
     line = bookings.reminder_line(_b(state=bs.CONFIRMED), "Mention parking is free.", now, "https://x/b/tok")
-    assert "Mention parking is free." in line and "reply 1" in line and "https://x/b/tok" in line
+    assert "Mention parking is free." in line and "https://x/b/tok" in line
+    assert "still coming at 15:00?" in line and "never 'reply 1 or 2'" in line and bookings.PLAIN_WORDS in line
+    assert "appointment on" not in line and "1 to confirm" not in line
+    default = bookings.reminder_line(_b(state=bs.CONFIRMED), "", now)
+    assert "Ask in one short question whether they are still coming." in default
     assert "in about 24 hours" in line
 
 
@@ -539,7 +550,7 @@ def test_two_answers_about_one_booking_are_one_command():
     # A yes and a no for the same booking: she is asked.
     [cmd] = commands([{"action": "yes", "number": 3}, {"action": "no", "number": 3}])
     assert cmd.kind == "unclear" and cmd.number == 3
-    assert bookings.format_question(cmd, PAIR[0]) == "#3 Khan, Tue 21:00: yes or no? Or give another time."
+    assert bookings.format_question(cmd, PAIR[0]) == "#3 Khan, Tue 21:00: yes, no or later?"
     # LIST once, however often she asks.
     assert [c.kind for c in commands([{"action": "list"}, {"action": "list"}])] == ["list"]
 
@@ -601,11 +612,10 @@ def test_a_booking_number_the_model_made_up_is_never_acted_on():
 def test_her_questions_repeat_what_waits_on_her_answer():
     cmd = bookings.OwnerCommand("unclear", 3, minutes=60, extras_no=("anal",), tell="bring cash")
     assert bookings.format_question(cmd, PAIR[0]) == (
-        "#3 Khan, Tue 21:00: yes or no? Or give another time. With your answer: for 1 hour; tell him bring cash; "
-        "no anal.")
+        "#3 Khan, Tue 21:00: yes, no or later? With your answer: for 1 hour; tell him bring cash; no anal.")
     which = bookings.OwnerCommand("unclear", missing="which", ask="does he want 2 hours?")
     assert bookings.format_which_one(PAIR[:2], which).endswith(
-        "Answer with the number. With your answer: ask him does he want 2 hours?.")
+        "Marco, Tue 22:00? With your answer: ask him does he want 2 hours?.")
 
 
 def _typed_number(text):
@@ -664,8 +674,8 @@ def test_her_questions_are_answered_from_the_booking():
 
 
 def test_which_one_lists_the_bookings_that_fit():
-    assert bookings.format_which_one(PAIR[:2]) == (
-        "Which one: #3 Khan, Tue 21:00, or #4 Marco, Tue 22:00? Answer with the number.")
+    # By his name and time: her answer is read in her own words, no number to type.
+    assert bookings.format_which_one(PAIR[:2]) == "Which one: Khan, Tue 21:00, or Marco, Tue 22:00?"
     assert bookings.format_which_one([]) == "Which booking is that about? Send LIST to see them."
     # Her own question from the reader, tied to the booking.
     assert bookings.format_question(bookings.OwnerCommand("unclear", 3, question="1 or 2 hours?"), PAIR[0]) == \
@@ -768,20 +778,20 @@ def test_a_yes_with_another_time_asks_her_rather_than_confirming_his():
     [cmd] = commands([{"action": "yes", "number": 3, "start": "2026-10-20T23:00", "tell_customer": "cash"}])
     assert (cmd.kind, cmd.number, cmd.tell) == ("unclear", 3, "cash")
     assert bookings.format_question(cmd, PAIR[0]).startswith(
-        "#3 Khan asked for Tue 21:00: confirm that (YES 3), or offer him 23:00 (3 23:00)?")
+        "#3 Khan asked for Tue 21:00: yes to that, or offer him 23:00?")
     # By his time: a yes.
     [cmd] = commands([{"action": "yes", "number": 3, "start": "2026-10-20T21:00"}])
     assert (cmd.kind, cmd.number) == ("yes", 3)
-    # Another day: the date is in the command she is offered.
+    # Another day: the date is in the time she is asked about.
     [cmd] = commands([{"action": "yes", "number": 3, "start": "2026-10-21T14:00"}])
-    assert "(3 21.10 14:00)" in bookings.format_question(cmd, PAIR[0])
+    assert "offer him 21.10 14:00?" in bookings.format_question(cmd, PAIR[0])
 
 
 def test_words_alone_with_a_time_ask_her_what_she_meant():
     [cmd] = commands([{"action": "none", "number": 6, "start": "2026-10-20T13:30"}])
     assert cmd.kind == "unclear"
     assert bookings.format_question(cmd, PAIR[2]).startswith(
-        "#6 Juris is booked for Tue 13:00: offer him 13:30 instead (6 13:30), or say what to tell him.")
+        "#6 Juris is booked for Tue 13:00: offer him 13:30 instead, or say what to tell him.")
     # With words for him the words are what she meant: the time is in them.
     [cmd] = commands([{"action": "none", "number": 6, "start": "2026-10-20T13:30", "tell_customer": "come 13:30"}])
     assert (cmd.kind, cmd.tell) == ("none", "come 13:30")
@@ -974,7 +984,7 @@ def test_a_no_or_cancel_with_another_time_offers_that_time():
 
 def test_a_yes_at_an_earlier_clock_time_is_asked_not_his_time_confirmed():
     [cmd] = commands([{"action": "yes", "number": 3, "start": "2026-10-20T20:00"}])
-    assert cmd.kind == "unclear" and "(3 20:00)" in bookings.format_question(cmd, PAIR[0])
+    assert cmd.kind == "unclear" and "offer him 20:00?" in bookings.format_question(cmd, PAIR[0])
     # Ready a little before his time by a delay: a yes.
     [cmd] = commands([{"action": "yes", "number": 3, "in_minutes": 5}],
                      rows=[_row(3, start="2026-10-20T12:50", customer_name="Khan")])
@@ -987,7 +997,7 @@ def test_the_question_about_a_move_he_asked_names_the_time_he_asked_for():
                  proposed_ends_at=bookings.parse_local("2026-10-20T18:00", "Europe/Riga"))
     [cmd] = commands([{"action": "yes", "number": 5, "start": "2026-10-20T18:00"}], rows=[moved])
     assert bookings.format_question(cmd, moved).startswith(
-        "#5 Toms asked for Tue 17:00: confirm that (YES 5), or offer him 18:00 (5 18:00)?")
+        "#5 Toms asked for Tue 17:00: yes to that, or offer him 18:00?")
 
 
 def test_a_finished_booking_is_told_as_finished_and_comes_after_live_ones():
@@ -1032,3 +1042,33 @@ def test_asking_about_one_booking_still_carries_out_the_others():
     plan = bookings.plan_owner_answer(typed, [bookings.OwnerCommand("no", 4, minutes=120), late], waiting=W)
     assert (plan.ask, plan.commands) == (4, (late,))
     assert plan.ask_with == bookings.OwnerCommand("no", 4, minutes=120)
+
+
+def test_waiting_for_the_business_is_not_news_and_never_a_check():
+    line = bookings.notice_line(_b(customer_notice=bs.NOTICE_REQUESTED))
+    assert not line.startswith("NEWS TO PASS ON") and "This is not news to pass on" in line
+    assert "never that you will check, ask or confirm it" in line and "in a moment" not in line
+
+
+def test_the_yes_example_carries_the_bookings_own_time():
+    line = bookings.notice_line(_b(state=bs.CONFIRMED, customer_notice=bs.NOTICE_CONFIRMED))
+    assert line.startswith("NEWS TO PASS ON") and "('yes, come at 15:00')" in line and bookings.PLAIN_WORDS in line
+    assert "21:00" not in line
+
+
+def test_the_reply_forms_stay_only_where_her_own_words_are_not_read():
+    assert bookings.format_request(_b()).endswith("\n\nYes, no or later?")
+    assert bookings.format_request(_b(), forms=True).endswith(
+        "\n\nReply YES 7 or NO 7, or a new time like 7 15:30 or 7 04.10 15:30.")
+    moving = _b(state=bs.CONFIRMED, proposed_by=bs.CUSTOMER, proposed_starts_at=_b()["starts_at"] + timedelta(hours=1),
+                proposed_ends_at=_b()["ends_at"] + timedelta(hours=1))
+    assert bookings.format_move_request(moving).endswith("Yes, no or later?")
+    assert "Reply YES 7 to move it" in bookings.format_move_request(moving, forms=True)
+
+
+def test_no_booking_words_in_the_other_lines_the_reply_writer_reads():
+    start = datetime(2026, 10, 4, 18, 0, tzinfo=timezone.utc)
+    lines = [bookings.unavailable_line(start, "too_far", [], "Europe/Riga", waitlist=False),
+             bookings.waitlist_offer_line(start, start + timedelta(hours=1), "Europe/Riga")]
+    for line in lines:
+        assert "booked" not in line.lower() and " book " not in line.lower(), line
