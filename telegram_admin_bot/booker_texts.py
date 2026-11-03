@@ -14,8 +14,11 @@ Two kinds of text live here:
 - TEXTS: every other line to her (questions, acknowledgements, "couldn't
   read that"): fixed, only translated.
 
-Commands shown to her in another language use words parse_owner_reply
-understands in that language (ДА 3, JĀ 3, SÍ 3), so she can copy them.
+Her answers are read in her own words (booking.owner_free_text), so a
+request ends with a plain "yes, no or later?". Where they are not, and in
+the few lines that still show commands (LIST, READY, a reading that
+failed), the commands use words parse_owner_reply understands in her
+language (ДА 3, JĀ 3, SÍ 3), so she can copy them.
 
 Nothing here touches the database or the network.
 """
@@ -64,7 +67,7 @@ BLANKS: dict[str, str] = {
     "changed": "\" (new time)\" when he changed the time before you answered; empty otherwise",
     "said": "what he wrote when he arrived; empty when nothing",
     "way_in": "whether the way in was sent to him, or she goes out to meet him",
-    "commands": "how to answer (YES 3 / NO 3 / a new time) — always kept",
+    "commands": "the question at the end (yes, no or later?) — always kept",
 }
 
 TEMPLATES: dict[str, Template] = {
@@ -170,9 +173,12 @@ TEXTS: dict[str, dict[str, str]] = {
     "unknown": {"en": "unknown"},
     "request_new_time": {"en": " (new time)"},
     "request_no_extras": {"en": "none mentioned"},
-    "answer_help": {"en": "Reply YES {n} or NO {n}, or a new time like {n} 15:30 or {n} 04.10 15:30."},
-    "move_commands": {"en": "Reply YES {n} to move it, NO {n} to keep the old time, or a different time like "
-                            "{n} 15:30."},
+    "answer_help": {"en": "Yes, no or later?"},
+    "move_commands": {"en": "Yes, no or later?"},
+    # The reply forms, only where her own words are not read (booking.owner_free_text off).
+    "answer_forms": {"en": "Reply YES {n} or NO {n}, or a new time like {n} 15:30 or {n} 04.10 15:30."},
+    "move_forms": {"en": "Reply YES {n} to move it, NO {n} to keep the old time, or a different time like "
+                         "{n} 15:30."},
     "owner_update": {"en": "{girl_tag}#{n} {who}, {when}: {what}"},
     "way_in_sent": {"en": "the way in was sent to him."},
     "way_in_meet": {"en": "go and meet him."},
@@ -206,7 +212,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "list_move": {"en": "#{n} — {who} wants to move {when} → {to}"},
     "list_proposed": {"en": "#{n} — {who}, you proposed {proposed} (waiting for them)"},
     "list_request": {"en": "#{n} — {who}, {when}"},
-    "list_commands": {"en": "Reply YES <number>, NO <number>, or <number> <new time>."},
+    "list_commands": {"en": "Answer each one: yes, no or later."},
     "list_outcalls": {"en": "Outcalls:"},
     "list_outcall": {"en": "#{n} — {who}, {when}: {step}"},
     # --- what he sends, passed on to her
@@ -236,16 +242,14 @@ TEXTS: dict[str, dict[str, str]] = {
     # --- questions to her
     "which": {"en": "Which booking? Add its number, e.g. {kind} 7. Send LIST to see them."},
     "which_about": {"en": "Which booking is that about? Send LIST to see them."},
-    "which_one": {"en": "Which one: {listed}? Answer with the number."},
+    "which_one": {"en": "Which one: {listed}?"},
     "or_last": {"en": "{items}, or {last}"},
     "question_time": {"en": "#{n} {who}: what time should I offer him?"},
-    "question_yes_no": {"en": "#{n} {who}, {when}: yes or no? Or give another time."},
-    "ask_confirm_or_offer": {"en": "#{n} {who} asked for {his}: confirm that (YES {n}), or offer him {offered} "
-                                   "({offer})?"},
-    "ask_offer_instead_booked": {"en": "#{n} {who} is booked for {his}: offer him {offered} instead ({offer}), "
-                                       "or say what to tell him."},
-    "ask_offer_or_confirm": {"en": "#{n} {who} asked for {his}: offer him {offered} instead ({offer}), or "
-                                   "confirm his time (YES {n})?"},
+    "question_yes_no": {"en": "#{n} {who}, {when}: yes, no or later?"},
+    "ask_confirm_or_offer": {"en": "#{n} {who} asked for {his}: yes to that, or offer him {offered}?"},
+    "ask_offer_instead_booked": {"en": "#{n} {who} is booked for {his}: offer him {offered} instead, or say what "
+                                       "to tell him."},
+    "ask_offer_or_confirm": {"en": "#{n} {who} asked for {his}: offer him {offered} instead, or yes to his time?"},
     "held": {"en": "With your answer: {items}."},
     "held_for": {"en": "for {length}"},
     "held_tell": {"en": "tell him {words}"},
@@ -344,9 +348,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "unknown": "без имени",
         "request_new_time": " (новое время)",
         "request_no_extras": "не указаны",
-        "answer_help": "Ответь ДА {n} или НЕТ {n} либо напиши новое время, например: {n} 15:30 или {n} 04.10 15:30.",
-        "move_commands": ("Ответь ДА {n} — перенести, НЕТ {n} — оставить старое время, или другое время, "
-                          "например {n} 15:30."),
+        "answer_help": "Да, нет или позже?",
+        "move_commands": "Да, нет или позже?",
+        "answer_forms": "Ответь ДА {n} или НЕТ {n} либо напиши новое время, например: {n} 15:30 или {n} 04.10 15:30.",
+        "move_forms": ("Ответь ДА {n} — перенести, НЕТ {n} — оставить старое время, или другое время, "
+                       "например {n} 15:30."),
         "owner_update": "{girl_tag}#{n} {who}, {when}: {what}",
         "way_in_sent": "ему отправили, как войти.",
         "way_in_meet": "выйди его встретить.",
@@ -376,7 +382,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "list_move": "#{n} — {who} хочет перенести {when} → {to}",
         "list_proposed": "#{n} — {who}, ты предложила {proposed} (ждём его ответа)",
         "list_request": "#{n} — {who}, {when}",
-        "list_commands": "Ответь ДА <номер>, НЕТ <номер> или <номер> <новое время>.",
+        "list_commands": "Ответь по каждой: да, нет или позже.",
         "list_outcalls": "Выезды:",
         "list_outcall": "#{n} — {who}, {when}: {step}",
         "taxi_link": "🚕 #{n} {who} прислал ссылку на такси:\n{text}",
@@ -400,16 +406,15 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "news_in_taxi_late": "(не было «В ТАКСИ {n}» за {minutes} мин после ссылки на такси)",
         "which": "Какая бронь? Добавь номер, например: {kind} 7. Напиши СПИСОК, чтобы их увидеть.",
         "which_about": "О какой это брони? Напиши СПИСОК, чтобы их увидеть.",
-        "which_one": "Какая: {listed}? Ответь номером.",
+        "which_one": "Какая: {listed}?",
         "or_last": "{items} или {last}",
         "question_time": "#{n} {who}: какое время ему предложить?",
-        "question_yes_no": "#{n} {who}, {when}: да или нет? Или напиши другое время.",
-        "ask_confirm_or_offer": ("#{n} {who} просил на {his}: подтвердить это (ДА {n}) или предложить ему "
-                                 "{offered} ({offer})?"),
-        "ask_offer_instead_booked": ("#{n} {who} записан на {his}: предложить ему вместо этого {offered} "
-                                     "({offer})? Или скажи, что ему передать."),
-        "ask_offer_or_confirm": ("#{n} {who} просил на {his}: предложить ему вместо этого {offered} ({offer}) "
-                                 "или подтвердить его время (ДА {n})?"),
+        "question_yes_no": "#{n} {who}, {when}: да, нет или позже?",
+        "ask_confirm_or_offer": "#{n} {who} просил на {his}: да на это время или предложить ему {offered}?",
+        "ask_offer_instead_booked": ("#{n} {who} записан на {his}: предложить ему вместо этого {offered}? "
+                                     "Или скажи, что ему передать."),
+        "ask_offer_or_confirm": ("#{n} {who} просил на {his}: предложить ему вместо этого {offered} или да на "
+                                 "его время?"),
         "held": "Вместе с ответом: {items}.",
         "held_for": "на {length}",
         "held_tell": "передать ему: {words}",
@@ -495,9 +500,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "unknown": "bez vārda",
         "request_new_time": " (jauns laiks)",
         "request_no_extras": "nekas nav minēts",
-        "answer_help": "Atbildi JĀ {n} vai NĒ {n}, vai jaunu laiku, piem., {n} 15:30 vai {n} 04.10 15:30.",
-        "move_commands": ("Atbildi JĀ {n}, lai pārceltu, NĒ {n}, lai paliktu vecais laiks, vai citu laiku, "
-                          "piem., {n} 15:30."),
+        "answer_help": "Jā, nē vai vēlāk?",
+        "move_commands": "Jā, nē vai vēlāk?",
+        "answer_forms": "Atbildi JĀ {n} vai NĒ {n}, vai jaunu laiku, piem., {n} 15:30 vai {n} 04.10 15:30.",
+        "move_forms": ("Atbildi JĀ {n}, lai pārceltu, NĒ {n}, lai paliktu vecais laiks, vai citu laiku, "
+                       "piem., {n} 15:30."),
         "owner_update": "{girl_tag}#{n} {who}, {when}: {what}",
         "way_in_sent": "viņam nosūtīts, kā iekļūt.",
         "way_in_meet": "izej viņu sagaidīt.",
@@ -528,7 +535,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "list_move": "#{n} — {who} grib pārcelt {when} → {to}",
         "list_proposed": "#{n} — {who}, tu piedāvāji {proposed} (gaidām viņa atbildi)",
         "list_request": "#{n} — {who}, {when}",
-        "list_commands": "Atbildi JĀ <numurs>, NĒ <numurs> vai <numurs> <jaunais laiks>.",
+        "list_commands": "Atbildi par katru: jā, nē vai vēlāk.",
         "list_outcalls": "Izbraukumi:",
         "list_outcall": "#{n} — {who}, {when}: {step}",
         "taxi_link": "🚕 #{n} {who} atsūtīja taksi saiti:\n{text}",
@@ -552,16 +559,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "news_in_taxi_late": "(„TAKSĪ {n}” netika atsūtīts {minutes} min laikā pēc taksi saites)",
         "which": "Kura rezervācija? Pievieno numuru, piem., {kind} 7. Sūti SARAKSTS, lai tās redzētu.",
         "which_about": "Par kuru rezervāciju tas ir? Sūti SARAKSTS, lai tās redzētu.",
-        "which_one": "Kura: {listed}? Atbildi ar numuru.",
+        "which_one": "Kura: {listed}?",
         "or_last": "{items} vai {last}",
         "question_time": "#{n} {who}: kādu laiku viņam piedāvāt?",
-        "question_yes_no": "#{n} {who}, {when}: jā vai nē? Vai arī uzraksti citu laiku.",
-        "ask_confirm_or_offer": ("#{n} {who} gribēja {his}: apstiprināt to (JĀ {n}) vai piedāvāt viņam {offered} "
-                                 "({offer})?"),
-        "ask_offer_instead_booked": ("#{n} {who} ir pierakstīts uz {his}: piedāvāt viņam tā vietā {offered} "
-                                     "({offer})? Vai arī pasaki, ko viņam pateikt."),
-        "ask_offer_or_confirm": ("#{n} {who} gribēja {his}: piedāvāt viņam tā vietā {offered} ({offer}) vai "
-                                 "apstiprināt viņa laiku (JĀ {n})?"),
+        "question_yes_no": "#{n} {who}, {when}: jā, nē vai vēlāk?",
+        "ask_confirm_or_offer": "#{n} {who} gribēja {his}: jā, vai piedāvāt viņam {offered}?",
+        "ask_offer_instead_booked": ("#{n} {who} ir pierakstīts uz {his}: piedāvāt viņam tā vietā {offered}? "
+                                     "Vai arī pasaki, ko viņam pateikt."),
+        "ask_offer_or_confirm": "#{n} {who} gribēja {his}: piedāvāt viņam tā vietā {offered}, vai tomēr jā?",
         "held": "Kopā ar tavu atbildi: {items}.",
         "held_for": "ilgums {length}",
         "held_tell": "pateikt viņam: {words}",
@@ -645,9 +650,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "unknown": "sin nombre",
         "request_new_time": " (nueva hora)",
         "request_no_extras": "ninguno",
-        "answer_help": "Responde SÍ {n} o NO {n}, o envía una nueva hora, como {n} 15:30 o {n} 04.10 15:30.",
-        "move_commands": ("Responde SÍ {n} para cambiarla, NO {n} para mantener la hora original, o otra hora, "
-                          "como {n} 15:30."),
+        "answer_help": "¿Sí, no o más tarde?",
+        "move_commands": "¿Sí, no o más tarde?",
+        "answer_forms": "Responde SÍ {n} o NO {n}, o envía una nueva hora, como {n} 15:30 o {n} 04.10 15:30.",
+        "move_forms": ("Responde SÍ {n} para cambiarla, NO {n} para mantener la hora original, o otra hora, "
+                       "como {n} 15:30."),
         "owner_update": "{girl_tag}#{n} {who}, {when}: {what}",
         "way_in_sent": "se le envió cómo entrar.",
         "way_in_meet": "sal a recibirlo.",
@@ -678,7 +685,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "list_move": "#{n} — {who} quiere cambiar {when} → {to}",
         "list_proposed": "#{n} — {who}, propusiste {proposed} (esperando su respuesta)",
         "list_request": "#{n} — {who}, {when}",
-        "list_commands": "Responde SÍ <número>, NO <número> o <número> <nueva hora>.",
+        "list_commands": "Responde a cada una: sí, no o más tarde.",
         "list_outcalls": "Salidas:",
         "list_outcall": "#{n} — {who}, {when}: {step}",
         "taxi_link": "🚕 #{n} {who} mandó el enlace del taxi:\n{text}",
@@ -702,16 +709,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "news_in_taxi_late": "(sin TAXI {n} en {minutes} min desde el enlace del taxi)",
         "which": "¿Qué reserva? Añade su número, por ejemplo, {kind} 7. Envía LIST para verlas.",
         "which_about": "¿De qué reserva hablas? Envía LIST para verlas.",
-        "which_one": "¿Cuál: {listed}? Responde con el número.",
+        "which_one": "¿Cuál: {listed}?",
         "or_last": "{items} o {last}",
         "question_time": "#{n} {who}: ¿qué hora le ofrezco?",
-        "question_yes_no": "#{n} {who}, {when}: ¿sí o no? O dime otra hora.",
-        "ask_confirm_or_offer": ("#{n} {who} pidió para {his}: ¿lo confirmas (SÍ {n}) o le ofreces {offered} "
-                                 "({offer})?"),
-        "ask_offer_instead_booked": ("#{n} {who} tiene reserva para {his}: ¿le ofrezco {offered} en su lugar "
-                                     "({offer})? O dime qué le digo."),
-        "ask_offer_or_confirm": ("#{n} {who} pidió para {his}: ¿le ofreces {offered} en su lugar ({offer}) o "
-                                 "confirmas su hora (SÍ {n})?"),
+        "question_yes_no": "#{n} {who}, {when}: ¿sí, no o más tarde?",
+        "ask_confirm_or_offer": "#{n} {who} pidió para {his}: ¿sí a esa hora o le ofreces {offered}?",
+        "ask_offer_instead_booked": ("#{n} {who} tiene reserva para {his}: ¿le ofrezco {offered} en su lugar? "
+                                     "O dime qué le digo."),
+        "ask_offer_or_confirm": "#{n} {who} pidió para {his}: ¿le ofreces {offered} en su lugar o sí a su hora?",
         "held": "Con tu respuesta: {items}.",
         "held_for": "por {length}",
         "held_tell": "decirle: {words}",

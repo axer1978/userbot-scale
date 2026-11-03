@@ -33,18 +33,19 @@ def _moving(**extra):
 
 
 # Each main message with the default texts in English, and what it said
-# before booker_texts, word for word.
+# before booker_texts, word for word (but the end of a request: since
+# 2026-11-02 she is asked "Yes, no or later?", no list of reply forms).
 ENGLISH_TODAY = {
     "request": (
         lambda t: bookings.format_request(_b(), changed=True, name="Lola", t=t),
         "📅 Booking request #7 (new time)\nCustomer: Anna (@anna)\nGirl: Lola\nExtras: kissing\n"
         "When: Sun 04 Oct 2026, 15:00–16:00\nWhat: haircut\nNotes: Outcall. hotel\n\n"
-        "Reply YES 7 or NO 7, or a new time like 7 15:30 or 7 04.10 15:30."),
+        "Yes, no or later?"),
     "move_request": (
         lambda t: bookings.format_move_request(_moving(), name="Lola", t=t),
         "🔁 Lola — #7: Anna (@anna) asks to move their booking\nFrom: Sun 04 Oct 2026, 15:00–16:00\n"
         "To:   Mon 05 Oct 2026, 16:00–17:00\n\n"
-        "Reply YES 7 to move it, NO 7 to keep the old time, or a different time like 7 15:30."),
+        "Yes, no or later?"),
     "confirmed": (
         lambda t: bookings.format_acknowledgement(_b(state=bs.CONFIRMED), "confirm", t=t),
         "#7 confirmed ✅ for Sun 04 Oct 2026, 15:00–16:00 (1 hour) — Anna will be told."),
@@ -119,16 +120,16 @@ def test_the_accounts_own_text_is_used():
 def test_a_line_whose_blanks_are_all_empty_is_left_out():
     t = bt.Texts("en", {"request": "#{number} {customer}\nGirl: {girl}\nAbout: {service}{notes}\nfixed line\n{commands}"})
     text = bookings.format_request(_b(service="", notes=""), t=t)
-    assert text == "#7 Anna\nfixed line\nReply YES 7 or NO 7, or a new time like 7 15:30 or 7 04.10 15:30."
+    assert text == "#7 Anna\nfixed line\nYes, no or later?"
     # One blank filled is enough to keep it.
     assert "About: haircut" in bookings.format_request(_b(notes=""), t=t)
     assert "Girl: Mia" in bookings.format_request(_b(), name="Mia", t=t)
 
 
-def test_the_number_and_the_commands_are_always_kept():
+def test_the_number_and_how_to_answer_are_always_kept():
     t = bt.Texts("en", {"request": "New one from {customer}", "confirmed": "OK, {customer} is in."})
-    assert bookings.format_request(_b(), t=t) == (
-        "#7 New one from Anna\n\nReply YES 7 or NO 7, or a new time like 7 15:30 or 7 04.10 15:30.")
+    # A request without them gets the number and the closing question.
+    assert bookings.format_request(_b(), t=t) == "#7 New one from Anna\n\nYes, no or later?"
     # A message without a commands line gets none added.
     assert bookings.format_acknowledgement(_b(), "confirm", t=t) == "#7 OK, Anna is in."
     assert bookings.format_ready_reminder(_b(), t=bt.Texts("en", {"ready_reminder": "#{number} go"})) == (
@@ -386,11 +387,29 @@ def _with_commands(lang):
 
 def test_the_english_texts_show_commands_where_expected():
     shown = {key for key, text in _with_commands("en").items() if _commands(text, "en")}
-    assert {"answer_help", "move_commands", "ready_reminder_commands", "list_commands", "ack_outcall_ready",
+    assert {"ready_reminder_commands", "ack_outcall_ready",
             "ack_outcall_proof", "taxi_link_in", "step_taxi_link", "step_wait_proof", "step_send_ready",
             "which", "which_about", "changed_meanwhile", "read_failed", "read_rest_failed", "nothing_moved",
-            "nothing_confirmed", "ask_confirm_or_offer", "ask_offer_or_confirm", "ask_offer_instead_booked",
-            "news_in_taxi_late"} <= shown
+            "nothing_confirmed", "news_in_taxi_late"} <= shown
+
+
+# What she is asked about a time: in her own words, never a list of reply
+# forms ("YES 7 / NO 7 / 7 15:30") or "answer with the number".
+PLAIN_QUESTIONS = ("answer_help", "move_commands", "list_commands", "which_one", "question_yes_no",
+                   "ask_confirm_or_offer", "ask_offer_or_confirm", "ask_offer_instead_booked")
+SHORT_QUESTION = {"en": "Yes, no or later?", "ru": "Да, нет или позже?", "lv": "Jā, nē vai vēlāk?",
+                  "es": "¿Sí, no o más tarde?"}
+
+
+@pytest.mark.parametrize("lang", ("en",) + OTHER)
+def test_she_is_asked_yes_no_or_later_without_reply_forms(lang):
+    texts = _with_commands(lang)
+    for key in PLAIN_QUESTIONS:
+        assert _commands(texts[key], lang) == [], (lang, key, texts[key])
+    assert bt.TEXTS["answer_help"][lang] == bt.TEXTS["move_commands"][lang] == SHORT_QUESTION[lang]
+    question = bt.Texts(lang).say("question_yes_no", n=3, who="Khan", when="Tue 21:00")
+    assert question.startswith("#3 Khan, Tue 21:00: ")
+    assert question.lower().endswith(SHORT_QUESTION[lang].lower()), question
 
 
 @pytest.mark.parametrize("lang", ("en",) + OTHER)
@@ -427,12 +446,12 @@ def test_spanish_shows_si_for_yes():
         assert "YES" not in forms["es"], key
 
 
-def test_the_main_messages_in_her_language_carry_her_commands():
+def test_the_main_messages_in_her_language_ask_in_her_words():
     ru, lv, es = (bt.Texts(lang) for lang in OTHER)
-    assert bookings.format_request(_b(), t=ru).endswith(
-        "Ответь ДА 7 или НЕТ 7 либо напиши новое время, например: 7 15:30 или 7 04.10 15:30.")
-    assert bookings.format_move_request(_moving(), t=lv).endswith(
-        "Atbildi JĀ 7, lai pārceltu, NĒ 7, lai paliktu vecais laiks, vai citu laiku, piem., 7 15:30.")
+    request = bookings.format_request(_b(), t=ru)
+    assert request.startswith("📅 Запрос на бронь #7\n") and request.endswith("\n\nДа, нет или позже?")
+    assert bookings.format_move_request(_moving(), t=lv).endswith("\n\nJā, nē vai vēlāk?")
+    assert bookings.format_request(_b(), t=es).endswith("\n\n¿Sí, no o más tarde?")
     assert bookings.format_ready_reminder(_b(state=bs.CONFIRMED), t=es) == (
         "🚕 #7 Anna (@anna), dom 4 oct 2026, 15:00–16:00 (salida): envía READY 7 cuando estés lista — "
         "entonces él pide el taxi.")

@@ -651,7 +651,8 @@ the opening hours, the calendar link and AI usage.
   owner; the reply offers the nearest free times and, if it was taken, the
   waitlist.
 - A free time goes to the owner (`booking.provider`) from this same account:
-  *Booking request #7 … Reply YES 7 or NO 7, or a new time like 7 15:30.*
+  *Booking request #7 … Yes, no or later?* (with booking.owner_free_text off: *Reply YES 7 or NO 7, or a new
+  time like 7 15:30.*)
   Numbers count per client from 1. **Nothing is confirmed until a person
   says yes**: the owner by text, or you in the panel.
 - **A group as the booker.** `booking.provider` can be a WhatsApp or Telegram

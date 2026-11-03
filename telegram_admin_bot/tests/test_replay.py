@@ -108,7 +108,7 @@ def test_the_taxi_steps_are_told_to_the_reply_as_in_the_runtime():
         return replay.booking_note(state, now, "Europe/Riga", address_set=True, **kw)
 
     confirmed = note("confirmed_news", outcall=True)
-    assert "outcall" in confirmed and "CONFIRMED" in confirmed and "Do not ask them to order" in confirmed
+    assert "the business said YES to the outcall" in confirmed and "Do not ask them to order" in confirmed
     # Without the outcall (or with the taxi steps off) it is the plain confirmation.
     assert "outcall" not in note("confirmed_news")
     assert "Do not ask them to order" not in note("confirmed_news", outcall=True, outcall_taxi=False)

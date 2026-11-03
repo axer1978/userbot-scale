@@ -1,5 +1,5 @@
 {
- "note": "Whole chats the way clients really write (the user's rule of 2026-11-02). Asking is not wasting time: a client who asks a lot (the price, more photos, her name, where exactly she is) gets every question answered, and no one comes to a meeting without photos and the address, so a booking chat has both before the meeting. The bot goes quiet only after he dodged her \"when?\" twice, or asks for the same thing a fourth time. Needs replies.no_reply_instruction. Run with: python replay.py --tenant <id> --scenarios real-chats",
+ "note": "Whole chats the way clients really write (the user's rule of 2026-11-02). Asking is not wasting time: a client who asks a lot (the price, more photos, her name, where exactly she is) gets every question answered, and no one comes to a meeting without photos and the address, so a booking chat has both before the meeting. The bot goes quiet only after he dodged her \"when?\" twice, or asks for the same thing a fourth time. When the business says yes she says a plain yes and when to come (\"yes love, come at 21:00, text me 15 min before\"), never confirmed, booked or booking, and while his time waits nothing about it (no \"let me check\", no \"I'll confirm\"). Needs replies.no_reply_instruction. Run with: python replay.py --tenant <id> --scenarios real-chats",
  "first_reply_address": false,
  "greeting_video": true,
  "never_says": [
@@ -10,7 +10,21 @@
   "the agency",
   "our girls",
   "check with",
-  "let you know"
+  "let you know",
+  "i'll confirm",
+  "will confirm",
+  "confirmed",
+  "booked",
+  "booking",
+  "appointment",
+  "reservation",
+  "apstiprin",
+  "rezervē",
+  "подтвержд",
+  "заброниров",
+  "checking",
+  "проверю",
+  "уточню"
  ],
  "scenarios": [
   {
@@ -33,7 +47,7 @@
     {"customer": "how much for an hour? and where are you?", "details": true, "address": true},
     {"customer": "can I see some photos first?", "details": false, "photos": true, "quiet": false},
     {"customer": "very nice 😍 21:00 for one hour", "booking": "requested", "intent": "book"},
-    {"event": "confirmed", "booking": "confirmed_news", "expect": {"has_any": ["21"]}},
+    {"event": "confirmed", "booking": "confirmed_news", "expect": {"has_all": ["21"], "has_any": ["come", "yes"]}},
     {"customer": "great, which floor is it?", "booking": "confirmed", "details": false, "quiet": false},
     {"customer": "on my way, 10 min", "booking": "confirmed", "quiet": false},
     {"customer": "I'm here", "booking": "arrived"},
@@ -48,7 +62,7 @@
      "details": false, "expect": {"lacks": ["apstiprin", "rezervēts"]}},
     {"customer": "Cik maksā stunda? Un kur tu atrodies?", "booking": "pending", "details": true, "address": true},
     {"customer": "Vari atsūtīt kādu bildi?", "booking": "pending", "photos": true},
-    {"event": "confirmed", "booking": "confirmed_news", "expect": {"has_any": ["20"]}},
+    {"event": "confirmed", "booking": "confirmed_news", "expect": {"has_all": ["20"], "has_any": ["nāc", "jā"]}},
     {"customer": "Esmu klāt", "booking": "arrived"},
     {"customer": "Paldies, bija ļoti jauki! 🙏", "booking": "way_in_sent", "details": false, "quiet": false}
    ]

@@ -38,7 +38,10 @@ CUSTOMER = 42
 NOW = datetime(2030, 3, 4, 12, 0, tzinfo=RIGA)
 
 
-_ids = itertools.count(1)
+# Incoming message ids, across the whole file. Above every id the fakes give
+# what is sent (500-9999, files 9000-9099): an incoming message with the id
+# of one sent in the same chat would be dropped as a duplicate.
+_ids = itertools.count(100_000)
 
 
 class FakeEvent:
@@ -166,11 +169,13 @@ async def test_a_request_goes_to_the_owner_and_yes_confirms_it(world):
     await customer(w, "tomorrow at 15?", book(service="haircut"))
 
     [request] = w.sent[OWNER]
-    assert "Booking request #1" in request and "Tue 05 Mar 2030, 15:00–16:00" in request and "YES 1" in request
+    assert "Booking request #1" in request and "Tue 05 Mar 2030, 15:00–16:00" in request
+    assert request.endswith("\n\nYes, no or later?")
     b = await only_booking(w)
     assert b["state"] == bs.PENDING and b["number"] == 1
-    # The customer's reply must not claim it is booked.
-    assert "Do NOT say it is confirmed" in w.script["notes"][-1]
+    # The customer's reply must not claim it is booked, nor that she will check or confirm it.
+    assert "the business has not answered yet" in w.script["notes"][-1]
+    assert "never that you will check, ask or confirm it" in w.script["notes"][-1]
 
     await owner(w, "YES 1")
 
@@ -178,7 +183,7 @@ async def test_a_request_goes_to_the_owner_and_yes_confirms_it(world):
     assert b["state"] == bs.CONFIRMED and b["decided_by"] == bs.OWNER
     assert w.sent[OWNER][-1].startswith("#1 confirmed")
     # The customer is told in a reply started by the confirmation itself.
-    assert "has just been CONFIRMED" in w.script["notes"][-1]
+    assert "the business said YES to" in w.script["notes"][-1]
     assert (await only_booking(w))["customer_notice"] is None
 
 
@@ -193,7 +198,7 @@ async def test_her_name_heads_the_owner_request_and_is_told_to_the_customer(worl
     assert w.sent[OWNER][-1].startswith("📅 Booking request #1\nCustomer: Anna (@anna)\nGirl: Lola\n")
 
     await owner(w, "YES 1")
-    assert "has just been CONFIRMED" in w.script["notes"][-1]
+    assert "the business said YES to" in w.script["notes"][-1]
     assert "Your name is Lola" in w.script["notes"][-1]
 
 
@@ -238,11 +243,11 @@ async def test_the_address_follows_the_reply_that_says_it_is_confirmed(world):
     assert "Brivibas iela 1, Riga" not in w.sent[CUSTOMER]
     assert "address is sent to them automatically" not in w.script["notes"][-1]
 
-    w.script["reply"] = "booked for tomorrow 15:00"
+    w.script["reply"] = "yes love, come tomorrow at 15:00"
     await owner(w, "YES 1")
 
     # The confirmation first, then the address word for word.
-    assert w.sent[CUSTOMER][-2:] == ["booked for tomorrow 15:00", "Brivibas iela 1, Riga"]
+    assert w.sent[CUSTOMER][-2:] == ["yes love, come tomorrow at 15:00", "Brivibas iela 1, Riga"]
     assert "address is sent to them automatically" in w.script["notes"][-1]
 
     # Once per booking, not again on the next message.
@@ -261,7 +266,7 @@ async def test_the_address_goes_with_the_prices_and_not_again_after_the_confirma
 
     w.script["reply"] = "checking, one moment"
     await customer(w, "tomorrow at 15?", book())
-    w.script["reply"] = "booked for tomorrow 15:00"
+    w.script["reply"] = "yes love, come tomorrow at 15:00"
     await owner(w, "YES 1")
     assert w.sent[CUSTOMER].count("Brivibas iela 1, Riga") == 1
     assert "address is sent to them automatically" not in w.script["notes"][-1]
@@ -286,9 +291,9 @@ async def test_with_address_only_when_asked_a_confirmation_still_brings_it(world
     w.app.config["booking"].update(address="Brivibas iela 1, Riga", address_timing="when_asked")
     w.script["reply"] = "checking, one moment"
     await customer(w, "tomorrow at 15?", book())
-    w.script["reply"] = "booked for tomorrow 15:00"
+    w.script["reply"] = "yes love, come tomorrow at 15:00"
     await owner(w, "YES 1")
-    assert w.sent[CUSTOMER][-2:] == ["booked for tomorrow 15:00", "Brivibas iela 1, Riga"]
+    assert w.sent[CUSTOMER][-2:] == ["yes love, come tomorrow at 15:00", "Brivibas iela 1, Riga"]
 
 
 async def test_quiet_until_answered_says_nothing_until_the_owner_answers(world):
@@ -306,10 +311,10 @@ async def test_quiet_until_answered_says_nothing_until_the_owner_answers(world):
     assert len(w.sent[OWNER]) == 1
 
     # The owner's answer is the next message.
-    w.script["reply"] = "yes love, booked for tomorrow 15:00"
+    w.script["reply"] = "yes love, come tomorrow at 15:00"
     await owner(w, "YES 1")
-    assert w.sent[CUSTOMER][-1] == "yes love, booked for tomorrow 15:00"
-    assert "has just been CONFIRMED" in w.script["notes"][-1]
+    assert w.sent[CUSTOMER][-1] == "yes love, come tomorrow at 15:00"
+    assert "the business said YES to" in w.script["notes"][-1]
 
 
 async def test_quiet_until_answered_still_sends_photos_they_ask_for(world, monkeypatch):
@@ -359,9 +364,9 @@ async def test_quiet_until_answered_still_sends_photos_they_ask_for(world, monke
     assert check["calls"] == 2 and files == [photo["id"]]
 
     # The owner's answer still comes next.
-    w.script["reply"] = "yes love, booked for tomorrow 15:00"
+    w.script["reply"] = "yes love, come tomorrow at 15:00"
     await owner(w, "YES 1")
-    assert w.sent[CUSTOMER][-1] == "yes love, booked for tomorrow 15:00"
+    assert w.sent[CUSTOMER][-1] == "yes love, come tomorrow at 15:00"
 
 
 async def test_the_greeting_video_goes_with_the_first_reply_only(world, monkeypatch):
@@ -862,7 +867,7 @@ async def test_no_declines_and_the_customer_is_told(world):
     await customer(w, "tomorrow at 15?", book())
     await owner(w, "NO 1")
     assert (await only_booking(w))["state"] == bs.CANCELLED
-    assert "NOT available" in w.script["notes"][-1]
+    assert "does not work after all" in w.script["notes"][-1]
 
 
 async def test_a_bare_yes_answers_the_only_open_request_or_asks_which(world):
@@ -870,7 +875,9 @@ async def test_a_bare_yes_answers_the_only_open_request_or_asks_which(world):
     await customer(w, "tomorrow at 15?", book())
     await customer(w, "and me at 17?", book("2030-03-05T17:00"), chat=43)
     await owner(w, "yes")
-    assert "Which booking?" in w.sent[OWNER][-1]
+    # Asked by his name and time, never "add its number".
+    assert w.sent[OWNER][-1].startswith("Which one: ") and "YES 2" not in w.sent[OWNER][-1]
+    assert "Tue 15:00" in w.sent[OWNER][-1] and "Tue 17:00" in w.sent[OWNER][-1]
     # A yes sent as a reply to the request message is unambiguous.
     b1 = await w.store.by_number(1)
     await owner(w, "yes", reply_to=b1["provider_message_id"])
@@ -986,7 +993,7 @@ async def test_unclear_words_get_one_short_question(world):
     await customer(w, "tomorrow at 15?", book())
     w.script["owner_answer"] = said("unclear")
     await owner(w, "hmm maybe, who is he?")
-    assert w.sent[OWNER][-1] == "#1 Anna, Tue 15:00: yes or no? Or give another time."
+    assert w.sent[OWNER][-1] == "#1 Anna, Tue 15:00: yes, no or later?"
     assert (await only_booking(w))["state"] == bs.PENDING
     # The reader's own question, when it has one.
     w.script["owner_answer"] = reading(answer(1, "unclear", question="Should he come at 15 or later?"))
@@ -1178,8 +1185,8 @@ async def test_several_bookings_in_one_message_get_one_answer(world):
         "#2 declined ❌ — Anna will be told.",
     ]
     # Each customer hears his own news.
-    assert any("has just been CONFIRMED" in note for note in w.script["notes"])
-    assert "NOT available" in w.script["notes"][-1] or "NOT available" in w.script["notes"][-2]
+    assert any("the business said YES to" in note for note in w.script["notes"])
+    assert "does not work after all" in w.script["notes"][-1] or "does not work after all" in w.script["notes"][-2]
 
 
 async def test_her_messages_are_read_one_at_a_time_in_order(world, monkeypatch):
@@ -1224,7 +1231,7 @@ async def test_her_words_for_him_go_with_his_next_reply_once(world):
                                  "I'll tell him: bring cash, no cards.")
     # His reply, started by her answer, carries the confirmation and her words.
     note = w.script["notes"][-1]
-    assert "has just been CONFIRMED" in note
+    assert "the business said YES to" in note
     assert 'NEWS TO PASS ON IN THIS REPLY: tell them "bring cash, no cards"' in note
     assert "never 'let me check'" in note
     # Once: the reply that carried them cleared them.
@@ -1241,7 +1248,7 @@ async def test_a_decline_with_words_passes_them_on(world):
     assert (await only_booking(w))["state"] == bs.CANCELLED
     assert w.sent[OWNER][-1] == "#1 declined ❌ — Anna will be told. I'll tell him: I'm busy today, maybe tomorrow."
     note = w.script["notes"][-1]
-    assert "NOT available" in note and 'tell them "I\'m busy today, maybe tomorrow"' in note
+    assert "does not work after all" in note and 'tell them "I\'m busy today, maybe tomorrow"' in note
 
 
 async def test_her_words_wait_for_his_next_reply_across_a_restart(world):
@@ -1335,7 +1342,7 @@ async def test_her_remarks_about_him_stay_with_her(world):
     assert (await only_booking(w))["state"] == bs.CONFIRMED
     assert "I'll tell him" not in w.sent[OWNER][-1]
     note = w.script["notes"][-1]
-    assert "has just been CONFIRMED" in note and "tell them" not in note and "weird" not in note
+    assert "the business said YES to" in note and "tell them" not in note and "weird" not in note
 
 
 async def test_a_yes_for_a_shorter_time_confirms_that_length(world):
@@ -1347,7 +1354,7 @@ async def test_a_yes_for_a_shorter_time_confirms_that_length(world):
     assert b["state"] == bs.CONFIRMED and b["ends_at"].astimezone(RIGA).strftime("%H:%M") == "16:00"
     assert b["blocked_until"] == b["ends_at"]
     assert w.sent[OWNER][-1] == "#1 confirmed ✅ for Tue 05 Mar 2030, 15:00–16:00 (1 hour) — Anna will be told."
-    assert "the appointment on Tue 05 Mar 2030, 15:00–16:00 has just been CONFIRMED" in w.script["notes"][-1]
+    assert "the business said YES to Tue 05 Mar 2030, 15:00–16:00" in w.script["notes"][-1]
 
 
 async def test_a_yes_for_longer_than_is_free_confirms_nothing(world):
@@ -1449,7 +1456,7 @@ async def test_words_that_fit_two_requests_get_asked_which_one(world):
     await customer(w, "and me at 17?", book("2030-03-05T17:00"), chat=43)
     w.script["owner_answer"] = reading(answer(None, "yes"))
     await owner(w, "ok fine")
-    assert w.sent[OWNER][-1] == "Which one: #1 Anna, Tue 15:00, or #2 Anna, Tue 17:00? Answer with the number."
+    assert w.sent[OWNER][-1] == "Which one: Anna, Tue 15:00, or Anna, Tue 17:00?"
     assert {(await w.store.by_number(n))["state"] for n in (1, 2)} == {bs.PENDING}
 
 
@@ -1512,7 +1519,7 @@ async def test_the_customer_moves_a_confirmed_booking_with_the_owners_yes(world)
     await owner(w, "YES 1")
     b = await only_booking(w)
     assert b["number"] == 1 and b["starts_at"].astimezone(RIGA).day == 7 and b["proposed_by"] is None
-    assert "MOVED" in w.script["notes"][-1]
+    assert "the time is now" in w.script["notes"][-1]
     events = [e["action"] for e in await w.store.events(b["id"])]
     assert events[-1] == "reschedule" and "cancel" not in events
 
@@ -1526,7 +1533,7 @@ async def confirmed_booking(w, start="2030-03-05T15:00"):
     return await only_booking(w)
 
 
-async def test_reminders_go_once_and_1_confirms_attendance(world):
+async def test_reminders_go_once_and_a_yes_confirms_attendance(world):
     w = world
     await confirmed_booking(w)
     replies_before = w.script["calls"]
@@ -1538,24 +1545,27 @@ async def test_reminders_go_once_and_1_confirms_attendance(world):
     await settle(w.app)
 
     assert w.script["calls"] == replies_before + 1
-    assert "SEND NOW" in w.script["notes"][-1] and "reply 1" in w.script["notes"][-1]
+    assert "SEND NOW" in w.script["notes"][-1] and "still coming" in w.script["notes"][-1]
+    assert "1 to confirm" not in w.script["notes"][-1]
     [event] = [e for e in await audit.list_events(w.app.pool, tenant_id=w.app.tenant_id)
                if e["event"] == audit.REMINDER_SENT]
     assert event["payload"]["minutes_before"] == 120
 
     extract_calls = w.script["extract_calls"]
-    await customer(w, "1")
+    await customer(w, "yes")
     assert (await only_booking(w))["attendance_confirmed_at"] is not None
     assert w.script["extract_calls"] == extract_calls  # decided in code, no model call
 
 
-async def test_2_after_a_reminder_cancels(world):
+async def test_after_a_reminder_a_bare_2_cancels_nothing_and_a_no_is_read_in_his_words(world):
     w = world
     await confirmed_booking(w)
     w.clock["now"] = datetime(2030, 3, 5, 13, 30, tzinfo=RIGA)
     await w.app.handle_command("scheduler_tick", {})
     await settle(w.app)
-    await customer(w, "2")
+    await customer(w, "2")  # "2 min"? Never a cancel on its own.
+    assert (await only_booking(w))["state"] == bs.CONFIRMED
+    await customer(w, "no sorry, can't come", {"intent": "cancel"})
     assert (await only_booking(w))["state"] == bs.CANCELLED
 
 
@@ -1591,7 +1601,7 @@ async def test_the_customer_page_cancel_tells_both_sides(world):
     await settle(w.app)
     assert (await only_booking(w))["state"] == bs.CANCELLED
     assert "cancelled by the customer" in w.sent[OWNER][-1]
-    assert "CANCELLED" in w.script["notes"][-1]
+    assert "is off" in w.script["notes"][-1]
 
 
 # ------------------------------------------------------------- arrival
@@ -1858,7 +1868,7 @@ async def test_booking_news_is_delivered_even_to_an_acknowledgement(world):
     calls = w.script["calls"]
     await customer(w, "ok", None)
     assert w.script["calls"] == calls + 1
-    assert "has just been CONFIRMED" in w.script["notes"][-1]
+    assert "the business said YES to" in w.script["notes"][-1]
 
 
 async def test_the_no_reply_instruction_lets_the_model_stay_silent(world, pg_pool):
@@ -1896,7 +1906,7 @@ async def test_her_length_and_refusal_survive_until_her_plain_yes(world):
     # she said repeated — and the refusal holds at once.
     w.script["owner_answer"] = reading(answer(1, "none", duration_minutes=60, extras_no=["anal"]))
     await owner(w, "max 1 hour and no anal")
-    assert w.sent[OWNER][-1] == ("#1 Anna, Tue 15:00: yes or no? Or give another time. With your answer: "
+    assert w.sent[OWNER][-1] == ("#1 Anna, Tue 15:00: yes, no or later? With your answer: "
                                  "for 1 hour; no anal.")
     held = await only_booking(w)
     assert (held["state"], held["extras_no"]) == (bs.PENDING, "anal")
@@ -1919,7 +1929,7 @@ async def test_a_plain_yes_after_a_question_still_counts_when_her_words_cannot_b
     await customer(w, "and me at 17?", book("2030-03-05T17:00"), chat=43)
     w.script["owner_answer"] = reading(answer(None, "yes", tell_customer="bring cash"))
     await owner(w, "yes, tell him to bring cash")
-    assert w.sent[OWNER][-1].startswith("Which one: #1 Anna, Tue 15:00, or #2 Anna, Tue 17:00?")
+    assert w.sent[OWNER][-1].startswith("Which one: Anna, Tue 15:00, or Anna, Tue 17:00?")
     assert w.sent[OWNER][-1].endswith("With your answer: tell him bring cash.")
     w.script["owner_answer"] = ai_responder.AIResponderError("DeepSeek is down")
     await owner(w, "YES 1")
@@ -1938,7 +1948,7 @@ async def test_words_for_the_other_one_never_land_on_the_quoted_request(world):
     assert (await w.store.by_number(1))["state"] == bs.CONFIRMED
     assert (await w.store.by_number(1))["booker_news"] == [] and (await w.store.by_number(2))["booker_news"] == []
     assert not any("10 min late" in note for note in w.script["notes"])
-    assert w.sent[OWNER][-1].split("\n")[-1].startswith("Which one: #1 Anna")
+    assert w.sent[OWNER][-1].split("\n")[-1].startswith("Which one: Anna, Tue 15:00")
 
 
 async def test_a_cancel_with_words_passes_the_words_on(world):
@@ -1994,7 +2004,7 @@ async def test_a_loose_yes_or_no_read_as_nothing_gets_her_a_question_while_a_req
     w.script["owner_answer"] = reading()
     await owner(w, "no problem babe")
     assert (await only_booking(w))["state"] == bs.PENDING
-    assert w.sent[OWNER][-1] == "#1 Anna, Tue 15:00: yes or no? Or give another time."
+    assert w.sent[OWNER][-1] == "#1 Anna, Tue 15:00: yes, no or later?"
 
 
 async def test_a_number_she_typed_that_the_reading_misses_is_asked_about(world):
@@ -2005,7 +2015,7 @@ async def test_a_number_she_typed_that_the_reading_misses_is_asked_about(world):
     await owner(w, "YES 1 and tell him to bring cash")
     assert (await w.store.by_number(1))["state"] == bs.PENDING
     assert (await w.store.by_number(2))["state"] == bs.PENDING
-    assert w.sent[OWNER][-1] == "#1 Anna, Tue 15:00: yes or no? Or give another time."
+    assert w.sent[OWNER][-1] == "#1 Anna, Tue 15:00: yes, no or later?"
 
 
 async def test_the_models_other_word_for_yes_still_confirms(world):
@@ -2390,7 +2400,7 @@ async def test_ok_after_a_panel_notice_never_confirms_the_waiting_request(world)
     # Read (the last message was not #2's request), about nothing: asked.
     assert len(w.script["owner_calls"]) == calls + 1
     assert (await w.store.by_number(2))["state"] == bs.PENDING
-    assert w.sent[OWNER][-1] == "#2 Anna, Tue 18:00: yes or no? Or give another time."
+    assert w.sent[OWNER][-1] == "#2 Anna, Tue 18:00: yes, no or later?"
 
 
 async def test_after_a_restart_a_bare_ok_after_his_answer_is_read_not_guessed(world):
@@ -2480,7 +2490,7 @@ async def test_asked_again_her_held_words_are_repeated_and_kept(world):
     await owner(w, "max 1 hour and no anal")
     w.script["owner_answer"] = reading()
     await owner(w, "YES")
-    assert w.sent[OWNER][-1] == ("#1 Anna, Tue 15:00: yes or no? Or give another time. With your answer: "
+    assert w.sent[OWNER][-1] == ("#1 Anna, Tue 15:00: yes, no or later? With your answer: "
                                  "for 1 hour; no anal.")
 
 
@@ -2680,14 +2690,14 @@ async def test_a_group_as_the_booker_gets_the_request_and_anyone_in_it_answers(g
     w = group_world
     await customer(w, "tomorrow at 15?", book())
     [request] = w.sent[GROUP]
-    assert "Booking request #1" in request and "YES 1" in request
+    assert "Booking request #1" in request and request.endswith("\n\nYes, no or later?")
     assert OWNER not in w.sent
 
     await in_group(w, "YES 1", sender="Lina")
     b = await only_booking(w)
     assert b["state"] == bs.CONFIRMED and b["decided_by"] == bs.OWNER
     assert w.sent[GROUP][-1].startswith("#1 confirmed")
-    assert "has just been CONFIRMED" in w.script["notes"][-1]
+    assert "the business said YES to" in w.script["notes"][-1]
     # The group's thread says who wrote what.
     assert "Lina: YES 1" in await group_texts(w)
     assert (await w.db.get_conversation(GROUP))["display_name"] == "Riga bookings"
