@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, Collection, Optional, Sequence
 import ai_responder
 import audit
 import availability
+import booker_shifts
 import booker_texts
 import booking_states as bs
 import booking_store
@@ -109,10 +110,20 @@ STANDING_SECTION = "booking"
 # him something (the photo itself is not looked at).
 PHOTO_TO_HER = "[photo]"
 
+# How many bookings' "which booker chats have its request" are kept.
+SENT_TO_KEPT = 1000
+# What a request handed to the booker on duty says: when it changed while
+# it was on its way, the handed message is not the request any more.
+HANDED_FIELDS = ("state", "starts_at", "ends_at", "proposed_starts_at", "proposed_ends_at", "proposed_by")
+
 # While one message of hers is carried out: the customers' chats whose
 # reply waits until all of it is done (her words stored with the change),
 # so each gets one reply that carries everything.
 _held_nudges: contextvars.ContextVar[Optional[set[int]]] = contextvars.ContextVar("held_nudges", default=None)
+# While one message of hers is carried out: the booker chat it came from
+# (booking.shifts: there can be several). A quote, or the bot's question to
+# her, counts only in the chat it was in.
+_owner_chat: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("owner_chat", default=None)
 
 
 @dataclass
@@ -148,6 +159,8 @@ class _Held:
     group: tuple[int, ...]
     words: Optional[bookings.OwnerCommand] = None
     had_words: bool = False
+    # The booker chat it was asked in: only an answer there answers it.
+    chat_id: Optional[int] = None
 
 
 @dataclass
@@ -200,13 +213,25 @@ class BookingFlow:
         # last ABOUT_KEPT): a quote of one, or her bare YES right after it,
         # falls on that booking. Not kept over a restart: a message the bot
         # can't place makes her bare YES / NO read, never guessed.
-        self._about: "collections.OrderedDict[str, int]" = collections.OrderedDict()
+        self._about: "collections.OrderedDict[tuple[Optional[int], str], int]" = collections.OrderedDict()
         # The bookings her message being handled is about (answer_owner).
         self._answer_about: set[int] = set()
         # Booking id -> (first, last) failed try at telling her its old words
         # are dropped (tick): tried again after DROP_RETRY.
         self._drop_failed: dict[int, tuple[datetime, datetime]] = {}
-        self._provider: tuple[str, Optional[int], float] = ("", None, 0.0)
+        # Each booker (booking.provider, booking.shifts) -> (her chat, when
+        # it was looked up); one not found is looked up again after
+        # PROVIDER_RETRY_SECONDS.
+        self._resolved: dict[str, tuple[Optional[int], float]] = {}
+        # Booking id -> when its request was last handed to the booker on
+        # duty (hand_over): a send that fails is tried again after
+        # RESUBMIT_SECONDS.
+        self._handover_attempts: dict[int, float] = {}
+        # Booking id -> the booker chats its request (or the move he asked
+        # for) went to, besides the one stored on it (provider_chat_id):
+        # one that has it is not sent it again, and her bare YES / NO may
+        # fall on it. The last SENT_TO_KEPT; not kept over a restart.
+        self._sent_to: "collections.OrderedDict[int, set[int]]" = collections.OrderedDict()
         self._calendar: Optional[google_calendar.GoogleCalendar] = None
         self._calendar_key: tuple[str, str] = ("", "")
         self._submit_attempts: dict[int, float] = {}
@@ -539,27 +564,90 @@ class BookingFlow:
 
     # ------------------------------------------------------- the owner
 
+    def booker_values(self) -> list[str]:
+        """Every booker the settings name: booking.provider and each
+        shift's (booker_shifts)."""
+        return booker_shifts.all_bookers(self.settings)
+
+    def has_booker(self) -> bool:
+        return bool(self.booker_values())
+
+    def booker_on_duty(self) -> str:
+        """The booker for this moment: the shift on now, else
+        booking.provider."""
+        local = self.now().astimezone(bookings.tzinfo_for(self.tz))
+        return booker_shifts.on_duty(self.settings.get("provider") or "", self.settings.get("shifts") or (), local)
+
     async def provider_chat_id(self) -> Optional[int]:
-        value = (self.settings.get("provider") or "").strip()
+        """The chat of the booker on duty now (booker_on_duty): where every
+        request and update goes. A shift's booker who can't be found (a
+        wrong number, a group the account left): booking.provider, rather
+        than nobody."""
+        on_duty = self.booker_on_duty()
+        chat_id = await self._resolve(on_duty)
+        main = (self.settings.get("provider") or "").strip()
+        if chat_id is None and main and on_duty != main:
+            chat_id = await self._resolve(main)
+        return chat_id
+
+    async def booker_chats(self) -> set[int]:
+        """The chats of every booker the settings name, on duty or not."""
+        found = set()
+        for value in self.booker_values():
+            chat_id = await self._resolve(value)
+            if chat_id is not None:
+                found.add(chat_id)
+        return found
+
+    async def is_booker(self, chat_id: int) -> bool:
+        """A booker's chat, on duty or not: never a customer's. One whose
+        shift is over still answers, and never gets a customer's reply."""
+        if chat_id == await self.provider_chat_id():
+            return True
+        on_duty = self.booker_on_duty()
+        for value in self.booker_values():
+            if value != on_duty and await self._resolve(value) == chat_id:
+                return True
+        return False
+
+    async def _resolve(self, value: str) -> Optional[int]:
+        value = (value or "").strip()
         rt = self.rt
         if not value or not rt.transport.ready:
             return None
-        cached_value, cached_id, resolved_at = self._provider
         now = asyncio.get_running_loop().time()
-        if cached_value == value and (cached_id is not None or now - resolved_at < self.PROVIDER_RETRY_SECONDS):
-            return cached_id
+        cached = self._resolved.get(value)
+        if cached is not None and (cached[0] is not None or now - cached[1] < self.PROVIDER_RETRY_SECONDS):
+            return cached[0]
         try:
             chat_id, peer = await rt.transport.resolve_owner(value)
             await rt.db.upsert_conversation(chat_id, peer.name, peer.username, peer.is_bot, peer.access_hash)
         except Exception as exc:
             # Why, when it says (not in that group, no such name): the
-            # operator fixes booking.provider from this line.
+            # operator fixes booking.provider (or the shift) from this line.
             why = f"{type(exc).__name__}: {exc}" if isinstance(exc, ValueError) else type(exc).__name__
             log.warning("[%s] Cannot resolve the booking owner %r: %s", rt.session_id, value, why)
-            self._provider = (value, None, now)
+            self._resolved[value] = (None, now)
             return None
-        self._provider = (value, chat_id, now)
+        # Bookers no longer named are forgotten.
+        named = set(self.booker_values())
+        for old in [v for v in self._resolved if v not in named]:
+            self._resolved.pop(old, None)
+        self._resolved[value] = (chat_id, now)
         return chat_id
+
+    async def send_owner_main(self, text: str, *, reason: str) -> Optional[dict[str, Any]]:
+        """A notice for the account's owner, not about a booking (billing,
+        the weekly summary): to booking.provider, else the booker on duty."""
+        main = await self._resolve(self.settings.get("provider") or "")
+        if main is None:
+            return await self.send_owner(text, reason=reason)
+        try:
+            return await self.rt.send_as_me(main, text, reason=reason)
+        except Exception as exc:
+            if not await self.rt.handle_send_failure(main, exc):
+                log.warning("[%s] Could not message the booking owner: %s", self.rt.session_id, type(exc).__name__)
+            return None
 
     async def send_owner(self, text: str, *, reason: str) -> Optional[dict[str, Any]]:
         provider = await self.provider_chat_id()
@@ -586,7 +674,10 @@ class BookingFlow:
         self._remember(row, booking["number"])
         ref = self.owner_message_ref(row)
         if remember and any(ref.values()):
-            await self.store.set_fields(booking["id"], **ref)
+            # The chat too: with shifts, it may not be the one the request went to.
+            where = {"provider_chat_id": row["chat_id"]} if row.get("chat_id") is not None else {}
+            await self.store.set_fields(booking["id"], **where, **ref)
+            self._note_sent(booking["id"], row.get("chat_id"), fresh=True)
         return True
 
     def _remember(self, row: Optional[dict[str, Any]], about: Optional[int]) -> None:
@@ -596,14 +687,51 @@ class BookingFlow:
             return
         ref = row.get("wa_message_id") or row.get("telegram_id")
         if ref is not None and about:
-            self._about[str(ref)] = about
-            self._about.move_to_end(str(ref))
+            key = (row.get("chat_id"), str(ref))
+            self._about[key] = about
+            self._about.move_to_end(key)
             while len(self._about) > ABOUT_KEPT:
                 self._about.popitem(last=False)
 
     def _quoted(self, reply_to: Any) -> Optional[int]:
-        """The booking a message she quoted is about, when the bot knows."""
-        return self._about.get(str(reply_to)) if reply_to is not None else None
+        """The booking a message she quoted (in the booker chat being
+        answered) is about, when the bot knows."""
+        return self._about.get((_owner_chat.get(), str(reply_to))) if reply_to is not None else None
+
+    @staticmethod
+    def _sent_here(booking: dict[str, Any], ref: Any) -> bool:
+        """`ref` is the request (or move request) about this booking in the
+        booker chat being answered: a message id is only unique in its chat."""
+        if ref is None or ref not in (booking.get("provider_message_id"), booking.get("provider_wa_message_id")):
+            return False
+        chat, where = _owner_chat.get(), booking.get("provider_chat_id")
+        return chat is None or where is None or chat == where
+
+    def _note_sent(self, booking_id: int, chat_id: Optional[int], *, fresh: bool = False) -> None:
+        """The request (or move) about this booking went to this booker chat.
+        `fresh`: a new one (his new time, a move he asks for): the chats that
+        had the one before have only that."""
+        if chat_id is None:
+            return
+        if fresh:
+            self._sent_to.pop(booking_id, None)
+        self._sent_to.setdefault(booking_id, set()).add(chat_id)
+        self._sent_to.move_to_end(booking_id)
+        while len(self._sent_to) > SENT_TO_KEPT:
+            self._sent_to.popitem(last=False)
+
+    def _went_to(self, booking: dict[str, Any]) -> set[int]:
+        """The booker chats that have the request (or move) about it."""
+        chats = set(self._sent_to.get(booking["id"], ()))
+        if booking.get("provider_chat_id") is not None:
+            chats.add(booking["provider_chat_id"])
+        return chats
+
+    def _went_here(self, booking: dict[str, Any]) -> bool:
+        """Its request went to the booker chat being answered (with shifts,
+        a booker's bare YES / NO never falls on a request she was not sent)."""
+        chat, went = _owner_chat.get(), self._went_to(booking)
+        return chat is None or not went or chat in went
 
     def owner_message_ref(self, row: dict[str, Any]) -> dict[str, Any]:
         """Where the id of a message sent to the owner is kept: Telegram's
@@ -620,10 +748,16 @@ class BookingFlow:
         if provider is None:
             await self.rt.push_error(
                 booking["chat_id"],
-                f"Booking #{booking['number']} was NOT sent to the owner: no owner is set in booking.provider, "
-                "or it cannot be found (a phone number only works if that person lets anyone find them by "
-                "number — an @username is safest; a group only if this account is in it). It is retried "
-                "every few minutes, and can be answered from the Bookings page.",
+                f"Booking #{booking['number']} was NOT sent to the owner: " + (
+                    "no booker is on shift now (booking.shifts) and booking.provider is empty"
+                    if not self.booker_on_duty() and self.settings.get("shifts") else
+                    "the booker on shift now (booking.shifts) cannot be found — check that shift's number or "
+                    "group — and booking.provider is empty or can't be reached either"
+                    if self.booker_on_duty() != (self.settings.get("provider") or "").strip() else
+                    "no owner is set in booking.provider, or it cannot be found (a phone number only works if "
+                    "that person lets anyone find them by number — an @username is safest; a group only if this "
+                    "account is in it)") + ". It is retried every few minutes, and can be answered from the "
+                "Bookings page.",
             )
             await self.broadcast(booking)
             return False
@@ -647,6 +781,7 @@ class BookingFlow:
         if row.get("wa_message_id"):
             await self.store.set_fields(booking["id"], provider_wa_message_id=row["wa_message_id"])
         self._submit_attempts.pop(booking["id"], None)
+        self._note_sent(booking["id"], provider, fresh=True)
         await self.announce(booking, f"📅 Booking #{booking['number']} requested for {bookings.describe_when(booking)} "
                                      "— waiting for the owner.")
         await self.sync_calendar(None, booking)
@@ -662,9 +797,11 @@ class BookingFlow:
         async with self._owner_lock:
             held: set[int] = set()
             token = _held_nudges.set(held)
+            chat_token = _owner_chat.set(chat_id)
             try:
                 return await self._owner_message(chat_id, text, reply_to, message_id)
             finally:
+                _owner_chat.reset(chat_token)
                 _held_nudges.reset(token)
                 self._pending_held.clear()
                 self._answer_about.clear()
@@ -770,7 +907,7 @@ class BookingFlow:
         awaiting = await self.store.awaiting_owner()
         waiting = {b["number"] for b in awaiting}
         if reply_to is not None and cmd.number is None:
-            if any(reply_to in (b.get("provider_message_id"), b.get("provider_wa_message_id")) for b in awaiting):
+            if any(self._sent_here(b, reply_to) for b in awaiting):
                 pass  # the request itself: it is the booking, as always
             elif quoted is not None and quoted in waiting:
                 cmd = replace(cmd, number=quoted)
@@ -794,22 +931,31 @@ class BookingFlow:
         one request waiting (as it always was), else None."""
         row = await self.rt.db.last_outgoing(chat_id)
         if row is None:
-            return awaiting[0]["number"] if len(awaiting) == 1 else None
+            if len(awaiting) != 1:
+                return None
+            return awaiting[0]["number"] if self._went_here(awaiting[0]) else 0
         ref = row.get("wa_message_id") or row.get("telegram_id")
         if ref is None:
             return 0
         for booking in awaiting:
-            if ref in (booking.get("provider_message_id"), booking.get("provider_wa_message_id")):
+            if self._sent_here(booking, ref):
                 return booking["number"]
-        return self._about.get(str(ref), 0)
+        return self._about.get((chat_id, str(ref)), 0)
 
     def _fresh_held(self, message_id: Optional[int]) -> dict[int, _Held]:
         """The bot's questions to her her message (`message_id`) can answer:
         asked less than ANSWER_WINDOW ago, and before she wrote it."""
         now = self.now()
         return {n: held for n, held in self._held.items()
-                if now - held.at < ANSWER_WINDOW
+                if now - held.at < ANSWER_WINDOW and self._held_here(held)
                 and (message_id is None or held.question_id is None or held.question_id < message_id)}
+
+    @staticmethod
+    def _held_here(held: _Held) -> bool:
+        """The bot's question was asked in the booker chat being answered
+        (another booker's answer does not answer it)."""
+        chat = _owner_chat.get()
+        return chat is None or held.chat_id is None or held.chat_id == chat
 
     def _answers_held(self, cmd: Optional[bookings.OwnerCommand], message_id: Optional[int]) -> bool:
         if cmd is None:
@@ -842,7 +988,8 @@ class BookingFlow:
         had her words and that it does not answer (asked too long ago, or
         only after she wrote it): she is told they did not go with it."""
         held = self._held.get(cmd.number) if cmd.number is not None else None
-        if held is None or cmd.number in self._fresh_held(message_id) or not held.had_words:
+        if held is None or not self._held_here(held) or cmd.number in self._fresh_held(message_id) \
+                or not held.had_words:
             return []
         self._held.pop(cmd.number, None)
         return [bookings.format_held_lost(cmd.number, held.words, t=self.texts())]
@@ -894,6 +1041,8 @@ class BookingFlow:
         if booking is not None:
             n = booking["number"]
             held = self._held.get(n)
+            if held is not None and not self._held_here(held):
+                held = None
             words = words or (held.words if held is not None else None)
             self._pending_held.append(((n,), words, had_words or bool(held and held.had_words)))
             self._answer_about.add(n)
@@ -928,7 +1077,7 @@ class BookingFlow:
                 kept = words or (old.words if old is not None else None)
                 carried = kept is not None and (kept.has_words or kept.minutes is not None)
                 self._held[number] = _Held(asked_at, question, group, kept,
-                                           had_words or carried or bool(old and old.had_words))
+                                           had_words or carried or bool(old and old.had_words), chat_id=chat_id)
         self._pending_held.clear()
 
     async def owner_command(self, cmd: bookings.OwnerCommand, reply_to: Any) -> str:
@@ -1201,7 +1350,7 @@ class BookingFlow:
         awaiting = await self.store.awaiting_owner()
         if reply_to is not None:
             for booking in awaiting:
-                if reply_to in (booking.get("provider_message_id"), booking.get("provider_wa_message_id")):
+                if self._sent_here(booking, reply_to):
                     return booking
             # She quoted another message the bot sent her about a booking:
             # that booking, never the one that merely waits (while her own
@@ -1209,7 +1358,7 @@ class BookingFlow:
             quoted = self._quoted(reply_to) if self.settings.get("owner_free_text", True) else None
             if quoted is not None:
                 return await self.store.by_number(quoted)
-        if cmd.kind in ("yes", "no", "unclear") and len(awaiting) == 1:
+        if cmd.kind in ("yes", "no", "unclear") and len(awaiting) == 1 and self._went_here(awaiting[0]):
             return awaiting[0]
         return None
 
@@ -1233,7 +1382,7 @@ class BookingFlow:
         request, or another message the bot sent her about it."""
         if reply_to is None:
             return None
-        return next((b for b in rows if reply_to in (b.get("provider_message_id"), b.get("provider_wa_message_id"))
+        return next((b for b in rows if BookingFlow._sent_here(b, reply_to)
                      or (quoted is not None and b["number"] == quoted)), None)
 
     async def read_owner_answer(self, chat_id: int, text: str, reply_to: Any, rows: Sequence[dict[str, Any]], *,
@@ -1391,7 +1540,7 @@ class BookingFlow:
         else:
             raise ValueError(f"unknown booking action {action!r}")
         updated = await self.change(booking, change, actor=bs.ADMIN, via=VIA_PANEL)
-        if self.settings.get("provider"):
+        if self.has_booker():
             t = self.texts()
             await self.send_owner(bookings.format_acknowledgement(updated, change.action, outcall_taxi=self.outcall_taxi(),
                                                                   proof=self.outcall_proof(), t=t)
@@ -1702,7 +1851,7 @@ class BookingFlow:
             return
         first = not booking.get("arrived_at")
         sent = await self.send_instructions(booking)
-        if first and self.settings.get("arrival_to_owner", True) and self.settings.get("provider"):
+        if first and self.settings.get("arrival_to_owner", True) and self.has_booker():
             await self.tell_owner(booking, bookings.format_arrived(booking, said, way_in_sent=sent,
                                                                    name=self.owner_name(), t=self.texts()))
 
@@ -1915,7 +2064,7 @@ class BookingFlow:
             updated = await self.mark_in_taxi(booking, by=bs.ADMIN)
             if updated is None:
                 raise bs.IllegalTransition(f"the customer of #{n} already knows she is in the taxi")
-        if self.settings.get("provider"):
+        if self.has_booker():
             t = self.texts()
             await self.send_owner(bookings.format_acknowledgement(updated, action, t=t) + " " + t.say("from_panel"),
                                   reason="panel booking change passed on to the owner")
@@ -2284,6 +2433,9 @@ class BookingFlow:
                 await guarded(f"the taxi steps of #{booking['number']}",
                               lambda b=booking: self.outcall_clock(b, now))
 
+        if not self.rt.paused() and self.settings.get("shifts"):
+            await guarded("handing requests to the booker on duty", lambda: self.hand_over(now))
+
         unsent = [] if self.rt.paused() else await self.store.unsent()
         for booking in unsent:
             last = self._submit_attempts.get(booking["id"], 0.0)
@@ -2304,9 +2456,66 @@ class BookingFlow:
             if start < cutoff:
                 self.last_unavailable.pop(chat_id, None)
         loop_now = asyncio.get_running_loop().time()
-        for booking_id, at in list(self._submit_attempts.items()):
-            if loop_now - at >= self.RESUBMIT_SECONDS:
-                self._submit_attempts.pop(booking_id, None)
+        for attempts in (self._submit_attempts, self._handover_attempts):
+            for booking_id, at in list(attempts.items()):
+                if loop_now - at >= self.RESUBMIT_SECONDS:
+                    attempts.pop(booking_id, None)
+
+    async def hand_over(self, now: datetime) -> None:
+        """booking.shifts: a request (or a move he asked for) that still
+        waits for an answer, sent to a booker who is not on duty now, goes
+        to the one on duty too. Whoever answers first decides it; the
+        other's answer after that is refused like any answer to a booking
+        already decided. The request stays answerable where it was (her
+        quote of it is still placed while the bot runs)."""
+        on_duty = await self.provider_chat_id()
+        if on_duty is None:
+            return
+        loop_now = asyncio.get_running_loop().time()
+        for booking in await self.store.awaiting_owner():
+            went_to = self._went_to(booking)
+            if booking["state"] == bs.REQUESTED or not went_to or on_duty in went_to:
+                continue  # not sent yet (submit sends it), or she has it already
+            if booking.get("proposed_by") == bs.OWNER:
+                continue  # answered: the booker offered another time, he is to say yes to it
+            moving = booking["state"] == bs.CONFIRMED
+            when = booking.get("proposed_starts_at") if moving else booking["starts_at"]
+            if when is None or when <= now:
+                continue  # its time has gone: it lapses, nothing to hand over
+            last = self._handover_attempts.get(booking["id"])
+            if last is not None and loop_now - last < self.RESUBMIT_SECONDS:
+                continue
+            self._handover_attempts[booking["id"]] = loop_now
+            t = self.texts()
+            request = (bookings.format_move_request(booking, name=self.owner_name(), t=t) if moving else
+                       bookings.format_request(booking, name=self.owner_name(), t=t))
+            try:
+                row = await self.rt.send_as_me(on_duty, t.say("handed_over") + "\n" + request,
+                                               reason="booking request handed to the booker on duty")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if not await self.rt.handle_send_failure(on_duty, exc):
+                    log.warning("[%s] Could not hand booking #%s to the booker on duty: %s",
+                                self.rt.session_id, booking["number"], type(exc).__name__)
+                continue
+            if row is None:
+                continue
+            self._handover_attempts.pop(booking["id"], None)
+            now_ = await self.store.get(booking["id"])
+            if any(now_.get(key) != booking.get(key) for key in HANDED_FIELDS):
+                # Answered, or his time changed (its new request went out by
+                # itself), while this one was on its way: it is not the
+                # request any more, and nothing points at it.
+                log.info("[%s] Booking #%s changed while it was handed to the booker on duty; the handed "
+                         "message is left unplaced.", self.rt.session_id, booking["number"])
+                continue
+            self._remember(row, booking["number"])
+            self._note_sent(booking["id"], on_duty)
+            booking = await self.store.set_fields(booking["id"], provider_chat_id=on_duty,
+                                                  **self.owner_message_ref(row))
+            await self.announce(booking, f"🔁 Booking #{booking['number']}: the booker's shift changed — the "
+                                         "request went to the booker on duty now too; the first answer counts.")
 
     # ------------------------------------------------ calendar and e-mail
 

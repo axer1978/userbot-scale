@@ -316,13 +316,13 @@ class WhatsAppTransport(Transport):
             await self._set_disconnected(f"WhatsApp socket is {state}.")
 
     async def _find_booker_group(self) -> None:
-        """A group set as the booker is found as soon as the socket is open,
-        not only when the first request goes to it: until then the gateway
-        would keep its messages out. Once found it is cached (booking_flow),
-        so later rounds cost nothing."""
+        """A group set as a booker (booking.provider, or a shift's) is found
+        as soon as the socket is open, not only when the first request goes
+        to it: until then the gateway would keep its messages out. Once
+        found it is cached (booking_flow), so later rounds cost nothing."""
         flow = getattr(self.rt, "flow", None)
-        if self.connected and flow is not None and group_ref(flow.settings.get("provider") or ""):
-            await self.rt.provider_chat_id()
+        if self.connected and flow is not None and any(group_ref(v) for v in flow.booker_values()):
+            await flow.booker_chats()
 
     async def _set_connected(self, me: dict[str, Any]) -> None:
         was = self.connected
