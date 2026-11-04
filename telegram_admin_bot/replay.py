@@ -247,7 +247,7 @@ def booking_start(state: str, now: datetime) -> datetime:
 
 
 def fake_booking(state: str, now: datetime, tz: str, start: Optional[datetime] = None,
-                 outcall: bool = False, proof: bool = False) -> dict[str, Any]:
+                 outcall: bool = False, proof: bool = False, meets_outside: bool = False) -> dict[str, Any]:
     start = start or booking_start(state, now)
     status = {"confirmed_news": bs.CONFIRMED, "confirmed": bs.CONFIRMED, "arrived": bs.CONFIRMED,
               "declined_news": bs.CANCELLED, "cancelled_news": bs.CANCELLED}.get(state, bs.PENDING)
@@ -263,7 +263,8 @@ def fake_booking(state: str, now: datetime, tz: str, start: Optional[datetime] =
     return {"number": 7, "state": status, "starts_at": start, "ends_at": start + timedelta(hours=1), "tz": tz,
             "proposed_by": None, "customer_notice": notice,
             "notes": "Outcall." if outcall or state in OUTCALL_STATES else "",
-            "instructions_sent_at": now if state in ("arrived", "way_in_sent") else None,
+            "arrived_at": now if state in ("arrived", "way_in_sent") else None,
+            "instructions_sent_at": now if state in ("arrived", "way_in_sent") and not meets_outside else None,
             "ready_at": now if at >= 0 else None, "taxi_link_at": now if at >= 2 else None,
             "in_taxi_at": now if at >= 3 else None, "proof_at": proof_at}
 
@@ -271,13 +272,14 @@ def fake_booking(state: str, now: datetime, tz: str, start: Optional[datetime] =
 def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[datetime] = None,
                  address_follows: bool = False, address_set: bool = False, quiet: bool = False,
                  outcall: bool = False, outcall_taxi: bool = True, ready_minutes: int = 20,
-                 name: str = "", proof: bool = False, address_timing: str = "with_prices") -> str:
+                 name: str = "", proof: bool = False, address_timing: str = "with_prices",
+                 meets_outside: bool = False) -> str:
     """The booking part of the reply prompt, as BookingFlow.reply_note
     writes it for a chat in this state."""
     lines = []
     if state:
         proof = proof and outcall_taxi
-        booking = fake_booking(state, now, tz, start, outcall, proof)
+        booking = fake_booking(state, now, tz, start, outcall, proof, meets_outside)
         taxi = outcall_taxi and bookings.is_outcall(booking) and booking["state"] == bs.CONFIRMED
         if quiet and state in WAITING_STATES:
             lines.append(bookings.quiet_request_line(booking))
@@ -288,7 +290,8 @@ def booking_note(state: Optional[str], now: datetime, tz: str, start: Optional[d
                 lines.append(bookings.PICKUP_ADDRESS_LINE)
         else:
             lines.append(bookings.notice_line(booking) if booking["customer_notice"]
-                         else bookings.standing_line(booking, outcall_taxi=outcall_taxi, proof=proof))
+                         else bookings.standing_line(booking, outcall_taxi=outcall_taxi, proof=proof,
+                                                     meets_outside=meets_outside))
         if state == "outcall_link":
             lines.append(bookings.TAXI_LINK_LINE)
         if state == "confirmed_news" and address_follows:
@@ -476,13 +479,13 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
             arrived = await ai_responder.extract_arrival(api_key=ctx.key, history=[dict(m) for m in history],
                                                          ai_config=ctx.config["ai"], client=ctx.http)
             if state == "arrived" and not arrived:
-                failed.append("arrival not recognised: the way in would not be sent")
+                failed.append("arrival not recognised: " + ("the way in would not be sent" if way_in
+                                                            else "she would not come out to meet him"))
             elif state == "confirmed" and arrived:
-                failed.append("read as arrived: the way in would be sent now")
-        if state == "arrived":
-            auto = [way_in] if way_in else []
-            if not way_in:
-                failed.append("no booking.arrival_instructions: nothing would be sent")
+                failed.append("read as arrived: " + ("the way in would be sent now" if way_in
+                                                     else "she would come out to meet him now"))
+        if state == "arrived" and way_in:
+            auto = [way_in]
             result.turns.append({"said": step["customer"], "reply": [], "auto": auto, "failed": failed})
             history.extend({"role": "assistant", "content": a} for a in auto)
             live = "confirmed"
@@ -567,7 +570,7 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
                                       address_follows=bool(address) and not outcall and not address_sent,
                                       address_set=bool(address), quiet=quiet, outcall=outcall,
                                       outcall_taxi=taxi, ready_minutes=ready_minutes, name=name, proof=proof,
-                                      address_timing=timing),
+                                      address_timing=timing, meets_outside=not way_in),
             system_prompt=ctx.prompt.text,
             media_note=media_note,
             language_locked=ctx.config["language_policy"] != "mirror", burst_max=burst["max_messages"],
@@ -651,7 +654,7 @@ async def run_scenario(ctx: Context, scenario: dict[str, Any]) -> Result:
         history.extend({"role": "assistant", "content": p}
                        for p in [*parts, *auto, *(media.sent_placeholder(item) for item in files)])
         live = {"requested": "pending", "requested_now": "pending", "pending": "pending", "confirmed_news": "confirmed",
-                "confirmed": "confirmed", "way_in_sent": "confirmed",
+                "confirmed": "confirmed", "arrived": "confirmed", "way_in_sent": "confirmed",
                 **{s: "confirmed" for s in OUTCALL_STATES}}.get(state or "")
     if ctx.must_send and scenario["category"] not in ctx.except_categories:
         replies = [p for t in result.turns for p in t["reply"]]

@@ -306,6 +306,27 @@ def test_the_flirting_chats_load_with_the_new_flow():
     assert any(step.get("quiet") is True for s in chats for step in s["steps"])
 
 
+@pytest.mark.asyncio
+async def test_without_a_way_in_she_comes_out_to_meet_him_as_in_the_runtime(monkeypatch, tmp_path):
+    async def arrived(**kw):
+        return "I'm here" in kw["history"][-1]["content"]
+
+    monkeypatch.setattr(ai_responder, "extract_arrival", arrived)
+    result, seen = await _replay(monkeypatch, tmp_path, [
+        {"customer": "on my way, 10 min", "booking": "confirmed", "quiet": False},
+        {"customer": "I'm here", "booking": "arrived"},
+        {"customer": "thank you, it was amazing", "quiet": False},
+    ], ["okey love, text me when you here 😘", "one sec love, I'm coming 😘", "thank you love ❤️"],
+        first_reply_address=False)
+    assert result.ok, result.turns
+    _, here, after = result.turns
+    # No booking.arrival_instructions: nothing sent by itself, she answers that she comes out.
+    assert here["auto"] == [] and here["reply"] == ["one sec love, I'm coming 😘"]
+    assert "you are coming out to meet them" in seen[1]["booking_note"]
+    # After the meeting no booking notes: a plain thanks.
+    assert "arrived" not in seen[2]["booking_note"] and after["reply"] == ["thank you love ❤️"]
+
+
 def test_the_real_chats_answer_every_question_and_book_with_photos_and_the_address():
     data = replay.load(replay.SCENARIO_DIR / "real-chats.json")
     assert replay.validate(data) == []

@@ -1774,8 +1774,8 @@ def quiet_request_line(booking: Mapping[str, Any]) -> str:
     """The request notice when the business answers before anything else
     is said (booking.quiet_until_answered)."""
     return (f"Their time ({describe_when(booking)}) has gone to the business, with no answer yet. "
-            "Say nothing about that time now, and never that you will check, ask or confirm it: the answer "
-            "comes in a later message.")
+            "Say nothing about that time now, never that you will check, ask or confirm it, and don't ask what "
+            "time they want: they told you. The answer comes in a later message.")
 
 
 def waiting_line(booking: Mapping[str, Any]) -> str:
@@ -1783,8 +1783,8 @@ def waiting_line(booking: Mapping[str, Any]) -> str:
     off). Not news: nothing about that time is said until the answer comes."""
     return (f"Their time ({describe_when(booking)}) has gone to the business, with no answer yet. This is not "
             "news to pass on: say nothing about that time, no yes, no no, and never that you will check, ask "
-            "or confirm it. Answer only the rest of their message; if there is nothing else in it, one short "
-            "warm line that is not about the time.")
+            "or confirm it, and don't ask what time they want: they told you. Answer only the rest of their "
+            "message; if there is nothing else in it, one short warm line that is not about the time.")
 
 
 def notice_line(booking: Mapping[str, Any]) -> str:
