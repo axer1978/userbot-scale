@@ -128,6 +128,31 @@ def test_a_time_or_a_day_in_their_latest_messages_is_found():
     assert not repeats.names_when("send me a video first")
 
 
+@pytest.mark.parametrize("when", [
+    "rn", "free atm?", "right away", "2nite", "2moro", "8", "20?", "20.30", "20 30", "2030", "20h30", "8ish",
+    "щас можно", "прямо сейчас", "послезавтра", "через час", "в субботу", "seichas mozhno", "cherez chas",
+    "tagad", "tūlīt", "tulit", "šobrīd", "sobrid", "pašlaik", "parīt", "sestdien", "pēc stundas", "pusdeviņos", "8os",
+    "kohe", "nüüd", "nuud", "õhtul", "laupäeval", "kell 8", "pool üheksa", "tunni pärast",
+    "ahora", "hoy", "mañana", "esta noche", "a las 8", "el sábado", "en media hora",
+])
+def test_a_time_or_a_day_in_any_of_their_words(when):
+    assert repeats.names_when(when)
+
+
+@pytest.mark.parametrize("other", ["send me a video first", "how much", "сколько стоит", "cik maksā", "mis hind",
+                                   "cuánto cuesta", "are you real", "more photos", "ты настоящая"])
+def test_what_names_no_time_stays_that(other):
+    assert not repeats.names_when(other)
+
+
+@pytest.mark.parametrize("message", ["nearby", "almost there", "рядом", "подъезжаю", "tuvumā", "esmu lejā", "olen kohal",
+                                     "kohe jõuan", "llegando", "estoy abajo"])
+def test_on_his_way_or_there_in_any_of_their_words_is_never_a_repeat(message):
+    history = chat(f"> {message} love ok then", "what time love?", f"> {message} love ok then", "1 hour?",
+                   f"> {message} love ok then", "ok?", f"> {message} love ok then")
+    assert repeats.repeated_ask(history, (), NOW, 3, ["ok", "thanks"]) == 0
+
+
 @pytest.mark.parametrize("message", ["yes", "ok", "hi", "I'm here", "outside", "where are you?", "on my way",
                                      "tomorrow evening", "send video tonight", "ok thanks"])
 def test_answers_arriving_where_and_when_are_never_a_repeat(message):

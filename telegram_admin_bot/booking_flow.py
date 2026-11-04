@@ -387,7 +387,9 @@ class BookingFlow:
         try:
             if not self.enabled() or await self.rt.ai_limit_reason():
                 return
-            history = await self.rt.db.get_history_for_ai(chat_id, limit=self.settings["scan_messages"])
+            # With its times: the reader decides on their messages close together.
+            history = await self.rt.db.get_history_for_ai(chat_id, limit=self.settings["scan_messages"],
+                                                          with_times=True)
             if not history:
                 return
             live = await self.store.for_chat(chat_id)
@@ -2479,16 +2481,20 @@ class BookingFlow:
             if booking.get("proposed_by") == bs.OWNER:
                 continue  # answered: the booker offered another time, he is to say yes to it
             moving = booking["state"] == bs.CONFIRMED
-            when = booking.get("proposed_starts_at") if moving else booking["starts_at"]
-            if when is None or when <= now:
-                continue  # its time has gone: it lapses, nothing to hand over
+            until = booking.get("proposed_ends_at") if moving else booking["ends_at"]
+            if until is None or until <= now:
+                continue  # its time is over: it lapses, nothing to hand over
             last = self._handover_attempts.get(booking["id"])
             if last is not None and loop_now - last < self.RESUBMIT_SECONDS:
                 continue
             self._handover_attempts[booking["id"]] = loop_now
             t = self.texts()
-            request = (bookings.format_move_request(booking, name=self.owner_name(), t=t) if moving else
-                       bookings.format_request(booking, name=self.owner_name(), t=t))
+            forms = not self.reads_her_words()
+            overlap = await self.overlap(booking, booking["proposed_starts_at"], booking["proposed_ends_at"]) \
+                if moving else await self.overlap(booking)
+            request = (bookings.format_move_request(booking, name=self.owner_name(), forms=forms, t=t, overlap=overlap)
+                       if moving else
+                       bookings.format_request(booking, name=self.owner_name(), forms=forms, t=t, overlap=overlap))
             try:
                 row = await self.rt.send_as_me(on_duty, t.say("handed_over") + "\n" + request,
                                                reason="booking request handed to the booker on duty")

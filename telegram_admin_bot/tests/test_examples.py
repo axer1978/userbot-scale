@@ -162,6 +162,8 @@ def test_a_time_waiting_for_the_owner_is_never_an_example():
 
 NAMES_A_TIME = ["can I come at 22?", "22:30 ok?", "в 9 вечера можно?", "pl. 21 var?", "around 10pm", "можно к 11?",
                 "ap 23", "in 20 min", "через 20 минут буду", "pēc 20 min", "tomorrow 9.15", "в 2 часа можно?"]
+NAMES_A_TIME += ["kell 8", "kell 20.30", "a las 8", "sobre las 9", "20h30", "8ish", "en 20 minutos",
+                 "dentro de 20 minutos", "20 minuti pärast", "plkst 20"]
 NAMES_NO_TIME = ["how much for 1h?", "200 for an hour?", "2 часа сколько?", "cik maksā 2 stundas?", "I am 25",
                  "about 2 hours how much", "до 200 евро", "are you free now?", "price for 3 hours", "1.5h?"]
 

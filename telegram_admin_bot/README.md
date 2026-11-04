@@ -756,6 +756,19 @@ the opening hours, the calendar link and AI usage.
   <id>` (the answers in `replay_scenarios/owner-answers.json`, English,
   Russian, Latvian and Spanish; one small model call each on the account's
   own key; nothing is sent).
+- **How a customer's time is read.** Every message of theirs goes to the
+  reader, in any language and however it is typed: *8*, *2030*, *20h30*, *8ish*,
+  *8 or 9*, *in 20*, *через полчаса*, *pool kümme*, a day in one message and an
+  hour in the next. "Right now" (*now?*, *rn*, *щас*, *tūlīt*, *kohe*, *ahora*,
+  or *on my way* with no booking yet) is never too short notice. A bare *free?*
+  or *can I come?* sends nothing to her: the bot says yes and asks his time.
+  Messages sent one after the other are read together (`bookings.latest_run`:
+  since our last one, within 5 minutes of the newest), so *at 8* and then *how
+  much?* still reaches her. To see how well the real model reads them: `docker
+  compose exec manager python time_check.py --tenant <id>` (the messages in
+  `replay_scenarios/customer-times.json`, English, Russian, Latvian, Estonian
+  and Spanish; one small model call each on the account's own key; nothing is
+  sent).
 - The customer can change the time before the owner answers (same number),
   ask to move a confirmed booking (the owner answers `YES 7` / `NO 7`), or
   cancel. Every change is in the booking's history and the audit log.

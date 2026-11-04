@@ -27,7 +27,7 @@ import re
 import uuid
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time as dtime, timedelta, timezone
-from typing import Any, Collection, Mapping, Optional, Sequence
+from typing import Any, Collection, Mapping, Optional, Sequence, Union
 
 try:
     from zoneinfo import ZoneInfo
@@ -589,7 +589,7 @@ OWNER_ANSWER_SYSTEM_PROMPT = (
     "You read the chat between a booking assistant ('me') and the person who takes its bookings "
     "('them': the girl herself, or whoever books for her). 'me' sends them each customer's booking "
     "request and passes on what customers write; they answer in their own words, in any language "
-    "(English, Russian, Latvian, Spanish, or a mix), rarely with a command. Work out everything "
+    "(English, Russian, Latvian, Estonian, Spanish, or a mix), rarely with a command. Work out everything "
     "their LATEST message means for the bookings listed, reading it together with the conversation "
     "before it. Missing a part of it is the worst mistake: go through it piece by piece — every "
     "booking it is about, every yes, no or time, every length, extra, thing to tell the customer, "
@@ -605,12 +605,14 @@ OWNER_ANSWER_SYSTEM_PROMPT = (
     "when it is about no booking: a greeting, thanks, small talk, a remark.\n"
     "action:\n"
     "- yes: they take the booking at the time the customer asked: 'yes', 'ok', 'yes I confirm', "
-    "'sure, let him come', 'fine', 'both fine', 'da', 'да', 'jā', 'sí', 'vale', '👍'. For a customer "
+    "'sure, let him come', 'let him come now', 'yes now', 'fine', 'both fine', 'da', 'да', 'пусть едет', "
+    "'да, сейчас', 'jā', 'lai brauc', 'lai nāk', 'jah', 'sí', 'vale', 'que venga', '👍'. For a customer "
     "asking to move a booking: they agree to the new time. A yes with a condition ('yes if he comes "
     "alone', 'yes but only 1 hour', 'ok, cash only') is still yes; the condition goes in the fields "
     "below.\n"
     "- no: they turn it down and give no other time, now or earlier in the chat: 'no', 'not "
-    "today', 'I'm busy', 'can't', 'нет', 'nē', 'no puedo'.\n"
+    "today', 'not now', 'I'm busy', 'can't', 'нет', 'сейчас нет', 'nē', 'tagad nē', 'ei', 'no puedo', "
+    "'ahora no'.\n"
     "- ready_at: they say WHEN they will be ready or free instead of a plain yes: 'I'm ready in 20 "
     "minutes', 'give me half an hour', 'I can meet in 1 hour', 'free after 15:00', 'yes but in 40 "
     "min'. A delay goes in in_minutes (counted from their latest message), a clock time in start.\n"
@@ -1617,8 +1619,12 @@ def reminder_answer(text: str) -> Optional[str]:
 EXTRACT_SYSTEM_PROMPT = (
     "You read a private chat between a business's account ('me') and a "
     "customer ('them') and report what the CUSTOMER wants regarding an "
-    "appointment in their LATEST messages. Answer with a single JSON object "
-    "and nothing else:\n"
+    "appointment in their LATEST messages. People write fast: typos, no "
+    "capitals or punctuation, slang, any language or a mix of them (English, "
+    "Russian, Latvian, Estonian, Spanish and others), often without "
+    "diacritics, Russian sometimes in Latin letters ('seichas', 'cherez chas', "
+    "'tulit', 'nuud'). Read what they mean, not the exact words. Answer with a "
+    "single JSON object and nothing else:\n"
     '{"intent": "none"|"book"|"cancel"|"accept_proposal"|"decline_proposal"|'
     '"confirm_attendance"|"waitlist", "start": "YYYY-MM-DDTHH:MM" or null, '
     '"asap": true|false, "outcall": true|false, '
@@ -1626,16 +1632,44 @@ EXTRACT_SYSTEM_PROMPT = (
     '"extras": "<the extras they asked for, or empty>", '
     '"notes": "<anything the business should know, or empty>", '
     '"waitlist_from": "YYYY-MM-DDTHH:MM" or null, "waitlist_to": "YYYY-MM-DDTHH:MM" or null}\n'
+    "Read their latest messages together. A time in one of them counts when "
+    "another follows it ('at 8', then 'how much?'). A day in one and an hour in "
+    "another make one time ('tomorrow', then '9'), also when the bot's question "
+    "came between. A later message can take an earlier one back ('at 8', then "
+    "'no wait, 9' is 21:00; 'at 8', then 'sorry, not today' is none).\n"
     "Intents:\n"
     "- book: they ask for or agree to one concrete day AND time of day, or a "
     "fixed offset like 'in 2 hours'. Also when they ask to MOVE an existing "
-    "booking to a concrete new time. Put that time in start.\n"
+    "booking to a concrete new time. Put that time in start. A time can look "
+    "like any of these:\n"
+    "  a clock time: '20:30', '20.30', '20 30', '2030', '20h', '20h30', '8pm', "
+    "'8.30pm', '8', '8?', 'at 8', 'в 8', 'к 8', 'часов в 8', '8os', 'pl. 20', "
+    "'plkst 8', 'kell 8', 'a las 8', 'um 8', or in words: 'eight', 'восемь', "
+    "'astoņos', 'kaheksa', 'ocho';\n"
+    "  about that time: 'around 8', '8ish', 'after 8', 'by 8', 'около 8', "
+    "'после 8', 'ap 8', 'pēc 8', 'kella 8 paiku', 'sobre las 8' — that hour goes "
+    "in start, their words in notes;\n"
+    "  a choice: '8 or 9', '8-9', 'between 8 and 9' — the earliest goes in "
+    "start, their words in notes;\n"
+    "  an offset from now: 'in 20', 'in 20 min', 'in an hour', 'in half an hour', "
+    "'be there in 10', 'через час', 'через полчаса', 'через 20 минут', 'pēc "
+    "stundas', 'pēc pusstundas', 'pēc 20 min', 'tunni pärast', 'poole tunni "
+    "pärast', '20 minuti pärast', 'en una hora', 'en media hora', 'dentro de 20 "
+    "minutos'. A bare '10 min', '15 min' or '20 min' right after they were asked "
+    "when is an offset too.\n"
     "  RIGHT NOW is book too, with asap true and start null (the time is worked "
     "out elsewhere): they want to meet now or as soon as possible, in any "
     "words or language — 'now', 'now?', 'rn', 'asap', 'atm', 'right away', "
+    "'straight away', 'immediately', 'as soon as you can', "
     "'can I come now', 'are you free now', 'available now?', 'free atm?', "
-    "'I'm close, can I come', 'I'm 5 min away', 'сейчас можно?', 'var tagad?', "
-    "'var tūlīt?', 'ahora?'. asap is false for everything else.\n"
+    "'I'm close, can I come', 'I'm nearby, can I come', 'I'm 5 min away', "
+    "'сейчас можно?', 'щас', 'прямо сейчас', 'свободна сейчас?', 'я рядом, можно?', "
+    "'var tagad?', 'var tūlīt?', 'šobrīd', 'pašlaik', 'brīva tagad?', 'esmu tuvumā, var?', "
+    "'praegu', 'kohe', 'nüüd', 'oled praegu vaba?', 'kas võin kohe tulla?', "
+    "'ahora?', 'ahora mismo', 'ya mismo', 'nyt', 'jetzt', 'dabar'. With no booking in 'Their "
+    "bookings', 'on my way', 'leaving now', 'coming', 'I'm here', 'I'm outside', "
+    "'еду', 'выехал', 'я тут', 'braucu', 'nāku', 'esmu klāt', 'tulen', 'olen siin', "
+    "'voy', 'ya estoy aquí' mean right now too. asap is false for everything else.\n"
     "- cancel: they clearly call off their booking.\n"
     "- accept_proposal / decline_proposal: the business proposed a different "
     "time (see 'Their bookings') and they say yes / no to it. If they answer "
@@ -1644,14 +1678,23 @@ EXTRACT_SYSTEM_PROMPT = (
     "- waitlist: they ask to be told if a time frees up; give the range they "
     "would take in waitlist_from/waitlist_to.\n"
     "- none: anything else, including a day without a time ('are you free "
-    "tomorrow?'), a vague window ('tonight', 'later'), or what they said "
+    "tomorrow?', 'saturday?', 'завтра?', 'rīt?', 'homme?', 'mañana?'), a vague "
+    "window ('tonight', 'this evening', 'later', 'soon', 'in a bit', 'after "
+    "work', 'вечером', 'попозже', 'vakarā', 'vēlāk', 'õhtul', 'hiljem', 'más "
+    "tarde'), asking the business for times ('when can I come?', 'what time are "
+    "you free?', 'когда можно?', 'cikos var?', 'mis kell saab?'), or what they said "
     "earlier and then moved away from. Asking only whether she is free or "
     "available, without any time and without wanting to come right away "
     "('free?', 'are you free?', 'available?', 'you working?'), is none: they "
-    "are told yes and asked for their time. Also none when their latest message "
-    "names no time of its own: a nudge while they wait ('??', 'so?', 'is it "
+    "are told yes and asked for their time. The same in any words: 'свободна?', "
+    "'работаешь?', 'можно приехать?', 'brīva?', 'strādā?', 'var atbraukt?', "
+    "'vaba?', 'töötad?', 'kas saab tulla?', 'libre?', 'disponible?', 'puedo ir?', "
+    "'can I come?', 'can we meet?', 'wanna meet'. Also none when their latest messages "
+    "name no time of their own: a nudge while they wait ('??', 'so?', 'is it "
     "ok?', 'hello?'), thanks, a plain 'ok', or a question with no time in it. "
-    "A length alone ('1 hour?', '30 min incall?') is not a time. A time "
+    "A length alone ('1 hour?', '30 min incall?', 'на час', 'stundu') is not a time; "
+    "with a time it goes in duration_minutes. A number that is a price or an "
+    "age is not a time either. A time "
     "already in 'Their bookings' is never a new request unless they ask to "
     "change it: their latest message following up on a request that is "
     "already there (a nudge, a question, thanks, 'already on my way') is none, "
@@ -1659,7 +1702,8 @@ EXTRACT_SYSTEM_PROMPT = (
     "a time ('tonight 22:00 ok?', 'tomorrow at 14:00?') is book, question mark "
     "or not.\n"
     "outcall: true when they want the business to come to them (their hotel, "
-    "their place, 'outcall'), false otherwise.\n"
+    "their place, 'outcall', 'come to me', 'приезжай ко мне', 'atbrauc pie manis', "
+    "'tule minu juurde', 'ven a mi hotel'), false otherwise.\n"
     "extras: the extra services on top of the basic meeting that they asked "
     "for or said they want anywhere in the conversation, in a few words each, "
     "comma-separated, with the price when the chat named one ('domination "
@@ -1668,23 +1712,69 @@ EXTRACT_SYSTEM_PROMPT = (
     "said is not offered. Empty when none.\n"
     "Resolve relative dates from the current date and time given; an offset "
     "('in 40 min') counts from the message that said it. Use 24-hour local time "
-    "in the given timezone; never invent a time that was not said. Half-hour "
-    "words: in Latvian and Russian 'half ten' ('pusdesmitos', 'полдесятого') "
-    "is 9:30; in English 'half ten' is 10:30. "
+    "in the given timezone; never invent a time that was not said. An hour with "
+    "no am/pm and no day is the next time that hour comes round: at 18:40 'at "
+    "8' is 20:00 today and 'at 7' is 19:00; at 10:15 'at 5' is 17:00; at 23:10 "
+    "'at 1' is 01:00 tomorrow. Words like 'в 9 вечера', '9 vakarā', 'kell 9 "
+    "õhtul', 'a las 9 de la noche' say which. An hour past 12 ('20', '2030') is "
+    "as written. A time with no day that has gone by only a few minutes stays "
+    "today (they mean now); gone by more, it is tomorrow. After midnight, 'tonight "
+    "at 1' is the next calendar day. Dates are day first: '5.11', '05/11', 'the "
+    "5th'; a weekday is the next such day. Half-hour words: in Latvian, Russian, "
+    "Estonian and German 'half ten' ('pusdesmitos', 'полдесятого', 'pool kümme', "
+    "'halb zehn') is 9:30; in English 'half ten' is 10:30. Estonian 'veerand kümme' "
+    "is 9:15 and 'kolmveerand kümme' 9:45; Russian 'четверть десятого' is 9:15 and "
+    "'без четверти десять' 9:45. "
     "Whether 'me' agreed is irrelevant: confirmation is decided elsewhere."
 )
 
 
+
 def extraction_prompt(
-    transcript: str, tz_name: str, now: Optional[datetime] = None, state_note: str = "", latest: str = "",
+    transcript: str, tz_name: str, now: Optional[datetime] = None, state_note: str = "",
+    latest: Union[str, Sequence[str]] = "",
 ) -> str:
     now = now or datetime.now(tzinfo_for(tz_name))
     parts = [f"Current date and time: {now:%A %Y-%m-%d %H:%M} ({tz_name})."]
     parts.append("Their bookings: " + (state_note or "none."))
     parts.append("Conversation, oldest first:\n\n" + transcript)
-    if latest:
-        parts.append("\nTheir latest message, the one to decide on: " + " ".join(latest.split()))
+    if isinstance(latest, str):
+        latest = [latest] if latest.strip() else []
+    if len(latest) == 1:
+        parts.append("\nTheir latest message, the one to decide on: " + " ".join(latest[0].split()))
+    elif latest:
+        parts.append("\nTheir latest messages since my last one, oldest first, the ones to decide on together:\n"
+                     + "\n".join("- " + " ".join(text.split()) for text in latest))
     return "\n".join(parts)
+
+
+# Their messages this close to their newest are read as one: "at 8", then
+# "how much?". An older one (his "at 8" of yesterday, unanswered in quiet
+# hours, before today's "hello?") is only the conversation.
+RUN_WINDOW = timedelta(minutes=5)
+
+
+def latest_run(history: Sequence[Mapping[str, Any]]) -> list[str]:
+    """What the reader decides on: their messages since our last one, close
+    to the newest of them (with "at", as get_history_for_ai(with_times=True)
+    gives it; without, all of them), oldest first. Each new message restarts
+    the scan, so an earlier one in the run may never have been read alone. A
+    reply of ours that raced the reader leaves his latest messages his latest."""
+    run: list[str] = []
+    newest: Optional[datetime] = None
+    for message in reversed(history):
+        if message.get("role") != "user":
+            if run:
+                break
+            continue
+        at = message.get("at")
+        if isinstance(at, datetime):
+            newest = newest or at
+            if newest - at > RUN_WINDOW:
+                break
+        if (message.get("content") or "").strip():
+            run.append(message["content"])
+    return run[::-1]
 
 
 INTENTS = ("none", "book", "cancel", "accept_proposal", "decline_proposal", "confirm_attendance", "waitlist")
@@ -1946,10 +2036,13 @@ def address_tag_line(timing: str) -> str:
 
 
 # Their message asks where she is (booking.address_timing "when_asked"):
-# EN, LV, RU, ET and the usual short forms.
+# EN, LV, RU, ET, ES and the usual short forms.
 _ASKS_WHERE = re.compile(
-    r"(?i)(\bwhere\b|\bwher\b|\bwhr\b|addr?ess?|\badres|\blocat|\bloc\b|\bpin\b|\barea\b|\bstreet\b|"
-    r"\bkur\b|adrese|atrodies|\bkus\b|aadress|asukoht|где|адрес|локац|район|улиц|куда)"
+    r"(?i)(\bwhere\b|\bwher\b|\bwhr\b|\bwere (?:r|are) (?:u|you)\b|\bwya\b|\bwru\b|addr?ess?|\badres|\blocat|\bloc\b|"
+    r"\bpin\b|\barea\b|\bstreet\b|\bdistrict\b|\bpart of (?:town|the city)\b|"
+    r"\bkur\b|adrese|atrodies|\brajon\w*|\bkus\b|aadress|asukoht|linnaosa|"
+    r"где|адрес|локац|геолок|\bгео\b|район|улиц|куда|"
+    r"\bdónde\b|\bdonde\b|direcci[oó]n|ubicaci[oó]n|\bbarrio\b|\bzona\b)"
 )
 
 
@@ -2101,15 +2194,21 @@ ARRIVAL_SYSTEM_PROMPT = (
     "You read the end of a private chat between a business ('me') and a "
     "customer ('them') who has an appointment about now. Decide whether the "
     "customer's LATEST message says they have physically arrived at the meeting "
-    "place — for example 'I'm here', 'at the door', 'downstairs', 'outside', "
-    "'я на месте', 'я внизу', 'я у подъезда', 'esmu klāt', 'esmu pie mājas', "
-    "'just parked outside'. Someone already at the building who "
+    "place, in any words or language, typos included — for example 'I'm here', "
+    "'here', 'im outside', 'at the door', 'at the gate', 'downstairs', 'just parked "
+    "outside', 'я на месте', 'я тут', 'я внизу', 'я у подъезда', 'подъехал', "
+    "'подошёл', 'esmu klāt', 'esmu šeit', 'esmu lejā', 'esmu pie mājas', 'pie durvīm', "
+    "'olen kohal', 'olen siin', 'olen all', 'ukse taga', 'ya estoy aquí', "
+    "'estoy abajo', 'estoy en la puerta'. Someone already at the building who "
     "asks which door, entrance, floor or code ('I'm at the building, which "
-    "door?', 'here, two doors, which one?') HAS arrived. Being on the way, "
-    "almost there, running late, in the area or the city but not at the place, "
-    "or asking for the address is NOT arrival. Answer with a single JSON object "
-    'and nothing else: {"arrived": true|false}'
+    "door?', 'here, two doors, which one?', 'какой подъезд?', 'kura ieeja?', 'mis "
+    "uks?') HAS arrived. Being on the way, almost there, running late, in the area "
+    "or the city but not at the place, stuck in traffic, or asking for the address "
+    "is NOT arrival ('5 min away', 'on my way', 'еду', 'почти приехал', 'tūlīt būšu', "
+    "'braucu', 'kohe jõuan', 'tulemas', 'llegando', 'estoy cerca'). Answer with a "
+    "single JSON object and nothing else: {\"arrived\": true|false}"
 )
+
 
 
 def parse_arrival(text: str) -> bool:

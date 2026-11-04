@@ -500,8 +500,78 @@ def test_the_address_note_follows_when_the_address_may_go():
     for where in ("where are you?", "address pls", "send location", "kur tu esi?", "где ты?", "kus sa oled",
                   "what area?"):
         assert bookings.asks_where(where), where
-    for other in ("how much?", "ok 22:00", "price for 1 hour", "do you do domination?", "somewhere nice"):
+    for other in ("how much?", "ok 22:00", "price for 1 hour", "do you do domination?", "somewhere nice",
+                  "were you busy?", "cik maksā?", "сколько?", "mis hind?", "cuánto?"):
         assert not bookings.asks_where(other), other
+
+
+@pytest.mark.parametrize("where", ["were r u", "wya", "wru", "which district", "what part of town", "kur esi",
+                                   "kurā rajonā?", "скинь гео", "какой район", "mis linnaosa", "aadress?",
+                                   "dónde estás", "donde estas", "dirección?", "ubicacion", "qué zona"])
+def test_where_she_is_in_more_words(where):
+    assert bookings.asks_where(where)
+
+
+# -------------------------------------------------- what the reader decides on
+
+
+def _they(*lines, at=None):
+    """Lines of a chat, "> " for theirs; `at` gives each line its minute."""
+    rows = [{"role": "user", "content": line[2:]} if line.startswith("> ") else {"role": "assistant", "content": line}
+            for line in lines]
+    if at is not None:
+        for row, minute in zip(rows, at):
+            row["at"] = NOW + timedelta(minutes=minute)
+    return rows
+
+
+def test_the_reader_decides_on_their_messages_since_our_last_one():
+    assert bookings.latest_run(_they("> hi", "what time?", "> at 8", "> how much?")) == ["at 8", "how much?"]
+    assert bookings.latest_run(_they("> tomorrow", "> 9")) == ["tomorrow", "9"]
+    assert bookings.latest_run([]) == []
+
+
+def test_a_message_of_theirs_from_long_before_is_only_the_conversation():
+    """His "at 8" of last night, unanswered in quiet hours, is not read again
+    with today's "hello?"."""
+    history = _they("> at 8", "> hello?", at=[0, 600])
+    assert bookings.latest_run(history) == ["hello?"]
+    assert bookings.latest_run(_they("> at 8", "> how much?", at=[0, 4])) == ["at 8", "how much?"]
+    assert bookings.latest_run(_they("> at 8", "> ok?", "> hello", at=[0, 4, 8])) == ["ok?", "hello"]
+
+
+def test_a_reply_that_raced_the_reader_leaves_his_message_his_latest():
+    assert bookings.latest_run(_they("> at 8", "ok love")) == ["at 8"]
+
+
+def test_the_prompt_names_one_latest_message_or_all_of_them():
+    one = bookings.extraction_prompt("them: at 8", "Europe/Riga", NOW, latest=["at 8"])
+    assert one.endswith("Their latest message, the one to decide on: at 8")
+    assert one == bookings.extraction_prompt("them: at 8", "Europe/Riga", NOW, latest="at 8")
+    several = bookings.extraction_prompt("them: at 8\nthem: ok?", "Europe/Riga", NOW, latest=["at  8", "ok?"])
+    assert several.endswith("the ones to decide on together:\n- at 8\n- ok?")
+    assert "the one to decide on" not in bookings.extraction_prompt("them: hi", "Europe/Riga", NOW)
+
+
+def test_the_reader_knows_how_people_write_a_time():
+    prompt = bookings.EXTRACT_SYSTEM_PROMPT
+    for word in ("2030", "20h30", "8ish", "8 or 9", "через полчаса", "pēc pusstundas", "poole tunni pärast",
+                 "en media hora", "щас", "kohe", "praegu", "nüüd", "ahora mismo", "pool kümme", "veerand kümme",
+                 "свободна?", "vaba?", "libre?", "can I come?"):
+        assert word in prompt, word
+    # Read together, whichever message holds the time.
+    assert "Read their latest messages together." in prompt
+    # A bare hour is the next time it comes round.
+    assert "the next time that hour comes round" in prompt
+    # Lengths stay lengths: "half an hour" alone is not on the offset list.
+    assert "'in half an hour'" in prompt and "'half an hour'" not in prompt
+
+
+def test_the_arrival_reader_knows_more_words_and_the_same_line():
+    prompt = bookings.ARRIVAL_SYSTEM_PROMPT
+    assert all(word in prompt for word in ("olen kohal", "ukse taga", "estoy abajo", "подъехал", "esmu lejā"))
+    assert all(word in prompt for word in ("почти приехал", "kohe jõuan", "llegando", "tūlīt būšu", "stuck in traffic"))
+    assert "is NOT arrival" in prompt
 
 
 # ------------------------------------- the booker's own words, as commands

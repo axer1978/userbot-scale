@@ -75,15 +75,37 @@ _TAG = re.compile(r"\[(?:address|send \d+|way in)\]", re.IGNORECASE)
 # finds: "now", "tonight", "tomorrow evening", "after 22", "22h", "in an
 # hour" (EN, RU, LV, ET).
 _WHEN = re.compile(
-    r"(?i)\b(?:now|right now|asap|today|tonight|tonite|tomorrow|tmrw|tmr|tomoro|morning|afternoon|evening|night"
+    r"(?i)\b(?:now|right now|rn|asap|atm|at the moment|right away|straight away|immediately|today|2day|tonight|tonite"
+    r"|2nite|tomorrow|tmrw|tmr|tomoro|2moro|2morrow|morning|afternoon|evening|night"
     r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|later today"
-    r"|in an hour|in half an hour|in \d+|after \d+|before \d+|\d{1,2}\s?h"
-    r"|сейчас|сегодня|завтра|вечером|утром|ночью|šodien|šovakar|rīt|tagad|vakarā|täna|homme|praegu)\b"
+    r"|in an hour|in half an hour|half an hour|an hour from now|in \d+|after \d+|before \d+|\d{1,2}\s?h(?:\d{2})?"
+    r"|\d{1,2}\s?ish|(?:[01]\d|2[0-3])[0-5]\d"
+    # Russian.
+    r"|сейчас|щас|ща|сегодня|завтра|послезавтра|вечером|утром|днём|днем|ночью|через \w+"
+    r"|понедельник\w*|вторник\w*|сред\w|четверг\w*|пятниц\w|суббот\w|воскресень\w+|seichas|sejchas|cherez \w+"
+    # Latvian, also without diacritics.
+    r"|šodien|sodien|šovakar|sovakar|rīt|rit|parīt|parit|tagad|tūlīt|tulit|šobrīd|sobrid|pašlaik|paslaik|vakarā|vakara"
+    r"|pirmdien|otrdien|trešdien|tresdien|ceturtdien|piektdien|sestdien|svētdien|svetdien|pēc \w+|pec \w+"
+    r"|pus\w+os|\d{1,2}os"
+    # Estonian, also without diacritics.
+    r"|täna|tana|homme|ülehomme|ulehomme|praegu|kohe|nüüd|nuud|õhtul|ohtul|hommikul|pärast|parast"
+    r"|esmaspäev\w*|teisipäev\w*|kolmapäev\w*|neljapäev\w*|reede\w*|laupäev\w*|pühapäev\w*|kell \d+|pool \w+"
+    # Spanish.
+    r"|ahora|ahorita|hoy|mañana|manana|esta noche|esta tarde|a las \d+|en \d+|en una hora|en media hora"
+    r"|lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo)\b"
+    # The whole message is an hour: "8", "20?", "20.30".
+    r"|^\W*\d{1,2}(?:[:. ]\d{2})?\W*$",
+    re.MULTILINE,
 )
 # On his way or there: "I'm here", "outside", "omw", "leaving now".
 _COMING = re.compile(
-    r"(?i)\b(?:here|outside|downstairs|arrived|arriving|at the door|in front|on my way|omw|otw|coming|leaving"
-    r"|parked|parking|я тут|я здесь|на месте|подъехал|еду|esmu klāt|esmu šeit|braucu|olen siin|tulen)\b"
+    r"(?i)\b(?:here|outside|downstairs|arrived|arriving|at the door|at the gate|in front|on my way|omw|otw|coming|leaving"
+    r"|parked|parking|nearby|close by|around the corner|almost there|5 min away"
+    r"|я тут|я здесь|на месте|подъехал|подъезжаю|подошёл|подошел|еду|иду|выехал|выезжаю|рядом|внизу|у подъезда"
+    r"|esmu klāt|esmu klat|esmu šeit|esmu seit|esmu lejā|esmu leja|pie mājas|pie majas|pie durvīm|pie durvim"
+    r"|braucu|nāku|naku|tuvumā|tuvuma|tūlīt būšu|tulit busu"
+    r"|olen siin|olen kohal|olen all|ukse taga|tulen|tulemas|lähedal|lahedal|kohe jõuan|kohe jouan"
+    r"|estoy aquí|estoy aqui|estoy abajo|en la puerta|llegando|estoy cerca|voy)\b"
 )
 # A pet name, left out when lines are grouped: "hi love, what time…" and
 # "hi babe, what time…" are one line sent twice.

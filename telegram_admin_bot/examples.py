@@ -340,10 +340,14 @@ _NAMES_A_TIME = re.compile(
     rf"\b{_HOUR}[:.][0-5]\d\b"
     # ("about 2 hours" is a length, "в 2 часа" a time: only English and
     # Latvian hour words after the number are left out.)
-    rf"|\b(?:at|around|about|by|till|until|from|pl|ap|uz|в|к|около|после|до)\.?\s*{_HOUR}\b(?![.,]\d)"
+    rf"|\b(?:at|around|about|by|till|until|from|pl|plkst|ap|uz|в|к|около|после|до|kell|um|a las|sobre las)"
+    rf"\.?\s*{_HOUR}\b(?![.,]\d)"
     r"(?!\s*(?:h|hrs?|hours?|stund\w*)\b)"
-    rf"|\b{_HOUR}\s*(?:am|pm|o'?clock)\b"
-    r"|\b(?:in|через|pēc|pec)\s*\d{1,3}\s*(?:min|mins|minutes|мин|минут\w*|minūt\w*|h|hours?|час\w*|stund\w*)\b",
+    rf"|\b{_HOUR}\s*(?:am|pm|o'?clock|ish)\b"
+    rf"|\b{_HOUR}h[0-5]\d\b"
+    r"|\b(?:in|через|pēc|pec|en|dentro de)\s*\d{1,3}\s*"
+    r"(?:min|mins|minutes|мин|минут\w*|minūt\w*|minutos|h|hours?|horas?|час\w*|stund\w*)\b"
+    r"|\b\d{1,3}\s*(?:minuti|min|tunni)\s*pärast\b",
     re.IGNORECASE,
 )
 

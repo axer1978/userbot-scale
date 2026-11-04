@@ -37,6 +37,8 @@ OWNER = 999
 CUSTOMER = 42
 # Monday 4 March 2030, 12:00 in Riga.
 NOW = datetime(2030, 3, 4, 12, 0, tzinfo=RIGA)
+# The real reader, for the tests of what it is given (`world` replaces it).
+REAL_EXTRACT = ai_responder.extract_booking
 
 
 # Incoming message ids, across the whole file. Above every id the fakes give
@@ -1202,7 +1204,7 @@ async def test_bookings_share_a_time_and_she_is_told_which(world):
     request = w.sent[OWNER][-1]
     assert "Booking request #2" in request
     assert ("⚠️ At the same time you have: #1 Anna, Tue 05 Mar 2030, 15:00–16:00, confirmed.\n"
-            "Reply YES 2") in request
+            "Yes, no or later?") in request
     assert "already taken" not in w.script["notes"][-1]
     await owner(w, "YES 2")
     assert [b["state"] for b in await w.store.between(NOW, NOW + timedelta(days=2))] == [bs.CONFIRMED] * 2
@@ -1263,7 +1265,7 @@ async def test_a_move_she_has_not_answered_counts_as_at_that_time(world):
     assert (await only_booking(w))["proposed_by"] == bs.CUSTOMER
     await customer(w, "18?", book("2030-03-05T18:00"), chat=43)
     assert ("⚠️ At the same time you have: #1 Anna, Tue 05 Mar 2030, 18:00–19:00, not confirmed yet.\n"
-            "Reply YES 2") in w.sent[OWNER][-1]
+            "Yes, no or later?") in w.sent[OWNER][-1]
 
 
 async def test_a_move_onto_another_booking_tells_her_which(world):
@@ -1274,7 +1276,7 @@ async def test_a_move_onto_another_booking_tells_her_which(world):
     await customer(w, "can we do 15:30 instead?", book("2030-03-05T15:30"), chat=43)
     assert "asks to move" in w.sent[OWNER][-1]
     assert ("⚠️ At the same time you have: #1 Anna, Tue 05 Mar 2030, 15:00–16:00, confirmed.\n"
-            "Reply YES 2 to move it") in w.sent[OWNER][-1]
+            "Yes, no or later?") in w.sent[OWNER][-1]
 
 
 # ------------------------------------ her words: every part of her message
@@ -1722,7 +1724,50 @@ async def test_her_yes_a_few_minutes_after_now_takes_it_from_then(world):
     assert (b["starts_at"].astimezone(RIGA).strftime("%H:%M"), b["ends_at"].astimezone(RIGA).strftime("%H:%M")) == \
         ("12:10", "13:10")
     assert w.sent[OWNER][-1] == "#1 confirmed ✅ for Mon 04 Mar 2030, 12:10–13:10 (1 hour) — Anna will be told."
-    assert "has just been CONFIRMED" in w.script["notes"][-1] and "12:10" in w.script["notes"][-1]
+    assert "the business said YES" in w.script["notes"][-1] and "12:10" in w.script["notes"][-1]
+
+
+async def test_a_time_followed_by_a_question_still_reaches_her(world, monkeypatch):
+    """"at 8", then "how much?" a moment later: the second message's scan
+    replaces the first, and reads both."""
+    w = world
+    w.app.config["auto_send"] = False  # nothing of ours between them
+    prompts = []
+
+    async def complete(**kw):
+        user = kw["messages"][1]["content"]
+        prompts.append(user)
+        if "- at 15\n- how much?" in user:
+            return json.dumps(book("2030-03-04T15:00"))
+        return '{"intent": "none"}'
+
+    monkeypatch.setattr(ai_responder, "extract_booking", REAL_EXTRACT)
+    monkeypatch.setattr(ai_responder, "_complete", complete)
+    await customer(w, "at 15")
+    assert await w.store.between(NOW - timedelta(days=1), NOW + timedelta(days=1)) == []
+    await customer(w, "how much?")
+    assert (await only_booking(w))["state"] == bs.PENDING
+    assert "Booking request #1" in w.sent[OWNER][0]
+    assert prompts[-1].endswith("the ones to decide on together:\n- at 15\n- how much?")
+
+
+async def test_his_message_from_long_before_is_not_read_again_with_a_new_one(world, monkeypatch):
+    w = world
+    w.app.config["auto_send"] = False
+    prompts = []
+
+    async def complete(**kw):
+        prompts.append(kw["messages"][1]["content"])
+        return '{"intent": "none"}'
+
+    monkeypatch.setattr(ai_responder, "extract_booking", REAL_EXTRACT)
+    monkeypatch.setattr(ai_responder, "_complete", complete)
+    await customer(w, "at 15")
+    async with w.app.pool.acquire() as con:
+        await con.execute("UPDATE messages SET created_at = created_at - interval '10 hours' WHERE chat_id = $1",
+                          CUSTOMER)
+    await customer(w, "hello?")
+    assert prompts[-1].endswith("Their latest message, the one to decide on: hello?")
 
 
 async def test_a_late_yes_for_a_length_and_a_late_yes_in_the_panel(world):
@@ -2976,7 +3021,7 @@ async def test_the_booker_on_shift_gets_the_request_and_answers_it(shift_world):
     w.clock["now"] = NOW.replace(hour=17)
     await customer(w, "at 19?", book("2030-03-04T19:00"))
     [request] = w.sent[EVENING]
-    assert "Booking request #1" in request and "YES 1" in request
+    assert "Booking request #1" in request and "Yes, no or later?" in request
     assert OWNER not in w.sent
     assert (await only_booking(w))["provider_chat_id"] == EVENING
 
@@ -3037,6 +3082,32 @@ async def test_a_request_waiting_at_the_shift_change_goes_to_the_next_booker_too
     assert "it is confirmed" in w.sent[OWNER][-1]
 
 
+async def test_a_now_that_began_while_it_waited_goes_to_the_next_booker_too(shift_world):
+    """It waits until its end now, and her late yes takes it from then."""
+    w = shift_world
+    w.clock["now"] = NOW.replace(hour=15, minute=58)
+    await customer(w, "now?", {"intent": "book", "asap": True, "start": None})
+    assert "Booking request #1" in w.sent[OWNER][0]
+    await tick(w, NOW.replace(hour=16, minute=3))
+    assert (await only_booking(w))["state"] == bs.PENDING
+    [handed] = w.sent[EVENING]
+    assert "Booking request #1" in handed
+    await booker(w, EVENING, "YES 1")
+    b = await only_booking(w)
+    assert b["state"] == bs.CONFIRMED and b["starts_at"].astimezone(RIGA).strftime("%H:%M") == "16:05"
+
+
+async def test_the_handed_request_shows_what_else_is_at_that_time(shift_world):
+    w = shift_world
+    w.clock["now"] = NOW.replace(hour=15, minute=50)
+    await customer(w, "at 18?", book("2030-03-04T18:00"))
+    await customer(w, "at 18 too?", book("2030-03-04T18:00"), chat=43)
+    assert "At the same time you have: #1" in w.sent[OWNER][-1]
+    await tick(w, NOW.replace(hour=16, minute=1))
+    first, second = w.sent[EVENING]
+    assert "At the same time you have: #2" in first and "At the same time you have: #1" in second
+
+
 async def test_a_move_he_asks_for_is_handed_over_as_a_move(shift_world):
     w = shift_world
     await customer(w, "tomorrow at 15?", book())
@@ -3046,7 +3117,7 @@ async def test_a_move_he_asks_for_is_handed_over_as_a_move(shift_world):
 
     await tick(w, NOW.replace(hour=16, minute=1))
     [handed] = w.sent[EVENING]
-    assert handed.startswith("⏳") and "YES 1" in handed and "Booking request" not in handed
+    assert handed.startswith("⏳") and "Yes, no or later?" in handed and "Booking request" not in handed
     await booker(w, EVENING, "YES 1")
     b = await only_booking(w)
     assert b["state"] == bs.CONFIRMED and b["starts_at"].astimezone(RIGA).hour == 17
