@@ -2819,13 +2819,14 @@
    "steps": [
     {
      "customer": "hey, free?",
-     "booking": "requested_now",
-     "intent": "asap",
+     "intent": "none",
      "expect": {
-      "lacks": [
-       "what hour",
+      "has_any": [
        "what time",
-       "around what",
+       "when",
+       "what hour"
+      ],
+      "lacks": [
        "one sec",
        "one moment",
        "a moment",
@@ -2833,6 +2834,11 @@
        "let you know"
       ]
      }
+    },
+    {
+     "customer": "now",
+     "booking": "requested_now",
+     "intent": "asap"
     },
     {
      "customer": "and is it 100 for 30 min?",

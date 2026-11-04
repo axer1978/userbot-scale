@@ -239,6 +239,30 @@ def test_asap_and_a_time_that_just_passed_both_mean_now():
     assert bookings.requested_slot({"asap": True}, tz_name="Europe/Riga", default_duration=60) is None
 
 
+def test_wants_now_is_asap_or_a_time_that_just_passed():
+    now = datetime(2026, 10, 5, 19, 20, 40, tzinfo=timezone.utc)   # 22:20:40 in Riga
+    riga = {"tz_name": "Europe/Riga", "now": now}
+    assert bookings.wants_now({"asap": True, "start": None}, **riga)
+    assert bookings.wants_now({"start": "2026-10-05T22:15"}, **riga)
+    assert not bookings.wants_now({"start": "2026-10-05T22:40"}, **riga)
+    assert not bookings.wants_now({"start": "2026-10-05T21:00"}, **riga)
+    assert not bookings.wants_now({"asap": False}, **riga)
+
+
+def test_a_bare_free_or_available_is_no_request_but_now_is():
+    prompt = bookings.EXTRACT_SYSTEM_PROMPT
+    # "free?" alone: he is told yes and asked his time; nothing goes to her yet.
+    assert "or they ask a bare" not in prompt
+    assert "'available?', 'you working?'), is none: they are told yes and asked for their time." in prompt
+    assert "'are you free now', 'available now?'" in prompt
+    # "Now" is any wish to come right away, in any words or language.
+    assert "as soon as possible, in any words or language" in prompt
+    assert all(f"'{word}'" in prompt for word in ("free atm?", "I'm 5 min away", "сейчас можно?", "var tūlīt?"))
+    assert "without wanting to come right away" in prompt
+    rule = bookings.ONLY_OWNER_CONFIRMS_RULE
+    assert "say yes and ask what time they want to come: that is not agreeing to a time." in rule
+
+
 def test_only_a_bare_yes_answers_a_reminder_in_code():
     assert [bookings.reminder_answer(w) for w in ("yes", " Yes ", "jā", "да", "👍")] == ["confirm"] * 5
     # No numbers any more ("2" may be minutes), and a no or a later is read in his own words.
@@ -476,8 +500,98 @@ def test_the_address_note_follows_when_the_address_may_go():
     for where in ("where are you?", "address pls", "send location", "kur tu esi?", "где ты?", "kus sa oled",
                   "what area?"):
         assert bookings.asks_where(where), where
-    for other in ("how much?", "ok 22:00", "price for 1 hour", "do you do domination?", "somewhere nice"):
+    for other in ("how much?", "ok 22:00", "price for 1 hour", "do you do domination?", "somewhere nice",
+                  "were you busy?", "cik maksā?", "сколько?", "mis hind?", "cuánto?"):
         assert not bookings.asks_where(other), other
+
+
+@pytest.mark.parametrize("where", ["were r u", "wya", "wru", "which district", "what part of town", "kur esi",
+                                   "kurā rajonā?", "скинь гео", "какой район", "mis linnaosa", "aadress?",
+                                   "dónde estás", "donde estas", "dirección?", "ubicacion", "qué zona"])
+def test_where_she_is_in_more_words(where):
+    assert bookings.asks_where(where)
+
+
+# -------------------------------------------------- what the reader decides on
+
+
+def test_the_prompt_names_one_latest_message_or_all_of_them():
+    one = bookings.extraction_prompt("them: at 8", "Europe/Riga", NOW, latest=["at 8"])
+    assert one.endswith("Their latest message, the one to decide on: at 8")
+    assert one == bookings.extraction_prompt("them: at 8", "Europe/Riga", NOW, latest="at 8")
+    several = bookings.extraction_prompt("them: at 8\nthem: ok?", "Europe/Riga", NOW, latest=["at  8", "ok?"])
+    assert several.endswith("the ones to decide on together:\n- at 8\n- ok?")
+    assert "the one to decide on" not in bookings.extraction_prompt("them: hi", "Europe/Riga", NOW)
+
+
+def _waiting(start="2026-10-20T21:00", minutes=60, proposed=None):
+    begin = bookings.parse_local(start, "Europe/Riga")
+    row = {"starts_at": begin, "ends_at": begin + timedelta(minutes=minutes), "proposed_starts_at": None,
+           "proposed_ends_at": None}
+    if proposed:
+        at = bookings.parse_local(proposed, "Europe/Riga")
+        row.update(proposed_starts_at=at, proposed_ends_at=at + timedelta(minutes=minutes))
+    return row
+
+
+def test_a_request_nobody_answered_waits_half_an_hour_after_its_time():
+    fmt = "%H:%M"
+    assert bookings.lapses_at(_waiting()).astimezone(RIGA).strftime(fmt) == "21:30"
+    # A long one too; a short one only to its end.
+    assert bookings.lapses_at(_waiting(minutes=180)).astimezone(RIGA).strftime(fmt) == "21:30"
+    assert bookings.lapses_at(_waiting(minutes=20)).astimezone(RIGA).strftime(fmt) == "21:20"
+    # A time she offered instead is the one on the table.
+    assert bookings.lapses_at(_waiting(proposed="2026-10-20T23:00")).astimezone(RIGA).strftime(fmt) == "23:30"
+
+
+@pytest.mark.parametrize("said, at, wanted", [
+    # "At 10" read as this morning, at 10:30: tonight.
+    ("2026-11-04T10:00", "2026-11-04T10:30", "2026-11-04T22:00"),
+    # "18:00" at 18:40: tomorrow.
+    ("2026-11-04T18:00", "2026-11-04T18:40", "2026-11-05T18:00"),
+    # Twice round for "at 1" read as last night, at 23:10.
+    ("2026-11-04T01:00", "2026-11-04T23:10", "2026-11-05T01:00"),
+    # After midnight, a day on.
+    ("2026-11-04T00:30", "2026-11-04T23:10", "2026-11-05T00:30"),
+    # Still to come, or another day: as it is.
+    ("2026-11-04T20:00", "2026-11-04T18:40", "2026-11-04T20:00"),
+    ("2026-11-02T20:00", "2026-11-04T18:40", "2026-11-02T20:00"),
+])
+def test_a_time_left_behind_today_is_the_next_time_it_comes_round(said, at, wanted):
+    zone = "Europe/Riga"
+    got = bookings.next_round(bookings.parse_local(said, zone), bookings.parse_local(at, zone), zone)
+    assert got == bookings.parse_local(wanted, zone)
+
+
+def test_a_slot_left_behind_today_moves_but_a_time_just_gone_is_now():
+    zone = "Europe/Riga"
+    now = bookings.parse_local("2026-11-04T18:40", zone)
+    start, _ = bookings.requested_slot({"start": "2026-11-04T18:00"}, tz_name=zone, default_duration=60, now=now)
+    assert start == bookings.parse_local("2026-11-05T18:00", zone)
+    start, _ = bookings.requested_slot({"start": "2026-11-04T18:35"}, tz_name=zone, default_duration=60, now=now)
+    assert start == bookings.soonest_start(now)
+
+
+def test_the_reader_knows_how_people_write_a_time():
+    prompt = bookings.EXTRACT_SYSTEM_PROMPT
+    for word in ("2030", "20h30", "8ish", "8 or 9", "через полчаса", "pēc pusstundas", "poole tunni pärast",
+                 "en media hora", "щас", "kohe", "praegu", "nüüd", "ahora mismo", "pool kümme", "veerand kümme",
+                 "свободна?", "vaba?", "libre?", "can I come?"):
+        assert word in prompt, word
+    # Read together, whichever message holds the time.
+    assert "Read their latest messages together." in prompt
+    assert "the ones to decide on together" in bookings.extraction_prompt("t", "Europe/Riga", NOW, latest=["a", "b"])
+    # A bare hour is the next time it comes round.
+    assert "the next time that hour comes round" in prompt
+    # Lengths stay lengths: "half an hour" alone is not on the offset list.
+    assert "'in half an hour'" in prompt and "'half an hour'" not in prompt
+
+
+def test_the_arrival_reader_knows_more_words_and_the_same_line():
+    prompt = bookings.ARRIVAL_SYSTEM_PROMPT
+    assert all(word in prompt for word in ("olen kohal", "ukse taga", "estoy abajo", "подъехал", "esmu lejā"))
+    assert all(word in prompt for word in ("почти приехал", "kohe jõuan", "llegando", "tūlīt būšu", "stuck in traffic"))
+    assert "is NOT arrival" in prompt
 
 
 # ------------------------------------- the booker's own words, as commands

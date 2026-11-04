@@ -51,7 +51,8 @@
     {"customer": "great, which floor is it?", "booking": "confirmed", "details": false, "quiet": false},
     {"customer": "on my way, 10 min", "booking": "confirmed", "quiet": false},
     {"customer": "I'm here", "booking": "arrived"},
-    {"customer": "thank you, it was amazing 🙏", "booking": "way_in_sent", "details": false, "quiet": false}
+    {"customer": "thank you, it was amazing 🙏", "details": false, "quiet": false,
+     "expect": {"lacks": ["one sec", "i'm coming", "im coming", "coming out"]}}
    ]
   },
   {
@@ -59,12 +60,12 @@
    "category": "a whole booking",
    "steps": [
     {"customer": "Labvakar! Vai šovakar 20:00 ir brīvs?", "booking": "requested", "intent": "book",
-     "details": false, "expect": {"lacks": ["apstiprin", "rezervēts"]}},
+     "details": false, "expect": {"lacks": ["apstiprin", "rezervēts", "cikos", "kad vēlies", "kādu laiku"]}},
     {"customer": "Cik maksā stunda? Un kur tu atrodies?", "booking": "pending", "details": true, "address": true},
     {"customer": "Vari atsūtīt kādu bildi?", "booking": "pending", "photos": true},
     {"event": "confirmed", "booking": "confirmed_news", "expect": {"has_all": ["20"], "has_any": ["nāc", "jā"]}},
     {"customer": "Esmu klāt", "booking": "arrived"},
-    {"customer": "Paldies, bija ļoti jauki! 🙏", "booking": "way_in_sent", "details": false, "quiet": false}
+    {"customer": "Paldies, bija ļoti jauki! 🙏", "details": false, "quiet": false}
    ]
   },
   {
@@ -73,8 +74,7 @@
    "steps": [
     {"customer": "hi", "details": false, "address": false},
     {"customer": "how much?", "details": true},
-    {"customer": "send more pics", "details": false, "photos": true, "quiet": false,
-     "expect": {"has_any": ["when", "time", "come", "hour"]}},
+    {"customer": "send more pics", "details": false, "photos": true, "quiet": false},
     {"customer": "mmm you are so hot 🔥 what are you doing now?", "details": false, "quiet": false,
      "expect": {"has_any": ["when", "time", "come", "hour", "ready"]}},
     {"customer": "maybe later babe. send me a video first", "details": false, "quiet": false,

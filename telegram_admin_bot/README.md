@@ -646,10 +646,17 @@ for the selected account's calendar, what waits for an answer, the waitlist,
 the opening hours, the calendar link and AI usage.
 
 - When a customer asks for a day and time, the code checks it against the
-  opening hours, closed days, notice, how far ahead, and every other booking
-  (plus the gap after each). A taken or closed time is never put to the
-  owner; the reply offers the nearest free times and, if it was taken, the
-  waitlist.
+  opening hours, closed days, notice (`booking.min_notice_minutes`, 0 by
+  default; "now" is never too short notice), how far ahead, and how many
+  bookings may be at the same time (`booking.max_at_once`). A closed time,
+  or a full one, is never put to the owner; the reply offers the nearest
+  free times and, if it was full, the waitlist. "Are you free?" with no time
+  is not a request: he hears yes and is asked his time.
+- Many customers never come, so by default (`booking.max_at_once` 0) there
+  is no limit: every time he asks goes to the owner, and a request that
+  overlaps her other bookings says so above how to answer (*⚠️ At the same
+  time you have: #12 …, confirmed.*). Set it to 1 for never two at once
+  (the database then refuses an overlap too), or to 2, 3 … for a limit.
 - A free time goes to the owner (`booking.provider`) from this same account:
   *Booking request #7 … Yes, no or later?* (with booking.owner_free_text off: *Reply YES 7 or NO 7, or a new
   time like 7 15:30.*)
@@ -749,6 +756,19 @@ the opening hours, the calendar link and AI usage.
   <id>` (the answers in `replay_scenarios/owner-answers.json`, English,
   Russian, Latvian and Spanish; one small model call each on the account's
   own key; nothing is sent).
+- **How a customer's time is read.** Every message of theirs goes to the
+  reader, in any language and however it is typed: *8*, *2030*, *20h30*, *8ish*,
+  *8 or 9*, *in 20*, *через полчаса*, *pool kümme*, a day in one message and an
+  hour in the next. "Right now" (*now?*, *rn*, *щас*, *tūlīt*, *kohe*, *ahora*,
+  or *on my way* with no booking yet) is never too short notice. A bare *free?*
+  or *can I come?* sends nothing to her: the bot says yes and asks his time.
+  A message whose reading a newer one cut off is read with it, so *at 8* and
+  then *how much?* still reaches her; one that was read is never read again.
+  To see how well the real model reads them: `docker
+  compose exec manager python time_check.py --tenant <id>` (the messages in
+  `replay_scenarios/customer-times.json`, English, Russian, Latvian, Estonian
+  and Spanish; one small model call each on the account's own key; nothing is
+  sent).
 - The customer can change the time before the owner answers (same number),
   ask to move a confirmed booking (the owner answers `YES 7` / `NO 7`), or
   cancel. Every change is in the booking's history and the audit log.
@@ -769,8 +789,11 @@ the opening hours, the calendar link and AI usage.
   that reminder should say. The customer can reply `1` (coming) or `2`
   (cancel). If the scheduler was down, only the latest due reminder goes out.
   Quiet hours apply to reminders too.
-- A request nobody answered before its start time lapses, and both sides are
-  told. A cancelled or moved booking frees its time for the first person on
+- A request nobody answered lapses half an hour after its time (or at its end,
+  if that comes first; a time she offered instead counts), and both sides are
+  told. Until then her yes still takes it: after its start, from the soonest
+  five-minute mark on, for as long (a "now" she answers a few minutes later
+  is booked from then, and both are told the new time). A cancelled or moved booking frees its time for the first person on
   the waitlist whose wish covers it; they have `waitlist_offer_hours` to take
   it before the next one is asked.
 - **Address**: when the customer names a time that is free, `address` is
@@ -811,9 +834,9 @@ the opening hours, the calendar link and AI usage.
   the panel: run one of the two, or add the booking site to `Caddyfile`.
 
 Opening hours live in Postgres and are edited in **Bookings → Opening
-hours**; with no rows, any time is accepted as long as it doesn't overlap
-another booking. Detection costs one short DeepSeek call per customer
-message while bookings are on.
+hours**; with no rows, any time is accepted as long as no more bookings
+than `booking.max_at_once` would be at that time. Detection costs one short
+DeepSeek call per customer message while bookings are on.
 
 **Photos** (`vision.*`, off by default). DeepSeek cannot see images, so photos
 go to a separate OpenAI-compatible model: set `VISION_API_URL` and

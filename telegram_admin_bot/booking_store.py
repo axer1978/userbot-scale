@@ -9,10 +9,14 @@ owner and the scheduler) acting on one booking at once cannot both win.
 Every change writes a booking_events row and an audit_log row in the same
 transaction.
 
-Two live bookings of a tenant can't overlap: the exclusion constraint in
-migration 0003 refuses it, which surfaces here as `SlotTaken`. The
-availability check in code (availability.py) runs first and gives the
-friendly answer; the constraint is the guarantee.
+How many live bookings of a tenant may be at the same time is the
+account's booking.max_at_once, checked in code (availability.py) before
+anything is written. Where it is 1 (never two at once) the database
+guarantees it too: the exclusion constraint (migration 0003, narrowed in
+0026) refuses an overlap between bookings written with `overlap_ok` off,
+which surfaces here as `SlotTaken`. Bookings of an account that allows
+more than one at a time are written with `overlap_ok` on and left to the
+check in code.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 import asyncpg
 
@@ -34,7 +38,12 @@ log = logging.getLogger(__name__)
 
 
 class SlotTaken(Exception):
-    """Another live booking already holds (part of) that time."""
+    """Another live booking already holds (part of) that time; or, with
+    another `reason` (availability.REASONS), that time can't be had."""
+
+    def __init__(self, message: str = "that time overlaps another booking", reason: str = "conflict") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class StaleBooking(Exception):
@@ -92,6 +101,10 @@ class BookingStore:
         self.session_id = session_id
         # The account's network (customer_ref namespace); set by the runtime.
         self.channel = "telegram"
+        # Whether bookings may share a time (booking.max_at_once is not 1):
+        # asked on each new booking and each new time, so the database's
+        # overlap rule leaves them out. The runtime points it at its config.
+        self.overlap_ok: Callable[[], bool] = lambda: False
 
     # ------------------------------------------------------------ reading
 
@@ -199,8 +212,20 @@ class BookingStore:
 
     async def unsent(self) -> list[dict[str, Any]]:
         rows = await self.pool.fetch(
-            "SELECT * FROM bookings WHERE tenant_id = $1 AND state = 'requested' AND starts_at > now() "
+            "SELECT * FROM bookings WHERE tenant_id = $1 AND state = 'requested' AND ends_at > now() "
             "ORDER BY number", self.tenant_id,
+        )
+        return [_booking(r) for r in rows]
+
+    async def at_the_same_time(self, start: datetime, end: datetime, *, exclude_id: int) -> list[dict[str, Any]]:
+        """Other live bookings whose time, or the time one side proposed to
+        move it to, is during [start, end); earliest first."""
+        rows = await self.pool.fetch(
+            "SELECT * FROM bookings WHERE tenant_id = $1 AND state = ANY($2::text[]) AND id <> $5 AND ("
+            "  (starts_at < $4 AND ends_at > $3) OR "
+            "  (proposed_starts_at IS NOT NULL AND proposed_starts_at < $4 AND proposed_ends_at > $3)"
+            ") ORDER BY starts_at, number",
+            self.tenant_id, list(bs.LIVE), start, end, exclude_id,
         )
         return [_booking(r) for r in rows]
 
@@ -229,10 +254,10 @@ class BookingStore:
         )
         out = []
         for r in rows:
-            out.append(availability.Busy(r["starts_at"], r["blocked_until"]))
+            out.append(availability.Busy(r["starts_at"], r["blocked_until"], r["id"]))
             if r["proposed_starts_at"] is not None:
                 buffer = r["blocked_until"] - r["ends_at"]
-                out.append(availability.Busy(r["proposed_starts_at"], r["proposed_ends_at"] + buffer))
+                out.append(availability.Busy(r["proposed_starts_at"], r["proposed_ends_at"] + buffer, r["id"]))
         return out
 
     async def events(self, booking_id: int) -> list[dict[str, Any]]:
@@ -265,11 +290,13 @@ class BookingStore:
                 number = await self._next_number(con)
                 row = await con.fetchrow(
                     "INSERT INTO bookings (tenant_id, session_id, number, chat_id, customer_ref, customer_name, "
-                    "customer_username, service, notes, extras, starts_at, ends_at, blocked_until, tz, state) "
-                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'requested') RETURNING *",
+                    "customer_username, service, notes, extras, starts_at, ends_at, blocked_until, tz, state, "
+                    "overlap_ok) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'requested', $15) "
+                    "RETURNING *",
                     self.tenant_id, self.session_id, number, chat_id, ref, customer_name[:200],
                     customer_username, service[:120], notes[:500], extras[:300], starts_at, ends_at, blocked_until,
-                    tz,
+                    tz, self.overlap_ok(),
                 )
                 await self._event(con, row["id"], None, bs.REQUESTED, "create", actor, reason)
                 await audit.record(
@@ -292,6 +319,15 @@ class BookingStore:
         for key, value in fields.items():
             args.append(value)
             sets.append(f"{key} = ${len(args)}")
+        start = fields.get("starts_at", booking["starts_at"])
+        held_until = fields.get("blocked_until", booking["blocked_until"])
+        if start < booking["starts_at"] or held_until > booking["blocked_until"]:
+            # A new time is held by the account's rule as it is now. One that
+            # keeps the time or stays inside it (a yes, a cancel, a shorter
+            # length) keeps what it was written with, so bookings that
+            # overlapped from before stay possible.
+            args.append(self.overlap_ok())
+            sets.append(f"overlap_ok = ${len(args)}")
         try:
             async with self.pool.acquire() as con, con.transaction():
                 row = await con.fetchrow(

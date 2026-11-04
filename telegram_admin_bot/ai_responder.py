@@ -849,20 +849,26 @@ async def extract_booking(
     client: Optional[httpx.AsyncClient] = None,
     usage_sink: Optional[UsageSink] = None,
     state_note: str = "",
+    now: Optional[datetime] = None,
+    latest: Sequence[str] = (),
 ) -> Optional[dict[str, Any]]:
     """What the customer wants regarding a booking (bookings.INTENTS).
 
     Returns the parsed JSON ({"intent", "start", ...}), or None when there is
     nothing to act on. `state_note` lists their current bookings so a "yes"
-    to a proposed time can be told apart from a new request. Like
-    summarising, this is extraction, not writing: cold and short.
+    to a proposed time can be told apart from a new request. `latest`: the
+    messages to decide on (BookingFlow: those no finished reading has seen);
+    without it, their last one. `now`: another clock than the real one
+    (time_check.py). Like summarising, this is extraction, not writing: cold
+    and short.
     """
     import bookings
 
     transcript = render_transcript(history)
     if not transcript.strip():
         return None
-    latest = next((m.get("content") or "" for m in reversed(history) if m.get("role") == "user"), "")
+    latest = list(latest) or [next((m.get("content") or "" for m in reversed(history)
+                                    if m.get("role") == "user"), "")]
     extract_config = {
         **ai_config,
         "max_tokens": 300,
@@ -872,7 +878,7 @@ async def extract_booking(
         api_key=api_key,
         messages=[
             {"role": "system", "content": bookings.EXTRACT_SYSTEM_PROMPT},
-            {"role": "user", "content": bookings.extraction_prompt(transcript, tz_name, state_note=state_note,
+            {"role": "user", "content": bookings.extraction_prompt(transcript, tz_name, now, state_note=state_note,
                                                                    latest=latest)},
         ],
         ai_config=extract_config,

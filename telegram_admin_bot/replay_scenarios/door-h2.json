@@ -3827,6 +3827,17 @@
    "steps": [
     {
      "customer": "yo free?",
+     "intent": "none",
+     "expect": {
+      "has_any": [
+       "what time",
+       "when",
+       "what hour"
+      ]
+     }
+    },
+    {
+     "customer": "now?",
      "booking": "requested_now",
      "intent": "asap"
     },

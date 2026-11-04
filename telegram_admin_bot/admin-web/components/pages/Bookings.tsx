@@ -261,8 +261,9 @@ function OpeningHours() {
   return (
     <>
       <p className="pf-note">When bookings can be made, in the client&apos;s time zone. Several rows on one day make
-        breaks. With no rows at all, any time is accepted as long as it does not overlap another booking. Closed days,
-        notice and how far ahead are in Settings → Config under booking.</p>
+        breaks. With no rows at all, any time is accepted. Closed days, notice, how far ahead and how many bookings may
+        be at the same time (max_at_once: 0 = no limit, 1 = never two at once) are in Settings → Config under
+        booking.</p>
       {rules && (
         <table className="cfg-table">
           <tbody>
