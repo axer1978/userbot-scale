@@ -1645,18 +1645,20 @@ EXTRACT_SYSTEM_PROMPT = (
     "  a clock time: '20:30', '20.30', '20 30', '2030', '20h', '20h30', '8pm', "
     "'8.30pm', '8', '8?', 'at 8', 'в 8', 'к 8', 'часов в 8', '8os', 'pl. 20', "
     "'plkst 8', 'kell 8', 'a las 8', 'um 8', or in words: 'eight', 'восемь', "
-    "'astoņos', 'kaheksa', 'ocho';\n"
+    "'astoņos', 'vienos', 'kaheksa', 'ocho';\n"
     "  about that time: 'around 8', '8ish', 'after 8', 'by 8', 'около 8', "
-    "'после 8', 'ap 8', 'pēc 8', 'kella 8 paiku', 'sobre las 8' — that hour goes "
-    "in start, their words in notes;\n"
-    "  a choice: '8 or 9', '8-9', 'between 8 and 9' — the earliest goes in "
-    "start, their words in notes;\n"
+    "'после 8', 'ap 8', 'pēc 8', 'kella 8 paiku', 'sobre las 8', 'pasadas las 8', 'tipo 8', "
+    "'в девятом часу' (from 8) — that hour goes in start, their words in notes;\n"
+    "  a choice: '8 or 9', '8-9', 'between 8 and 9', 'через час-полтора' — the earliest "
+    "goes in start, their words in notes;\n"
     "  an offset from now: 'in 20', 'in 20 min', 'in an hour', 'in half an hour', "
     "'be there in 10', 'через час', 'через полчаса', 'через 20 минут', 'pēc "
-    "stundas', 'pēc pusstundas', 'pēc 20 min', 'tunni pärast', 'poole tunni "
+    "stundas', 'pēc pusstundas', 'pēc 20 min', 'pēc stundām divām', 'tunni pärast', 'poole tunni "
     "pärast', '20 minuti pärast', 'en una hora', 'en media hora', 'dentro de 20 "
     "minutos'. A bare '10 min', '15 min' or '20 min' right after they were asked "
-    "when is an offset too.\n"
+    "when is an offset too. An offset goes in start, with asap false: at 18:40, "
+    "'15 min' is 18:55, 'минут 20' is 19:00. Not asked when, or a usual length ('30 min', "
+    "'just 30 mins', 'pool tundi', '1 hour'), it is a length, not a time.\n"
     "  RIGHT NOW is book too, with asap true and start null (the time is worked "
     "out elsewhere): they want to meet now or as soon as possible, in any "
     "words or language — 'now', 'now?', 'rn', 'asap', 'atm', 'right away', "
@@ -1664,24 +1666,30 @@ EXTRACT_SYSTEM_PROMPT = (
     "'can I come now', 'are you free now', 'available now?', 'free atm?', "
     "'I'm close, can I come', 'I'm nearby, can I come', 'I'm 5 min away', "
     "'сейчас можно?', 'щас', 'прямо сейчас', 'свободна сейчас?', 'я рядом, можно?', "
-    "'var tagad?', 'var tūlīt?', 'šobrīd', 'pašlaik', 'brīva tagad?', 'esmu tuvumā, var?', "
-    "'praegu', 'kohe', 'nüüd', 'oled praegu vaba?', 'kas võin kohe tulla?', "
+    "'var tagad?', 'var tūlīt?', 'tulit', 'šobrīd', 'sobrid', 'pašlaik', 'paslaik esi briva?', "
+    "'brīva tagad?', 'esmu tuvumā, var?', "
+    "'praegu', 'kohe', 'nüüd', 'nyyd', 'hetkel', 'hetkel vaba?', 'oled praegu vaba?', "
+    "'kas võin kohe tulla?', "
     "'ahora?', 'ahora mismo', 'ya mismo', 'nyt', 'jetzt', 'dabar'. With no booking in 'Their "
     "bookings', 'on my way', 'leaving now', 'coming', 'I'm here', 'I'm outside', "
-    "'еду', 'выехал', 'я тут', 'braucu', 'nāku', 'esmu klāt', 'tulen', 'olen siin', "
+    "'еду', 'выехал', 'я тут', 'braucu', 'izbraucu', 'nāku', 'esmu klāt', 'tulen', 'stardin', 'olen teel', "
+    "'olen siin', "
     "'voy', 'ya estoy aquí' mean right now too. asap is false for everything else.\n"
     "- cancel: they clearly call off their booking.\n"
     "- accept_proposal / decline_proposal: the business proposed a different "
     "time (see 'Their bookings') and they say yes / no to it. If they answer "
     "with yet another concrete time, that is book.\n"
-    "- confirm_attendance: after a reminder, they say they are still coming.\n"
+    "- confirm_attendance: after a reminder, they say they are still coming. Asking "
+    "whether it still stands ('still on?', 'всё в силе?', 'viss spēkā?', 'kas ikka jääb?', "
+    "'sigue en pie?') is none.\n"
     "- waitlist: they ask to be told if a time frees up; give the range they "
     "would take in waitlist_from/waitlist_to.\n"
     "- none: anything else, including a day without a time ('are you free "
     "tomorrow?', 'saturday?', 'завтра?', 'rīt?', 'homme?', 'mañana?'), a vague "
     "window ('tonight', 'this evening', 'later', 'soon', 'in a bit', 'after "
-    "work', 'вечером', 'попозже', 'vakarā', 'vēlāk', 'õhtul', 'hiljem', 'más "
-    "tarde'), asking the business for times ('when can I come?', 'what time are "
+    "work', 'in a few hours', 'вечером', 'попозже', 'через несколько часов', 'vakarā', "
+    "'vēlāk', 'pēc dažām stundām', 'õhtul', 'hiljem', 'mõne tunni pärast', 'mone tunni parast', 'más "
+    "tarde', 'en unas horas'), asking the business for times ('when can I come?', 'what time are "
     "you free?', 'когда можно?', 'cikos var?', 'mis kell saab?'), or what they said "
     "earlier and then moved away from. Asking only whether she is free or "
     "available, without any time and without wanting to come right away "
@@ -1689,7 +1697,8 @@ EXTRACT_SYSTEM_PROMPT = (
     "are told yes and asked for their time. The same in any words: 'свободна?', "
     "'работаешь?', 'можно приехать?', 'brīva?', 'strādā?', 'var atbraukt?', "
     "'vaba?', 'töötad?', 'kas saab tulla?', 'libre?', 'disponible?', 'puedo ir?', "
-    "'can I come?', 'can we meet?', 'wanna meet'. Also none when their latest messages "
+    "'can I come?', 'can we meet?', 'wanna meet'. With a now word in it ('hetkel vaba?', "
+    "'paslaik briva?', 'свободна сейчас?') it is RIGHT NOW instead. Also none when their latest messages "
     "name no time of their own: a nudge while they wait ('??', 'so?', 'is it "
     "ok?', 'hello?'), thanks, a plain 'ok', or a question with no time in it. "
     "A length alone ('1 hour?', '30 min incall?', 'на час', 'stundu') is not a time; "
@@ -1720,11 +1729,15 @@ EXTRACT_SYSTEM_PROMPT = (
     "as written. A time with no day that has gone by only a few minutes stays "
     "today (they mean now); gone by more, it is tomorrow. After midnight, 'tonight "
     "at 1' is the next calendar day. Dates are day first: '5.11', '05/11', 'the "
-    "5th'; a weekday is the next such day. Half-hour words: in Latvian, Russian, "
-    "Estonian and German 'half ten' ('pusdesmitos', 'полдесятого', 'pool kümme', "
-    "'halb zehn') is 9:30; in English 'half ten' is 10:30. Estonian 'veerand kümme' "
-    "is 9:15 and 'kolmveerand kümme' 9:45; Russian 'четверть десятого' is 9:15 and "
-    "'без четверти десять' 9:45. "
+    "5th'; a weekday is the next such day, short forms too ('sat', 'сб', 'пт', 'sestd', "
+    "'sab'; Estonian by one letter: 'R' Friday, 'L' Saturday). Half-hour words: in "
+    "Latvian, Russian, Estonian and German 'half 10' means half an hour BEFORE 10: "
+    "'pusdesmitos', 'pus 10', 'полдесятого', 'пол 10', 'pool kümme', 'pool 10', 'halb "
+    "zehn' are all 9:30. In English 'half 10' and 'half ten' mean half PAST: 10:30. "
+    "Estonian 'veerand kümme' and 'veerand 10' are 9:15, 'kolmveerand kümme' and "
+    "'kolmveerand 10' 9:45; Russian 'четверть десятого' is 9:15 and 'без четверти "
+    "десять' 9:45. The next-time rule applies to these too: at 18:40 'pool 9' is 20:30, "
+    "'veerand 9' 20:15, 'half 9' 21:30; at 23:10 'half 12' is 00:30. "
     "Whether 'me' agreed is irrelevant: confirmation is decided elsewhere."
 )
 
@@ -1822,14 +1835,31 @@ def wants_now(data: Mapping[str, Any], *, tz_name: str, now: datetime) -> bool:
     return data.get("asap") is True or (start is not None and now - JUST_PASSED < start <= now)
 
 
+def next_round(start: datetime, now: datetime, tz_name: str) -> datetime:
+    """"At 10" said at 10:30: the reader sometimes leaves a time behind today.
+    He means the next time that hour comes round: an hour that can be morning
+    or evening 12 hours on, any other a day on. A time on another day is left
+    as it is (refused as past)."""
+    zone = tzinfo_for(tz_name)
+    start = start.astimezone(zone)
+    if start > now or start.date() != now.astimezone(zone).date():
+        return start
+    step = timedelta(hours=12 if 1 <= start.hour <= 12 else 24)
+    while start <= now:
+        start += step
+    return start
+
+
 def requested_slot(
     data: Mapping[str, Any], *, tz_name: str, default_duration: int, now: Optional[datetime] = None,
 ) -> Optional[tuple[datetime, datetime]]:
     """The slot the customer asked for. With `now`, "right now" (wants_now)
-    becomes soonest_start(now)."""
+    becomes soonest_start(now), and a time left behind today next_round."""
     start = parse_local(str(data.get("start") or ""), tz_name)
     if now is not None and wants_now(data, tz_name=tz_name, now=now):
         start = soonest_start(now).astimezone(tzinfo_for(tz_name))
+    elif now is not None and start is not None:
+        start = next_round(start, now, tz_name)
     if start is None:
         return None
     minutes = data.get("duration_minutes")
@@ -2186,7 +2216,7 @@ ARRIVAL_SYSTEM_PROMPT = (
     "'here', 'im outside', 'at the door', 'at the gate', 'downstairs', 'just parked "
     "outside', 'я на месте', 'я тут', 'я внизу', 'я у подъезда', 'подъехал', "
     "'подошёл', 'esmu klāt', 'esmu šeit', 'esmu lejā', 'esmu pie mājas', 'pie durvīm', "
-    "'olen kohal', 'olen siin', 'olen all', 'ukse taga', 'ya estoy aquí', "
+    "'olen kohal', 'olen siin', 'olen all', 'jõudsin', 'joudsin', 'ukse taga', 'ya estoy aquí', "
     "'estoy abajo', 'estoy en la puerta'. Someone already at the building who "
     "asks which door, entrance, floor or code ('I'm at the building, which "
     "door?', 'here, two doors, which one?', 'какой подъезд?', 'kura ieeja?', 'mis "

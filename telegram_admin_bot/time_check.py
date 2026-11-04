@@ -66,6 +66,19 @@ STATES = {bs.REQUESTED, bs.PENDING, bs.CONFIRMED}
 
 
 @dataclass
+class Tokens:
+    """What the run spent: the DeepSeek usage of every call."""
+    cached: int = 0
+    fresh: int = 0
+    answer: int = 0
+
+    async def sink(self, _model: str, usage: Mapping[str, Any]) -> None:
+        self.cached += int(usage.get("prompt_cache_hit_tokens") or 0)
+        self.fresh += int(usage.get("prompt_cache_miss_tokens") or 0)
+        self.answer += int(usage.get("completion_tokens") or 0)
+
+
+@dataclass
 class Result:
     case: dict[str, Any]
     got: str
@@ -172,8 +185,8 @@ def reading(found: Optional[Mapping[str, Any]], tz: str, now: datetime) -> str:
         return intent
     if bookings.wants_now(found, tz_name=tz, now=now):
         return "now"
-    start = bookings.parse_local(str(found.get("start") or ""), tz)
-    return "none" if start is None else start.astimezone(bookings.tzinfo_for(tz)).strftime("%Y-%m-%dT%H:%M")
+    slot = bookings.requested_slot(found, tz_name=tz, default_duration=60, now=now)
+    return "none" if slot is None else slot[0].astimezone(bookings.tzinfo_for(tz)).strftime("%Y-%m-%dT%H:%M")
 
 
 def judge(case: Mapping[str, Any], found: Optional[Mapping[str, Any]], tz: str, now: datetime) -> tuple[str, bool]:
@@ -185,15 +198,16 @@ def judge(case: Mapping[str, Any], found: Optional[Mapping[str, Any]], tz: str, 
 
 
 async def run_case(data: Mapping[str, Any], case: dict[str, Any], *, key: str, tz: str, ai_config: dict[str, Any],
-                   http: httpx.AsyncClient) -> Result:
+                   http: httpx.AsyncClient, usage_sink: Any = None) -> Result:
     now = bookings.parse_local(case.get("now") or data["now"], tz)
     history = history_of(case)
     if case.get("check") == "arrival":
-        arrived = await ai_responder.extract_arrival(api_key=key, history=history, ai_config=ai_config, client=http)
+        arrived = await ai_responder.extract_arrival(api_key=key, history=history, ai_config=ai_config, client=http,
+                                                     usage_sink=usage_sink)
         return Result(case, str(arrived).lower(), arrived in wants(case))
     found = await ai_responder.extract_booking(
         api_key=key, history=history, tz_name=tz, ai_config=ai_config, client=http, now=now,
-        latest=theirs(case), state_note=bookings.state_note(live_of(case, tz, now)))
+        latest=theirs(case), state_note=bookings.state_note(live_of(case, tz, now)), usage_sink=usage_sink)
     got, ok = judge(case, found, tz, now)
     return Result(case, got, ok, found)
 
@@ -245,16 +259,19 @@ async def main(argv: Optional[list[str]] = None) -> int:
     config = bundle.config
     gate = asyncio.Semaphore(max(1, args.parallel))
     started = time.monotonic()
+    tokens = Tokens()
     async with httpx.AsyncClient(timeout=90) as http:
         async def one(case: dict[str, Any]) -> Result:
             async with gate:
                 try:
-                    return await run_case(data, case, key=key, tz=config["timezone"], ai_config=config["ai"], http=http)
+                    return await run_case(data, case, key=key, tz=config["timezone"], ai_config=config["ai"], http=http,
+                                          usage_sink=tokens.sink)
                 except Exception as exc:  # a failed call fails that case, not the run
                     return Result(case, f"error: {exc}", False)
 
         results = await asyncio.gather(*(one(c) for c in cases))
-    print(f"Tenant {args.tenant}, {len(results)} messages in {time.monotonic() - started:.0f}s\n")
+    print(f"Tenant {args.tenant}, {len(results)} messages in {time.monotonic() - started:.0f}s; tokens: "
+          f"{tokens.cached} cached, {tokens.fresh} fresh, {tokens.answer} in answers\n")
     print(report(results, args.verbose))
     return 0 if all(r.ok for r in results) else 1
 

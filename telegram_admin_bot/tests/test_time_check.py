@@ -130,6 +130,14 @@ async def test_an_arrival_case_goes_to_the_arrival_reader(model):
     assert calls[0]["messages"][0]["content"] == bookings.ARRIVAL_SYSTEM_PROMPT
 
 
+@pytest.mark.asyncio
+async def test_the_run_counts_what_it_spends():
+    tokens = time_check.Tokens()
+    await tokens.sink("m", {"prompt_cache_hit_tokens": 100, "prompt_cache_miss_tokens": 20, "completion_tokens": 5})
+    await tokens.sink("m", {"prompt_cache_hit_tokens": 100, "completion_tokens": None})
+    assert (tokens.cached, tokens.fresh, tokens.answer) == (200, 20, 5)
+
+
 def test_the_report_shows_what_failed_and_counts_each_language():
     good = {"id": "en-a", "them": "now", "want": "now"}
     bad = {"id": "lv-b", "them": ["tagad"], "want": "now", "chat": [{"me": "hi"}]}

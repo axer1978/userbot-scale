@@ -544,6 +544,34 @@ def test_a_request_nobody_answered_waits_half_an_hour_after_its_time():
     assert bookings.lapses_at(_waiting(proposed="2026-10-20T23:00")).astimezone(RIGA).strftime(fmt) == "23:30"
 
 
+@pytest.mark.parametrize("said, at, wanted", [
+    # "At 10" read as this morning, at 10:30: tonight.
+    ("2026-11-04T10:00", "2026-11-04T10:30", "2026-11-04T22:00"),
+    # "18:00" at 18:40: tomorrow.
+    ("2026-11-04T18:00", "2026-11-04T18:40", "2026-11-05T18:00"),
+    # Twice round for "at 1" read as last night, at 23:10.
+    ("2026-11-04T01:00", "2026-11-04T23:10", "2026-11-05T01:00"),
+    # After midnight, a day on.
+    ("2026-11-04T00:30", "2026-11-04T23:10", "2026-11-05T00:30"),
+    # Still to come, or another day: as it is.
+    ("2026-11-04T20:00", "2026-11-04T18:40", "2026-11-04T20:00"),
+    ("2026-11-02T20:00", "2026-11-04T18:40", "2026-11-02T20:00"),
+])
+def test_a_time_left_behind_today_is_the_next_time_it_comes_round(said, at, wanted):
+    zone = "Europe/Riga"
+    got = bookings.next_round(bookings.parse_local(said, zone), bookings.parse_local(at, zone), zone)
+    assert got == bookings.parse_local(wanted, zone)
+
+
+def test_a_slot_left_behind_today_moves_but_a_time_just_gone_is_now():
+    zone = "Europe/Riga"
+    now = bookings.parse_local("2026-11-04T18:40", zone)
+    start, _ = bookings.requested_slot({"start": "2026-11-04T18:00"}, tz_name=zone, default_duration=60, now=now)
+    assert start == bookings.parse_local("2026-11-05T18:00", zone)
+    start, _ = bookings.requested_slot({"start": "2026-11-04T18:35"}, tz_name=zone, default_duration=60, now=now)
+    assert start == bookings.soonest_start(now)
+
+
 def test_the_reader_knows_how_people_write_a_time():
     prompt = bookings.EXTRACT_SYSTEM_PROMPT
     for word in ("2030", "20h30", "8ish", "8 or 9", "через полчаса", "pēc pusstundas", "poole tunni pärast",
