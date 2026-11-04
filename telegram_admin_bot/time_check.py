@@ -1,7 +1,7 @@
 """Check how a customer's words about a time are read, against the real model.
 A dry run: the reader is called exactly as the runtime calls it
-(booking_flow.BookingFlow.scan: the chat, their bookings, their latest
-messages) and what it found is weighed as the runtime weighs it
+(booking_flow.BookingFlow.scan: the chat, their bookings, the messages in
+"them" as ones no finished reading has seen) and what it found is weighed as the runtime weighs it
 (bookings.wants_now, bookings.requested_slot); nothing is sent and nothing is
 written. The clock of a case is passed in, so the same words are read at the
 same time on any day.
@@ -193,7 +193,7 @@ async def run_case(data: Mapping[str, Any], case: dict[str, Any], *, key: str, t
         return Result(case, str(arrived).lower(), arrived in wants(case))
     found = await ai_responder.extract_booking(
         api_key=key, history=history, tz_name=tz, ai_config=ai_config, client=http, now=now,
-        state_note=bookings.state_note(live_of(case, tz, now)))
+        latest=theirs(case), state_note=bookings.state_note(live_of(case, tz, now)))
     got, ok = judge(case, found, tz, now)
     return Result(case, got, ok, found)
 

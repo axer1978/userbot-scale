@@ -1727,47 +1727,123 @@ async def test_her_yes_a_few_minutes_after_now_takes_it_from_then(world):
     assert "the business said YES" in w.script["notes"][-1] and "12:10" in w.script["notes"][-1]
 
 
-async def test_a_time_followed_by_a_question_still_reaches_her(world, monkeypatch):
-    """"at 8", then "how much?" a moment later: the second message's scan
-    replaces the first, and reads both."""
-    w = world
-    w.app.config["auto_send"] = False  # nothing of ours between them
+def read_with(w, monkeypatch, answers=None):
+    """The real reader over a scripted model: what it is given, and for
+    messages holding a key of `answers`, that JSON."""
     prompts = []
 
     async def complete(**kw):
         user = kw["messages"][1]["content"]
         prompts.append(user)
-        if "- at 15\n- how much?" in user:
-            return json.dumps(book("2030-03-04T15:00"))
+        for key, found in (answers or {}).items():
+            if key in user.rsplit("Their latest", 1)[-1]:
+                return json.dumps(found)
         return '{"intent": "none"}'
 
     monkeypatch.setattr(ai_responder, "extract_booking", REAL_EXTRACT)
     monkeypatch.setattr(ai_responder, "_complete", complete)
-    await customer(w, "at 15")
-    assert await w.store.between(NOW - timedelta(days=1), NOW + timedelta(days=1)) == []
+    return prompts
+
+
+async def still_reading(w, monkeypatch, text, answers=None):
+    """`text` comes in, and the reader is still at it when the test goes on."""
+    prompts = read_with(w, monkeypatch, answers)
+    reading_it, never = asyncio.Event(), asyncio.Event()
+    scripted = ai_responder._complete
+
+    async def complete(**kw):
+        if not reading_it.is_set():
+            prompts.append(kw["messages"][1]["content"])
+            reading_it.set()
+            await never.wait()
+        return await scripted(**kw)
+
+    monkeypatch.setattr(ai_responder, "_complete", complete)
+    await w.app.on_incoming(FakeEvent(CUSTOMER, text))
+    await reading_it.wait()
+    return prompts
+
+
+async def test_a_time_followed_by_a_question_still_reaches_her(world, monkeypatch):
+    """"at 15", then "how much?" before the first was read: the second
+    message's reading replaces the first and takes both."""
+    w = world
+    w.app.config["auto_send"] = False
+    prompts = await still_reading(w, monkeypatch, "at 15", {"- at 15\n- how much?": book("2030-03-04T15:00")})
     await customer(w, "how much?")
     assert (await only_booking(w))["state"] == bs.PENDING
     assert "Booking request #1" in w.sent[OWNER][0]
     assert prompts[-1].endswith("the ones to decide on together:\n- at 15\n- how much?")
 
 
-async def test_his_message_from_long_before_is_not_read_again_with_a_new_one(world, monkeypatch):
+async def test_a_message_that_was_read_is_never_read_again(world, monkeypatch):
+    """Her no, and his next question before the bot's answer has gone out:
+    the time she declined does not come back as a new request."""
     w = world
     w.app.config["auto_send"] = False
-    prompts = []
-
-    async def complete(**kw):
-        prompts.append(kw["messages"][1]["content"])
-        return '{"intent": "none"}'
-
-    monkeypatch.setattr(ai_responder, "extract_booking", REAL_EXTRACT)
-    monkeypatch.setattr(ai_responder, "_complete", complete)
+    prompts = read_with(w, monkeypatch, {"at 15": book("2030-03-04T15:00")})
     await customer(w, "at 15")
-    async with w.app.pool.acquire() as con:
-        await con.execute("UPDATE messages SET created_at = created_at - interval '10 hours' WHERE chat_id = $1",
-                          CUSTOMER)
+    await owner(w, "NO 1")
+    assert (await only_booking(w))["state"] == bs.CANCELLED
+    await customer(w, "how much?")
+    assert prompts[-1].endswith("Their latest message, the one to decide on: how much?")
+    assert len(await w.store.between(NOW - timedelta(days=1), NOW + timedelta(days=1))) == 1
+
+
+async def test_a_reading_cut_off_long_before_is_only_the_conversation(world, monkeypatch):
+    w = world
+    w.app.config["auto_send"] = False
+    prompts = await still_reading(w, monkeypatch, "at 15")
+    w.app.flow.cancel_scan(CUSTOMER)  # a takeover, say
+    w.clock["now"] = NOW + timedelta(minutes=6)
     await customer(w, "hello?")
     assert prompts[-1].endswith("Their latest message, the one to decide on: hello?")
+
+
+async def test_a_late_yes_for_a_length_counts_it_from_the_new_start(world):
+    """Asked for now at 12:00 (12:05), she says "yes, only 20 min" at 12:30,
+    after 20 minutes from 12:05 have gone by: not refused as past."""
+    w = world
+    await customer(w, "now", {"intent": "book", "asap": True, "start": None})
+    w.clock["now"] = datetime(2030, 3, 4, 12, 30, tzinfo=RIGA)
+    w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=20))
+    await owner(w, "yes, only 20 min")
+    b = await only_booking(w)
+    assert b["state"] == bs.CONFIRMED
+    assert b["starts_at"].astimezone(RIGA).strftime("%H:%M") == "12:35"
+    assert b["ends_at"].astimezone(RIGA).strftime("%H:%M") == "12:55"
+
+
+async def test_a_request_nobody_answers_lapses_half_an_hour_after_its_time(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await tick(w, datetime(2030, 3, 5, 15, 29, tzinfo=RIGA))
+    assert (await only_booking(w))["state"] == bs.PENDING
+    await tick(w, datetime(2030, 3, 5, 15, 31, tzinfo=RIGA))
+    assert (await only_booking(w))["state"] == bs.CANCELLED
+
+
+async def test_a_time_she_offered_keeps_the_request_waiting_for_his_answer(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    w.clock["now"] = datetime(2030, 3, 5, 15, 20, tzinfo=RIGA)
+    await owner(w, "1 17:00")
+    await tick(w, datetime(2030, 3, 5, 16, 30, tzinfo=RIGA))
+    assert (await only_booking(w))["proposed_by"] == bs.OWNER
+    await customer(w, "ok", {"intent": "accept_proposal"})
+    b = await only_booking(w)
+    assert b["state"] == bs.CONFIRMED and b["starts_at"].astimezone(RIGA).strftime("%H:%M") == "17:00"
+
+
+async def test_his_late_yes_to_her_offer_is_not_taken_by_itself(world):
+    w = world
+    await customer(w, "tomorrow at 15?", book())
+    await owner(w, "1 17:00")
+    w.clock["now"] = datetime(2030, 3, 5, 17, 20, tzinfo=RIGA)
+    await customer(w, "ok", {"intent": "accept_proposal"})
+    b = await only_booking(w)
+    assert b["state"] == bs.PENDING and b["proposed_starts_at"].astimezone(RIGA).strftime("%H:%M") == "17:00"
+    assert "is no longer possible" in w.script["notes"][-1]
 
 
 async def test_a_late_yes_for_a_length_and_a_late_yes_in_the_panel(world):

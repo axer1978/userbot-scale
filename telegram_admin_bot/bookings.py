@@ -1743,38 +1743,9 @@ def extraction_prompt(
     if len(latest) == 1:
         parts.append("\nTheir latest message, the one to decide on: " + " ".join(latest[0].split()))
     elif latest:
-        parts.append("\nTheir latest messages since my last one, oldest first, the ones to decide on together:\n"
+        parts.append("\nTheir latest messages, oldest first, the ones to decide on together:\n"
                      + "\n".join("- " + " ".join(text.split()) for text in latest))
     return "\n".join(parts)
-
-
-# Their messages this close to their newest are read as one: "at 8", then
-# "how much?". An older one (his "at 8" of yesterday, unanswered in quiet
-# hours, before today's "hello?") is only the conversation.
-RUN_WINDOW = timedelta(minutes=5)
-
-
-def latest_run(history: Sequence[Mapping[str, Any]]) -> list[str]:
-    """What the reader decides on: their messages since our last one, close
-    to the newest of them (with "at", as get_history_for_ai(with_times=True)
-    gives it; without, all of them), oldest first. Each new message restarts
-    the scan, so an earlier one in the run may never have been read alone. A
-    reply of ours that raced the reader leaves his latest messages his latest."""
-    run: list[str] = []
-    newest: Optional[datetime] = None
-    for message in reversed(history):
-        if message.get("role") != "user":
-            if run:
-                break
-            continue
-        at = message.get("at")
-        if isinstance(at, datetime):
-            newest = newest or at
-            if newest - at > RUN_WINDOW:
-                break
-        if (message.get("content") or "").strip():
-            run.append(message["content"])
-    return run[::-1]
 
 
 INTENTS = ("none", "book", "cancel", "accept_proposal", "decline_proposal", "confirm_attendance", "waitlist")
@@ -1826,6 +1797,23 @@ def soonest_start(now: datetime) -> datetime:
     if at.second or at.microsecond:
         at = at.replace(second=0, microsecond=0) + timedelta(minutes=1)
     return at + timedelta(minutes=-at.minute % 5)
+
+
+# How long a request nobody answered still waits once its time has come: her
+# yes in that time takes it from the soonest start (BookingFlow.from_now), so
+# a "now" she answers a few minutes later is not lost.
+LATE_ANSWER = timedelta(minutes=30)
+
+
+def lapses_at(booking: Mapping[str, Any]) -> datetime:
+    """When a request nobody answered stops waiting: half an hour after the
+    time on the table (a time she offered instead counts: he may still take
+    it), or at its end when that comes first."""
+    if booking.get("proposed_starts_at") is not None:
+        start, end = booking["proposed_starts_at"], booking["proposed_ends_at"]
+    else:
+        start, end = booking["starts_at"], booking["ends_at"]
+    return min(end, start + LATE_ANSWER)
 
 
 def wants_now(data: Mapping[str, Any], *, tz_name: str, now: datetime) -> bool:
@@ -2193,7 +2181,7 @@ def context_for_reply(lines: Sequence[str]) -> str:
 ARRIVAL_SYSTEM_PROMPT = (
     "You read the end of a private chat between a business ('me') and a "
     "customer ('them') who has an appointment about now. Decide whether the "
-    "customer's LATEST message says they have physically arrived at the meeting "
+    "customer's latest message or messages say they have physically arrived at the meeting "
     "place, in any words or language, typos included — for example 'I'm here', "
     "'here', 'im outside', 'at the door', 'at the gate', 'downstairs', 'just parked "
     "outside', 'я на месте', 'я тут', 'я внизу', 'я у подъезда', 'подъехал', "

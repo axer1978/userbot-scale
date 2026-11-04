@@ -762,9 +762,9 @@ the opening hours, the calendar link and AI usage.
   hour in the next. "Right now" (*now?*, *rn*, *щас*, *tūlīt*, *kohe*, *ahora*,
   or *on my way* with no booking yet) is never too short notice. A bare *free?*
   or *can I come?* sends nothing to her: the bot says yes and asks his time.
-  Messages sent one after the other are read together (`bookings.latest_run`:
-  since our last one, within 5 minutes of the newest), so *at 8* and then *how
-  much?* still reaches her. To see how well the real model reads them: `docker
+  A message whose reading a newer one cut off is read with it, so *at 8* and
+  then *how much?* still reaches her; one that was read is never read again.
+  To see how well the real model reads them: `docker
   compose exec manager python time_check.py --tenant <id>` (the messages in
   `replay_scenarios/customer-times.json`, English, Russian, Latvian, Estonian
   and Spanish; one small model call each on the account's own key; nothing is
@@ -789,7 +789,8 @@ the opening hours, the calendar link and AI usage.
   that reminder should say. The customer can reply `1` (coming) or `2`
   (cancel). If the scheduler was down, only the latest due reminder goes out.
   Quiet hours apply to reminders too.
-- A request nobody answered lapses once its time is over, and both sides are
+- A request nobody answered lapses half an hour after its time (or at its end,
+  if that comes first; a time she offered instead counts), and both sides are
   told. Until then her yes still takes it: after its start, from the soonest
   five-minute mark on, for as long (a "now" she answers a few minutes later
   is booked from then, and both are told the new time). A cancelled or moved booking frees its time for the first person on

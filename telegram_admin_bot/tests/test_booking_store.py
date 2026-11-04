@@ -173,6 +173,16 @@ async def test_the_extras_she_refused_hold_for_every_booking_of_the_chat(stores)
     assert await a.refused_extras(43) == [] and await b.refused_extras(42) == []
 
 
+async def test_a_request_she_could_not_be_told_of_is_tried_again_until_its_end(stores):
+    """A "now" starts minutes ahead; the next try comes after it began."""
+    a, _ = stores
+    now = datetime.now(timezone.utc)
+    began = await make(a, now - timedelta(minutes=5))
+    over = await make(a, now - timedelta(minutes=200), chat_id=43)
+    assert [b["id"] for b in await a.unsent()] == [began["id"]]
+    assert over["id"] != began["id"]
+
+
 async def test_customer_refs_differ_per_tenant(stores):
     a, b = stores
     assert (await make(a))["customer_ref"] != (await make(b))["customer_ref"]

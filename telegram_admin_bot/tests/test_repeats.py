@@ -140,7 +140,9 @@ def test_a_time_or_a_day_in_any_of_their_words(when):
 
 
 @pytest.mark.parametrize("other", ["send me a video first", "how much", "сколько стоит", "cik maksā", "mis hind",
-                                   "cuánto cuesta", "are you real", "more photos", "ты настоящая"])
+                                   "cuánto cuesta", "are you real", "more photos", "ты настоящая",
+                                   "how much for half an hour", "how much is 1500 for", "50", "pool table",
+                                   "через банк", "pēc tam", "среди недели", "pärast seda", "2500"])
 def test_what_names_no_time_stays_that(other):
     assert not repeats.names_when(other)
 

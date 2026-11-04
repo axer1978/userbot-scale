@@ -515,35 +515,6 @@ def test_where_she_is_in_more_words(where):
 # -------------------------------------------------- what the reader decides on
 
 
-def _they(*lines, at=None):
-    """Lines of a chat, "> " for theirs; `at` gives each line its minute."""
-    rows = [{"role": "user", "content": line[2:]} if line.startswith("> ") else {"role": "assistant", "content": line}
-            for line in lines]
-    if at is not None:
-        for row, minute in zip(rows, at):
-            row["at"] = NOW + timedelta(minutes=minute)
-    return rows
-
-
-def test_the_reader_decides_on_their_messages_since_our_last_one():
-    assert bookings.latest_run(_they("> hi", "what time?", "> at 8", "> how much?")) == ["at 8", "how much?"]
-    assert bookings.latest_run(_they("> tomorrow", "> 9")) == ["tomorrow", "9"]
-    assert bookings.latest_run([]) == []
-
-
-def test_a_message_of_theirs_from_long_before_is_only_the_conversation():
-    """His "at 8" of last night, unanswered in quiet hours, is not read again
-    with today's "hello?"."""
-    history = _they("> at 8", "> hello?", at=[0, 600])
-    assert bookings.latest_run(history) == ["hello?"]
-    assert bookings.latest_run(_they("> at 8", "> how much?", at=[0, 4])) == ["at 8", "how much?"]
-    assert bookings.latest_run(_they("> at 8", "> ok?", "> hello", at=[0, 4, 8])) == ["ok?", "hello"]
-
-
-def test_a_reply_that_raced_the_reader_leaves_his_message_his_latest():
-    assert bookings.latest_run(_they("> at 8", "ok love")) == ["at 8"]
-
-
 def test_the_prompt_names_one_latest_message_or_all_of_them():
     one = bookings.extraction_prompt("them: at 8", "Europe/Riga", NOW, latest=["at 8"])
     assert one.endswith("Their latest message, the one to decide on: at 8")
@@ -551,6 +522,26 @@ def test_the_prompt_names_one_latest_message_or_all_of_them():
     several = bookings.extraction_prompt("them: at 8\nthem: ok?", "Europe/Riga", NOW, latest=["at  8", "ok?"])
     assert several.endswith("the ones to decide on together:\n- at 8\n- ok?")
     assert "the one to decide on" not in bookings.extraction_prompt("them: hi", "Europe/Riga", NOW)
+
+
+def _waiting(start="2026-10-20T21:00", minutes=60, proposed=None):
+    begin = bookings.parse_local(start, "Europe/Riga")
+    row = {"starts_at": begin, "ends_at": begin + timedelta(minutes=minutes), "proposed_starts_at": None,
+           "proposed_ends_at": None}
+    if proposed:
+        at = bookings.parse_local(proposed, "Europe/Riga")
+        row.update(proposed_starts_at=at, proposed_ends_at=at + timedelta(minutes=minutes))
+    return row
+
+
+def test_a_request_nobody_answered_waits_half_an_hour_after_its_time():
+    fmt = "%H:%M"
+    assert bookings.lapses_at(_waiting()).astimezone(RIGA).strftime(fmt) == "21:30"
+    # A long one too; a short one only to its end.
+    assert bookings.lapses_at(_waiting(minutes=180)).astimezone(RIGA).strftime(fmt) == "21:30"
+    assert bookings.lapses_at(_waiting(minutes=20)).astimezone(RIGA).strftime(fmt) == "21:20"
+    # A time she offered instead is the one on the table.
+    assert bookings.lapses_at(_waiting(proposed="2026-10-20T23:00")).astimezone(RIGA).strftime(fmt) == "23:30"
 
 
 def test_the_reader_knows_how_people_write_a_time():
@@ -561,6 +552,7 @@ def test_the_reader_knows_how_people_write_a_time():
         assert word in prompt, word
     # Read together, whichever message holds the time.
     assert "Read their latest messages together." in prompt
+    assert "the ones to decide on together" in bookings.extraction_prompt("t", "Europe/Riga", NOW, latest=["a", "b"])
     # A bare hour is the next time it comes round.
     assert "the next time that hour comes round" in prompt
     # Lengths stay lengths: "half an hour" alone is not on the offset list.

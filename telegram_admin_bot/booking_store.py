@@ -212,7 +212,7 @@ class BookingStore:
 
     async def unsent(self) -> list[dict[str, Any]]:
         rows = await self.pool.fetch(
-            "SELECT * FROM bookings WHERE tenant_id = $1 AND state = 'requested' AND starts_at > now() "
+            "SELECT * FROM bookings WHERE tenant_id = $1 AND state = 'requested' AND ends_at > now() "
             "ORDER BY number", self.tenant_id,
         )
         return [_booking(r) for r in rows]

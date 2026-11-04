@@ -35,7 +35,7 @@ Clicked through in a simulated browser (jsdom) against a real panel and a runtim
 2. **Reminders.** The old single check-in (`reminder_minutes_before`, 120 by default) becomes a one-item `booking.reminders` list if the account had set it. If it hadn't, the new default applies: **24 h and 2 h before**, so one more message than before. Reminders also obey quiet hours, so one due at 07:00 goes out when quiet hours end.
 3. **The spend cap is enforced.** `api_spend_cap_eur` defaults to €10 per month. If the account uses more, replies stop until the month ends. Check **Bookings → Calendar link & AI usage** right after deploying, and raise or zero the cap in Config if needed.
 4. **Times are checked before the owner sees them.** With no opening hours set, which is the live account's case, only overlaps with other bookings are refused.
-5. **Unanswered requests lapse** at their start time, and both sides are told. (Changed later: once their time is over; a later yes takes it from the soonest start.)
+5. **Unanswered requests lapse** at their start time, and both sides are told. (Changed later: half an hour after it, or at their end if sooner; a yes in that time takes it from the soonest start.)
 6. **A customer changing the time keeps the booking number.** Before, it made a new number marked "replaces #n".
 7. **More owner commands.** `CANCEL 7` now cancels (before, "cancel" meant no). `LIST`, `DONE`, `NOSHOW` and proposing a time are new.
 8. **New `scheduler` service.** `docker compose up -d` starts it.

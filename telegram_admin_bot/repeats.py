@@ -78,23 +78,29 @@ _WHEN = re.compile(
     r"(?i)\b(?:now|right now|rn|asap|atm|at the moment|right away|straight away|immediately|today|2day|tonight|tonite"
     r"|2nite|tomorrow|tmrw|tmr|tomoro|2moro|2morrow|morning|afternoon|evening|night"
     r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|later today"
-    r"|in an hour|in half an hour|half an hour|an hour from now|in \d+|after \d+|before \d+|\d{1,2}\s?h(?:\d{2})?"
-    r"|\d{1,2}\s?ish|(?:[01]\d|2[0-3])[0-5]\d"
+    r"|in an hour|in half an hour|half an hour from now|an hour from now|in \d+|after \d+|before \d+"
+    r"|\d{1,2}\s?h(?:\d{2})?|\d{1,2}\s?ish"
     # Russian.
-    r"|сейчас|щас|ща|сегодня|завтра|послезавтра|вечером|утром|днём|днем|ночью|через \w+"
-    r"|понедельник\w*|вторник\w*|сред\w|четверг\w*|пятниц\w|суббот\w|воскресень\w+|seichas|sejchas|cherez \w+"
+    r"|сейчас|щас|ща|сегодня|завтра|послезавтра|вечером|утром|днём|днем|ночью"
+    r"|через (?:\d+|час\w*|полчаса|полтора|пару|минут\w*)|понедельник\w*|вторник\w*|сред[ау]|четверг\w*"
+    r"|пятниц[ауе]|суббот[ауе]|воскресень[ея]|seichas|sejchas|sei4as|cherez (?:\d+|chas\w*|polchasa|minut\w*)"
+    r"|4erez \d+|4erez 4as"
     # Latvian, also without diacritics.
     r"|šodien|sodien|šovakar|sovakar|rīt|rit|parīt|parit|tagad|tūlīt|tulit|šobrīd|sobrid|pašlaik|paslaik|vakarā|vakara"
-    r"|pirmdien|otrdien|trešdien|tresdien|ceturtdien|piektdien|sestdien|svētdien|svetdien|pēc \w+|pec \w+"
+    r"|pirmdien|otrdien|trešdien|tresdien|ceturtdien|piektdien|sestdien|svētdien|svetdien"
+    r"|pēc (?:\d+|stund\w*|pusstund\w*|pusotr\w*|minūt\w*|min)|pec (?:\d+|stund\w*|pusstund\w*|pusotr\w*|minut\w*|min)"
     r"|pus\w+os|\d{1,2}os"
     # Estonian, also without diacritics.
-    r"|täna|tana|homme|ülehomme|ulehomme|praegu|kohe|nüüd|nuud|õhtul|ohtul|hommikul|pärast|parast"
-    r"|esmaspäev\w*|teisipäev\w*|kolmapäev\w*|neljapäev\w*|reede\w*|laupäev\w*|pühapäev\w*|kell \d+|pool \w+"
+    r"|täna|tana|homme|ülehomme|ulehomme|praegu|kohe|nüüd|nuud|nyyd|hetkel|õhtul|ohtul|hommikul"
+    r"|(?:tunni|minuti|min)(?: aja)? (?:pärast|parast)"
+    r"|esmaspäev\w*|teisipäev\w*|kolmapäev\w*|neljapäev\w*|reede\w*|laupäev\w*|pühapäev\w*|kell \d+|kl \d+"
+    r"|(?:pool|veerand|kolmveerand) (?:\d+|üks\w*|yks\w*|uks\w*|kaks\w*|kolm|neli|viis|kuus|seitse|kaheksa"
+    r"|üheksa|yheksa|uheksa|kümme|kymme|kumme)"
     # Spanish.
-    r"|ahora|ahorita|hoy|mañana|manana|esta noche|esta tarde|a las \d+|en \d+|en una hora|en media hora"
+    r"|ahora|ahorita|hoy|mañana|manana|esta noche|esta tarde|a las \d+|alas \d+|en \d+|en una hora|en media hora"
     r"|lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo)\b"
-    # The whole message is an hour: "8", "20?", "20.30".
-    r"|^\W*\d{1,2}(?:[:. ]\d{2})?\W*$",
+    # The whole message is a time: "8", "20?", "20.30", "2030".
+    r"|^\W*(?:(?:[01]?\d|2[0-4])(?:[:. ][0-5]\d)?|(?:[01]\d|2[0-3])[0-5]\d)\W*$",
     re.MULTILINE,
 )
 # On his way or there: "I'm here", "outside", "omw", "leaving now".

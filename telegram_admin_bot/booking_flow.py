@@ -68,6 +68,10 @@ VIA_SYSTEM = "system"
 
 # A live booking starting within this long of now already answers "now?".
 ASAP_WINDOW = timedelta(minutes=60)
+# A message whose reading a newer message cut off is read with the newer one
+# ("at 8", then "how much?" a moment later), when this close to it.
+UNREAD_WINDOW = timedelta(minutes=5)
+UNREAD_KEPT = 10
 # An outcall is under way (his messages go on to the owner) until this long
 # after its end.
 OUTCALL_AFTER_END = timedelta(minutes=30)
@@ -186,6 +190,10 @@ class BookingFlow:
     def __init__(self, runtime: "SessionRuntime") -> None:
         self.rt = runtime
         self.scan_tasks: dict[int, asyncio.Task] = {}
+        # Each chat's messages no finished reading has seen (when, text). One
+        # that was read is never read again: a time she has since declined
+        # or an offset counted from then must not come back as a new request.
+        self._not_read: dict[int, list[tuple[datetime, str]]] = {}
         # News for a chat's next reply that is not a stored notice: "that
         # time is taken, offer these", a reminder, a waitlist offer.
         self.pending_lines: dict[int, list[str]] = {}
@@ -349,6 +357,9 @@ class BookingFlow:
             if booking is not None:
                 await self.customer_action(booking, "confirm_attendance", via=VIA_CHAT)
                 return
+        now = self.now()
+        rows = [row for row in self._not_read.get(chat_id, ()) if now - row[0] <= UNREAD_WINDOW]
+        self._not_read[chat_id] = [*rows, (now, text)][-UNREAD_KEPT:]
         self.schedule_scan(chat_id)
 
     async def _reminded_booking(self, chat_id: int) -> Optional[dict[str, Any]]:
@@ -387,9 +398,7 @@ class BookingFlow:
         try:
             if not self.enabled() or await self.rt.ai_limit_reason():
                 return
-            # With its times: the reader decides on their messages close together.
-            history = await self.rt.db.get_history_for_ai(chat_id, limit=self.settings["scan_messages"],
-                                                          with_times=True)
+            history = await self.rt.db.get_history_for_ai(chat_id, limit=self.settings["scan_messages"])
             if not history:
                 return
             live = await self.store.for_chat(chat_id)
@@ -403,6 +412,7 @@ class BookingFlow:
                 if arrived:
                     said = "\n".join(media.latest_from_them(history)).strip()
                     await self.on_arrival(arriving, via="text", said=said)
+                    self._not_read.pop(chat_id, None)
                     return
             entry = await self.store.waitlist_for_chat(chat_id)
             note = bookings.state_note(live)
@@ -417,10 +427,12 @@ class BookingFlow:
                     api_key=self.rt.deepseek_key, history=history, tz_name=self.tz,
                     ai_config=self.rt.config["ai"], client=self.rt.http_client,
                     usage_sink=self.rt.usage_sink("booking_extract"), state_note=note,
+                    latest=[text for _, text in self._not_read.get(chat_id, ())],
                 )
             if found:
                 log.info("[%s]   booking intent in chat %s: %s", self.rt.session_id, chat_id, found.get("intent"))
                 await self.act(chat_id, found, live, entry)
+            self._not_read.pop(chat_id, None)
         except asyncio.CancelledError:
             raise
         except ai_responder.AIResponderError as exc:
@@ -1209,10 +1221,11 @@ class BookingFlow:
             moving = booking.get("proposed_by") == bs.CUSTOMER
             asked_start, asked_end = ((booking["proposed_starts_at"], booking["proposed_ends_at"]) if moving
                                       else (booking["starts_at"], booking["ends_at"]))
-            end = bookings.plus_minutes(asked_start, cmd.minutes) if cmd.minutes else asked_end
             # His time began while it waited for her ("now", and she answered
             # a few minutes later): taken from the soonest start, for as long.
-            start, end = self.from_now(asked_start, end)
+            start, end = self.from_now(asked_start, asked_end)
+            if cmd.minutes:
+                end = bookings.plus_minutes(start, cmd.minutes)
             late = start != asked_start
             if (late or end > asked_end) and (why := await self._no_room(booking, start, end)):
                 # Not free (longer than he asked, or from now on): nothing is taken.
@@ -1451,8 +1464,11 @@ class BookingFlow:
     async def _accept(self, booking: dict[str, Any], actor: str, end: Optional[datetime] = None,
                       start: Optional[datetime] = None) -> bs.Change:
         """The time the other side put forward, taken; `end`: for the length
-        the owner gave. Taken after it began: from the soonest start on."""
-        start, end = self.from_now(start or booking["proposed_starts_at"], end or booking["proposed_ends_at"])
+        the owner gave. Taken by the business after it began: from the soonest
+        start on. By the customer: refused as past, her offer was for then."""
+        start, end = start or booking["proposed_starts_at"], end or booking["proposed_ends_at"]
+        if actor != bs.CUSTOMER:
+            start, end = self.from_now(start, end)
         result = await self.check(start, end, exclude_id=booking["id"], hours=False)
         if not result.ok:
             raise booking_store.SlotTaken(result.reason, reason=result.reason)
@@ -1572,7 +1588,7 @@ class BookingFlow:
             "propose": (f"🕑 Booking #{n}: the {actor} proposed {bookings.describe_proposal(after)}."
                         if after.get("proposed_starts_at") else ""),
             "cancel": f"❌ Booking #{n} for {bookings.describe_when(after)} cancelled by the {actor}.",
-            "expire": f"⌛ Booking #{n} for {bookings.describe_when(after)} lapsed: nobody answered before it started.",
+            "expire": f"⌛ Booking #{n} for {bookings.describe_when(after)} lapsed: nobody answered in time.",
             "mark_completed": f"Booking #{n} marked as done.",
             "mark_no_show": f"Booking #{n} marked as missed.",
             "confirm_attendance": f"👍 Booking #{n}: the customer confirmed they are coming.",
@@ -2351,11 +2367,8 @@ class BookingFlow:
             except (bs.IllegalTransition, booking_store.StaleBooking):
                 pass
 
-        # Unanswered once the time it was for is over: until then her yes
-        # still takes it, from the soonest start (from_now), so a "now"
-        # she answers a few minutes later is not lost.
         for booking in await self.store.between(now - timedelta(days=7), now, states=[bs.REQUESTED, bs.PENDING]):
-            if booking["ends_at"] <= now:
+            if bookings.lapses_at(booking) <= now:
                 await guarded(f"expiring #{booking['number']}", lambda b=booking: expire(b))
 
         async def drop_stale_words(booking: dict[str, Any]) -> None:
@@ -2481,9 +2494,8 @@ class BookingFlow:
             if booking.get("proposed_by") == bs.OWNER:
                 continue  # answered: the booker offered another time, he is to say yes to it
             moving = booking["state"] == bs.CONFIRMED
-            until = booking.get("proposed_ends_at") if moving else booking["ends_at"]
-            if until is None or until <= now:
-                continue  # its time is over: it lapses, nothing to hand over
+            if bookings.lapses_at(booking) <= now:
+                continue  # it lapses, nothing to hand over
             last = self._handover_attempts.get(booking["id"])
             if last is not None and loop_now - last < self.RESUBMIT_SECONDS:
                 continue
