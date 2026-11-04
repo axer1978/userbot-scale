@@ -8,7 +8,7 @@ Tests: **779 passed** against Postgres 16 (352 after phase 1). See
 
 | Item | Where |
 |---|---|
-| Bookings in Postgres, numbered per client from 1 | Migration `0003_bookings.sql`, `booking_store.py`. Two live bookings of one client can't overlap, including the gap after each; the database refuses it (`EXCLUDE` constraint). Five customers racing for one slot get one booking (tested). Each account's old `bookings.json` is imported once on start, keeping its numbers |
+| Bookings in Postgres, numbered per client from 1 | Migration `0003_bookings.sql`, `booking_store.py`. How many live bookings of one client may be at the same time, including the gap after each, is `booking.max_at_once` (0 = no limit, the default since migration 0023: many customers never come, and the owner sees the overlap in the request; 1 = never two at once, which the database refuses too with its `EXCLUDE` constraint). With 1, five customers racing for one slot get one booking (tested). Each account's old `bookings.json` is imported once on start, keeping its numbers |
 | State machine, illegal transitions raise | `booking_states.py`: requested → pending → confirmed → completed / no_show, and cancelled. Every transition is checked for state, actor and time. Tested for every transition × state × actor |
 | **No auto-confirm** | `auto_confirm` removed from the schema, and from stored configs by the migration. Only the owner (by text) or an admin (in the panel) confirms |
 | Owner answers by text, no BotFather bot | `YES 7`, `NO 7`, `7 15:30`, `7 04.10 15:30`, `7 tomorrow 15:30`, `CANCEL 7`, `DONE 7`, `NOSHOW 7`, `LIST`, in en/lv/ru. A bare `yes` works as a reply to the request, or when only one request is open |
@@ -35,7 +35,7 @@ Clicked through in a simulated browser (jsdom) against a real panel and a runtim
 2. **Reminders.** The old single check-in (`reminder_minutes_before`, 120 by default) becomes a one-item `booking.reminders` list if the account had set it. If it hadn't, the new default applies: **24 h and 2 h before**, so one more message than before. Reminders also obey quiet hours, so one due at 07:00 goes out when quiet hours end.
 3. **The spend cap is enforced.** `api_spend_cap_eur` defaults to €10 per month. If the account uses more, replies stop until the month ends. Check **Bookings → Calendar link & AI usage** right after deploying, and raise or zero the cap in Config if needed.
 4. **Times are checked before the owner sees them.** With no opening hours set, which is the live account's case, only overlaps with other bookings are refused.
-5. **Unanswered requests lapse** at their start time, and both sides are told.
+5. **Unanswered requests lapse** at their start time, and both sides are told. (Changed later: once their time is over; a later yes takes it from the soonest start.)
 6. **A customer changing the time keeps the booking number.** Before, it made a new number marked "replaces #n".
 7. **More owner commands.** `CANCEL 7` now cancels (before, "cancel" meant no). `LIST`, `DONE`, `NOSHOW` and proposing a time are new.
 8. **New `scheduler` service.** `docker compose up -d` starts it.

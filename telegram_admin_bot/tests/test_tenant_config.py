@@ -123,6 +123,16 @@ def test_reminders_are_a_validated_list_sorted_earliest_first():
             tenant_config.resolve(None, {"booking": {"reminders": bad}})
 
 
+def test_by_default_now_is_bookable_and_bookings_may_share_a_time():
+    booking = tenant_config.resolve(None, None).as_dict()["booking"]
+    # An account that never set them: "now" is not too short notice, and
+    # every time he asks goes to the owner however many are at that time.
+    assert booking["min_notice_minutes"] == 0 and booking["max_at_once"] == 0
+    assert tenant_config.resolve(None, {"booking": {"max_at_once": 1}}).as_dict()["booking"]["max_at_once"] == 1
+    with pytest.raises(tenant_config.ConfigError, match="max_at_once"):
+        tenant_config.resolve(None, {"booking": {"max_at_once": -1}})
+
+
 def test_closed_dates_and_owner_email_are_checked():
     cfg = tenant_config.resolve(None, {"booking": {"closed_dates": ["2026-12-25", " 2026-12-24", "2026-12-25"],
                                                    "owner_email": "owner@salon.lv"}}).as_dict()

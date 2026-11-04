@@ -446,6 +446,29 @@ def test_spanish_shows_si_for_yes():
         assert "YES" not in forms["es"], key
 
 
+def test_her_other_bookings_at_that_time_come_right_above_how_to_answer():
+    others = [_b(number=5, state=bs.CONFIRMED, customer_name="+37126123456"), _b(number=6, customer_name="")]
+    overlap = bookings.format_overlap(others)
+    assert overlap == ("⚠️ At the same time you have: #5 +37126123456, Sun 04 Oct 2026, 15:00–16:00, confirmed; "
+                       "#6 Unknown customer, Sun 04 Oct 2026, 15:00–16:00, not confirmed yet.")
+    assert bookings.format_overlap([]) == ""
+    help_line = "Yes, no or later?"
+    assert bookings.format_request(_b(), name="Lola", overlap=overlap).endswith(
+        f"Notes: Outcall. hotel\n\n{overlap}\n{help_line}")
+    # None: the message is as it always was.
+    assert bookings.format_request(_b(), changed=True, name="Lola") == ENGLISH_TODAY["request"][1]
+    # The account's own text keeps it too, with how to answer.
+    own = bt.Texts("en", {"request": "New one from {customer}"})
+    assert bookings.format_request(_b(), t=own, overlap=overlap) == f"#7 New one from Anna\n\n{overlap}\n{help_line}"
+    assert f"{overlap}\n{help_line}" in bookings.format_move_request(_moving(), overlap=overlap)
+    # In her language.
+    ru = bookings.format_overlap(others[:1], t=bt.Texts("ru"))
+    assert ru.startswith("⚠️ В это же время у тебя: #5 +37126123456, ") and ru.endswith(", подтверждена.")
+    for lang in OTHER:
+        line = bookings.format_overlap(others[1:], t=bt.Texts(lang))
+        assert line.startswith("⚠️ ") and "#6" in line and "not confirmed" not in line, lang
+
+
 def test_the_main_messages_in_her_language_ask_in_her_words():
     ru, lv, es = (bt.Texts(lang) for lang in OTHER)
     request = bookings.format_request(_b(), t=ru)

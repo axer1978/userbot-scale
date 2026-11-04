@@ -125,6 +125,43 @@ def test_back_to_back_is_allowed():
     assert check(at(MON, 9), at(MON, 10), busy=busy).ok
 
 
+def test_with_no_limit_any_number_of_bookings_share_a_time():
+    busy = [Busy(at(MON, 10), at(MON, 11), 1), Busy(at(MON, 10), at(MON, 11), 2), Busy(at(MON, 10, 30), at(MON, 12), 3)]
+    assert check(at(MON, 10), at(MON, 11), busy=busy, limits=Limits(max_at_once=0)).ok
+
+
+def test_two_at_once_allowed_and_a_third_is_a_conflict():
+    two = Limits(max_at_once=2)
+    one = [Busy(at(MON, 10), at(MON, 11), 1)]
+    assert check(at(MON, 10, 30), at(MON, 11, 30), busy=one, limits=two).ok
+    both = one + [Busy(at(MON, 10, 45), at(MON, 11, 45), 2)]
+    assert check(at(MON, 10, 30), at(MON, 11, 30), busy=both, limits=two).reason == "conflict"
+    # Where only one of them is still on, there is room: 11:00-12:00 meets #2 alone.
+    assert check(at(MON, 11), at(MON, 12), busy=both, limits=two).ok
+
+
+def test_bookings_that_follow_each_other_are_one_at_a_time():
+    # 10-11 and 11-12 both touch 10:30-11:30, but never at the same moment.
+    busy = [Busy(at(MON, 10), at(MON, 11), 1), Busy(at(MON, 11), at(MON, 12), 2)]
+    assert av.most_at_once(busy, at(MON, 10, 30), at(MON, 11, 30)) == 1
+    assert check(at(MON, 10, 30), at(MON, 11, 30), busy=busy, limits=Limits(max_at_once=2)).ok
+
+
+def test_a_booking_and_the_time_it_proposed_count_once():
+    # #1 at 10-11 with a pending move to 10:30-11:30: one booking, not two.
+    busy = [Busy(at(MON, 10), at(MON, 11), 1), Busy(at(MON, 10, 30), at(MON, 11, 30), 1)]
+    assert av.most_at_once(busy, at(MON, 10), at(MON, 12)) == 1
+    assert check(at(MON, 10, 45), at(MON, 11, 15), busy=busy, limits=Limits(max_at_once=2)).ok
+    # Without whose they are, each interval is its own.
+    assert av.most_at_once([Busy(b.start, b.end) for b in busy], at(MON, 10), at(MON, 12)) == 2
+
+
+def test_free_slots_follow_the_limit():
+    busy = [Busy(at(MON, 10), at(MON, 11), 1)]
+    assert (10, 0) not in hours(slots(MON, busy=busy))
+    assert (10, 0) in hours(slots(MON, busy=busy, limits=Limits(max_at_once=0)))
+
+
 def test_busy_in_another_zone_compares_by_instant():
     # 07:00-08:00 UTC is 10:00-11:00 in Riga.
     busy = [Busy(datetime(2026, 10, 5, 7, tzinfo=timezone.utc), datetime(2026, 10, 5, 8, tzinfo=timezone.utc))]

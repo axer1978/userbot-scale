@@ -290,9 +290,16 @@ class Booking(_Strict):
     scan_messages: int = Field(20, ge=2, le=100)
     google_calendar_id: str = Field("", max_length=256)
     reminders: list[Reminder] = Field(default_factory=_default_reminders, max_length=5)
-    # Earliest and latest a booking may start, counted from now.
-    min_notice_minutes: int = Field(60, ge=0, le=30 * 24 * 60)
+    # Earliest and latest a booking may start, counted from now. "Now" (he
+    # wants to come right away) is never too soon: it goes to the owner as
+    # it is, whatever the notice.
+    min_notice_minutes: int = Field(0, ge=0, le=30 * 24 * 60)
     max_days_ahead: int = Field(90, ge=1, le=730)
+    # How many bookings may be at the same time: many customers never come,
+    # so by default (0) there is no limit — every time he asks goes to the
+    # owner, who sees which bookings it overlaps and decides. 1 = never two
+    # at once (a taken time is refused and other times offered).
+    max_at_once: int = Field(0, ge=0, le=20)
     # Local dates (YYYY-MM-DD) with no bookings at all: holidays, days off.
     closed_dates: list[str] = Field(default_factory=list, max_length=366)
     # How many free times to offer when the requested one is taken.

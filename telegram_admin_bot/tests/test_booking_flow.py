@@ -161,6 +161,12 @@ async def only_booking(w):
     return b
 
 
+def one_at_a_time(w):
+    """booking.max_at_once 1: never two bookings at the same time (a taken
+    time is refused), as before bookings could share a time."""
+    w.app.config["booking"]["max_at_once"] = 1
+
+
 # ------------------------------------------------------------ requests
 
 
@@ -1143,6 +1149,7 @@ async def test_a_customer_changing_the_time_before_an_answer_keeps_the_number(wo
 
 async def test_a_taken_time_is_refused_in_code_with_alternatives(world):
     w = world
+    one_at_a_time(w)
     await w.store.save_rules([{"weekday": d, "start_time": "09:00", "end_time": "18:00"} for d in range(7)],
                              actor=bs.ADMIN)
     await customer(w, "tomorrow at 15?", book())
@@ -1164,6 +1171,109 @@ async def test_outside_opening_hours_is_refused(world):
     assert OWNER not in w.sent
     assert "outside opening hours" in w.script["notes"][-1]
     assert "Tue 05 Mar 11:00" in w.script["notes"][-1]
+
+
+# ------------------------------------- now, and bookings at the same time
+
+
+async def test_now_is_never_too_short_notice(world):
+    w = world
+    w.app.config["booking"]["min_notice_minutes"] = 60
+    await customer(w, "can I come now?", {"intent": "book", "asap": True, "start": None})
+    b = await only_booking(w)
+    assert b["state"] == bs.PENDING and b["starts_at"].astimezone(RIGA).strftime("%H:%M") == "12:05"
+    assert "Booking request #1" in w.sent[OWNER][-1]
+    # "12:00?" said at 12:00 is now too. A time he names ahead still needs the notice.
+    await customer(w, "12:00?", book("2030-03-04T12:00"), chat=43)
+    assert len(await w.store.between(NOW, NOW + timedelta(hours=2))) == 2
+    await customer(w, "12:30?", book("2030-03-04T12:30"), chat=44)
+    assert "too short notice" in w.script["notes"][-1]
+
+
+async def test_bookings_share_a_time_and_she_is_told_which(world):
+    w = world
+    assert w.app.config["booking"]["max_at_once"] == 0  # the default: no limit
+    await customer(w, "tomorrow at 15?", book())
+    assert "At the same time" not in w.sent[OWNER][-1]
+    await owner(w, "YES 1")
+    await customer(w, "can I come tomorrow at 15:30?", book("2030-03-05T15:30"), chat=43)
+
+    request = w.sent[OWNER][-1]
+    assert "Booking request #2" in request
+    assert ("⚠️ At the same time you have: #1 Anna, Tue 05 Mar 2030, 15:00–16:00, confirmed.\n"
+            "Reply YES 2") in request
+    assert "already taken" not in w.script["notes"][-1]
+    await owner(w, "YES 2")
+    assert [b["state"] for b in await w.store.between(NOW, NOW + timedelta(days=2))] == [bs.CONFIRMED] * 2
+    assert all(b["overlap_ok"] for b in await w.store.between(NOW, NOW + timedelta(days=2)))
+
+    # A third, not answered yet, is named as such to the fourth; in the order they start.
+    await customer(w, "15?", book(), chat=44)
+    await customer(w, "15:45?", book("2030-03-05T15:45"), chat=45)
+    assert ("#1 Anna, Tue 05 Mar 2030, 15:00–16:00, confirmed; "
+            "#3 Anna, Tue 05 Mar 2030, 15:00–16:00, not confirmed yet; "
+            "#2 Anna, Tue 05 Mar 2030, 15:30–16:30, confirmed.") in w.sent[OWNER][-1]
+
+
+async def test_with_two_at_once_a_third_is_refused(world):
+    w = world
+    w.app.config["booking"]["max_at_once"] = 2
+    await customer(w, "tomorrow at 15?", book())
+    await customer(w, "15:30?", book("2030-03-05T15:30"), chat=43)
+    assert "At the same time you have: #1" in w.sent[OWNER][-1]
+    sent = len(w.sent[OWNER])
+    await customer(w, "15:45?", book("2030-03-05T15:45"), chat=44)
+    assert len(w.sent[OWNER]) == sent
+    assert "already taken" in w.script["notes"][-1]
+    # Where only one of them is still on, there is room.
+    await customer(w, "16:15?", book("2030-03-05T16:15"), chat=44)
+    assert "Booking request #3" in w.sent[OWNER][-1]
+
+
+async def test_never_two_at_once_is_kept_by_the_database_too(world):
+    w = world
+    one_at_a_time(w)
+    await customer(w, "tomorrow at 15?", book())
+    assert (await only_booking(w))["overlap_ok"] is False
+    # Allowed later: a new time is written as the account says then.
+    w.app.config["booking"]["max_at_once"] = 0
+    await customer(w, "16?", book("2030-03-05T16:00"))
+    assert (await only_booking(w))["overlap_ok"] is True
+
+
+async def test_after_switching_to_one_at_a_time_overlapping_bookings_can_still_get_shorter(world):
+    w = world
+    await confirmed_booking(w)
+    await customer(w, "15:30?", book("2030-03-05T15:30"), chat=43)
+    await owner(w, "YES 2")
+    one_at_a_time(w)
+    for n in (1, 2):
+        w.script["owner_answer"] = reading(answer(n, "none", duration_minutes=30))
+        await owner(w, f"make {n} 30 min")
+        b = await w.store.by_number(n)
+        assert b["ends_at"] - b["starts_at"] == timedelta(minutes=30), w.sent[OWNER][-1]
+        assert b["overlap_ok"] is True  # kept: written when they could overlap
+
+
+async def test_a_move_she_has_not_answered_counts_as_at_that_time(world):
+    w = world
+    await confirmed_booking(w)
+    await customer(w, "can we do 18:00 instead?", book("2030-03-05T18:00"))
+    assert (await only_booking(w))["proposed_by"] == bs.CUSTOMER
+    await customer(w, "18?", book("2030-03-05T18:00"), chat=43)
+    assert ("⚠️ At the same time you have: #1 Anna, Tue 05 Mar 2030, 18:00–19:00, not confirmed yet.\n"
+            "Reply YES 2") in w.sent[OWNER][-1]
+
+
+async def test_a_move_onto_another_booking_tells_her_which(world):
+    w = world
+    await confirmed_booking(w)
+    await customer(w, "17?", book("2030-03-05T17:00"), chat=43)
+    await owner(w, "YES 2")
+    await customer(w, "can we do 15:30 instead?", book("2030-03-05T15:30"), chat=43)
+    assert "asks to move" in w.sent[OWNER][-1]
+    assert ("⚠️ At the same time you have: #1 Anna, Tue 05 Mar 2030, 15:00–16:00, confirmed.\n"
+            "Reply YES 2 to move it") in w.sent[OWNER][-1]
 
 
 # ------------------------------------ her words: every part of her message
@@ -1359,6 +1469,7 @@ async def test_a_yes_for_a_shorter_time_confirms_that_length(world):
 
 async def test_a_yes_for_longer_than_is_free_confirms_nothing(world):
     w = world
+    one_at_a_time(w)
     await customer(w, "tomorrow at 15?", book())
     await customer(w, "and me at 16?", book("2030-03-05T16:00"), chat=43)
     w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=120, tell_customer="bring cash"))
@@ -1371,6 +1482,7 @@ async def test_a_yes_for_longer_than_is_free_confirms_nothing(world):
 
 async def test_she_makes_a_confirmed_booking_longer_or_shorter(world):
     w = world
+    one_at_a_time(w)
     await confirmed_booking(w)
     w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=120))
     await owner(w, "he can stay 2 hours")
@@ -1486,6 +1598,7 @@ async def test_a_standing_instruction_is_proposed_as_a_rule(world):
 
 async def test_a_cancel_frees_the_slot_for_the_first_on_the_waitlist(world):
     w = world
+    one_at_a_time(w)
     await customer(w, "tomorrow at 15?", book())
     await owner(w, "YES 1")
     await customer(w, "tomorrow at 15?", book(), chat=43)
@@ -1569,15 +1682,81 @@ async def test_after_a_reminder_a_bare_2_cancels_nothing_and_a_no_is_read_in_his
     assert (await only_booking(w))["state"] == bs.CANCELLED
 
 
-async def test_an_unanswered_request_lapses_at_its_start(world):
+async def test_an_unanswered_request_lapses_once_its_time_is_over(world):
     w = world
     await customer(w, "tomorrow at 15?", book())
+    # Begun but not over: her yes can still take it.
     w.clock["now"] = datetime(2030, 3, 5, 15, 1, tzinfo=RIGA)
     await w.app.handle_command("scheduler_tick", {})
     await settle(w.app)
+    assert (await only_booking(w))["state"] == bs.PENDING
+    w.clock["now"] = datetime(2030, 3, 5, 16, 0, tzinfo=RIGA)
+    await w.app.handle_command("scheduler_tick", {})
+    await settle(w.app)
     b = await only_booking(w)
-    assert (b["state"], b["cancelled_by"]) == (bs.CANCELLED, bs.SYSTEM)
+    assert (b["state"], b["cancelled_by"], b["cancel_reason"]) == (bs.CANCELLED, bs.SYSTEM, "not answered in time")
     assert "lapsed" in w.sent[OWNER][-1]
+
+
+async def tick(w, at):
+    w.clock["now"] = at
+    await w.app.handle_command("scheduler_tick", {})
+    await settle(w.app)
+
+
+async def test_her_yes_a_few_minutes_after_now_takes_it_from_then(world):
+    w = world
+    await customer(w, "can I come now?", {"intent": "book", "asap": True, "start": None})
+    assert (await only_booking(w))["starts_at"].astimezone(RIGA).strftime("%H:%M") == "12:05"
+    await tick(w, datetime(2030, 3, 4, 12, 8, tzinfo=RIGA))
+    assert (await only_booking(w))["state"] == bs.PENDING  # not lapsed
+    # "Now?" again meanwhile: the same request, nothing new for her.
+    sent = len(w.sent[OWNER])
+    await customer(w, "now??", {"intent": "book", "asap": True, "start": None})
+    assert len(w.sent[OWNER]) == sent and len(await w.store.between(NOW, NOW + timedelta(days=1))) == 1
+
+    await owner(w, "YES 1")
+    b = await only_booking(w)
+    assert b["state"] == bs.CONFIRMED
+    assert (b["starts_at"].astimezone(RIGA).strftime("%H:%M"), b["ends_at"].astimezone(RIGA).strftime("%H:%M")) == \
+        ("12:10", "13:10")
+    assert w.sent[OWNER][-1] == "#1 confirmed ✅ for Mon 04 Mar 2030, 12:10–13:10 (1 hour) — Anna will be told."
+    assert "has just been CONFIRMED" in w.script["notes"][-1] and "12:10" in w.script["notes"][-1]
+
+
+async def test_a_late_yes_for_a_length_and_a_late_yes_in_the_panel(world):
+    w = world
+    await customer(w, "now", {"intent": "book", "asap": True, "start": None})
+    await customer(w, "now pls", {"intent": "book", "asap": True, "start": None}, chat=43)
+    w.clock["now"] = datetime(2030, 3, 4, 12, 11, tzinfo=RIGA)
+    w.script["owner_answer"] = reading(answer(1, "yes", duration_minutes=120))
+    await owner(w, "yes 1, 2 hours")
+    first = await w.store.by_number(1)
+    assert first["state"] == bs.CONFIRMED and first["starts_at"].astimezone(RIGA).strftime("%H:%M") == "12:15"
+    assert first["ends_at"] - first["starts_at"] == timedelta(hours=2)
+    await w.app.flow.admin_action((await w.store.by_number(2))["id"], "confirm", {})
+    second = await w.store.by_number(2)
+    assert second["state"] == bs.CONFIRMED and second["starts_at"].astimezone(RIGA).strftime("%H:%M") == "12:15"
+
+
+async def test_a_yes_once_his_time_is_over_says_so(world):
+    w = world
+    await confirmed_booking(w, "2030-03-04T14:00")
+    await customer(w, "can I come now instead?", {"intent": "book", "asap": True, "start": None})
+    moving = await only_booking(w)
+    assert moving["proposed_by"] == bs.CUSTOMER and "asks to move" in w.sent[OWNER][-1]
+    # Late, but his new time is not over: moved from the soonest start.
+    w.clock["now"] = datetime(2030, 3, 4, 12, 9, tzinfo=RIGA)
+    await owner(w, "YES 1")
+    b = await only_booking(w)
+    assert b["state"] == bs.CONFIRMED and b["starts_at"].astimezone(RIGA).strftime("%H:%M") == "12:15"
+    # A move he asks for, answered after that whole time: not possible, and why (not "overlaps").
+    w.clock["now"] = datetime(2030, 3, 4, 12, 30, tzinfo=RIGA)
+    await customer(w, "or 15:00?", book("2030-03-04T15:00"))
+    assert (await only_booking(w))["proposed_by"] == bs.CUSTOMER
+    w.clock["now"] = datetime(2030, 3, 4, 16, 30, tzinfo=RIGA)
+    await owner(w, "YES 1")
+    assert "not possible (past)" in w.sent[OWNER][-1] and "overlaps" not in w.sent[OWNER][-1]
 
 
 # ------------------------------------------------------- panel and page
@@ -2288,6 +2467,7 @@ async def test_her_typed_no_answering_the_question_never_becomes_a_yes(world):
 
 async def test_the_yes_the_bot_offers_after_a_length_that_is_not_free_is_taken_as_typed(world):
     w = world
+    one_at_a_time(w)
     await customer(w, "tomorrow at 15?", book())
     await customer(w, "and me at 16?", book("2030-03-05T16:00"), chat=43)
     await owner(w, "YES 2")
@@ -2314,6 +2494,7 @@ async def test_a_length_change_keeps_the_confirmation_he_has_not_heard_yet(world
 
 async def test_her_words_go_even_when_the_longer_length_is_not_free(world):
     w = world
+    one_at_a_time(w)
     await customer(w, "tomorrow at 15?", book())
     await owner(w, "YES 1")
     await customer(w, "and me at 16?", book("2030-03-05T16:00"), chat=43)
@@ -2328,6 +2509,7 @@ async def test_her_words_go_even_when_the_longer_length_is_not_free(world):
 
 async def test_a_longer_length_into_another_bookings_buffer_is_refused_by_the_check(world):
     w = world
+    one_at_a_time(w)
     await customer(w, "tomorrow at 15?", book())
     await owner(w, "YES 1")
     first = await only_booking(w)
@@ -2422,6 +2604,7 @@ async def test_after_a_restart_a_bare_ok_after_his_answer_is_read_not_guessed(wo
 
 async def test_the_yes_n_the_bot_offers_after_a_held_question_is_not_read_again(world):
     w = world
+    one_at_a_time(w)
     await customer(w, "tomorrow at 15?", book())
     await customer(w, "and me at 16?", book("2030-03-05T16:00"), chat=43)
     w.script["owner_answer"] = reading(answer(None, "yes", duration_minutes=120))

@@ -249,26 +249,55 @@ class BookingFlow:
     def local_today(self) -> date:
         return self.now().astimezone(bookings.tzinfo_for(self.tz)).date()
 
-    def limits(self) -> availability.Limits:
+    def limits(self, *, notice: bool = True) -> availability.Limits:
+        """The account's booking limits; without the minimum notice for a
+        customer who wants to come right now (the owner decides)."""
         return availability.Limits(
-            min_notice_minutes=self.settings["min_notice_minutes"],
+            min_notice_minutes=self.settings["min_notice_minutes"] if notice else 0,
             max_days_ahead=self.settings["max_days_ahead"],
             closed_dates=frozenset(date.fromisoformat(d) for d in self.settings["closed_dates"]),
+            max_at_once=self.settings["max_at_once"],
         )
 
     def buffer_of(self, booking: dict[str, Any]) -> timedelta:
         return booking["blocked_until"] - booking["ends_at"]
 
     async def check(self, start: datetime, end: datetime, *, exclude_id: Optional[int] = None,
-                    hours: bool = True) -> availability.SlotCheck:
+                    hours: bool = True, right_now: bool = False) -> availability.SlotCheck:
         """Is [start, end) bookable? `hours=False` is for a time a person on
-        the business side chose: only overlaps and the past are refused."""
+        the business side chose: only the past and more bookings at once than
+        booking.max_at_once are refused. `right_now`: he wants to come now,
+        which is never too short notice."""
         busy = await self.store.busy(start - timedelta(days=1), end + timedelta(days=1), exclude_id=exclude_id)
         if not hours:
             return availability.check_slot(start, end, rules=[], busy=busy, tz=self.tz, now=self.now(),
-                                           limits=availability.Limits(max_days_ahead=3650))
+                                           limits=availability.Limits(max_days_ahead=3650,
+                                                                      max_at_once=self.settings["max_at_once"]))
         return availability.check_slot(start, end, rules=await self.store.rules(), busy=busy, tz=self.tz,
-                                       now=self.now(), limits=self.limits())
+                                       now=self.now(), limits=self.limits(notice=not right_now))
+
+    async def overlap(self, booking: dict[str, Any], start: Optional[datetime] = None,
+                      end: Optional[datetime] = None) -> str:
+        """For the owner: her other live bookings at the same time as
+        `booking` (or as [start, end), the time he wants to move it to)."""
+        start, end = start or booking["starts_at"], end or booking["ends_at"]
+        others = []
+        for b in await self.store.at_the_same_time(start, end, exclude_id=booking["id"]):
+            if not (b["starts_at"] < end and b["ends_at"] > start):
+                # Only the time it is to be moved to: shown there, not confirmed.
+                b = {**b, "starts_at": b["proposed_starts_at"], "ends_at": b["proposed_ends_at"], "state": bs.PENDING}
+            others.append(b)
+        return bookings.format_overlap(others, t=self.texts())
+
+    def from_now(self, start: datetime, end: datetime) -> tuple[datetime, datetime]:
+        """A time that began while it waited for a yes ("now", answered a
+        few minutes later), from the soonest start on, for as long. Any
+        other time (still to come, or over) as it is."""
+        now = self.now()
+        if start > now or end <= now:
+            return start, end
+        soonest = bookings.soonest_start(now).astimezone(start.tzinfo)
+        return soonest, bookings.plus_minutes(soonest, _minutes({"starts_at": start, "ends_at": end}))
 
     async def alternatives(self, start: datetime, minutes: int, *, exclude_id: Optional[int] = None) -> list[datetime]:
         count = self.settings["offer_alternatives"]
@@ -388,10 +417,12 @@ class BookingFlow:
             now = self.now()
             if data.get("asap") is True:
                 # "Now?" again, or "ok" after it, while a time around now is
-                # already with the owner: the same request, not a new time
-                # every five minutes.
-                current = next((b for b in live if now - bookings.JUST_PASSED <= b["starts_at"]
-                                <= now + ASAP_WINDOW), None)
+                # already with the owner (or still waiting for her though it
+                # has begun): the same request, not a new time every five
+                # minutes. Her late yes takes it from then.
+                current = next((b for b in live if b["starts_at"] <= now + ASAP_WINDOW and (
+                    b["starts_at"] >= now - bookings.JUST_PASSED
+                    or (b["state"] in (bs.REQUESTED, bs.PENDING) and b["ends_at"] > now))), None)
                 if current is not None:
                     if current["state"] == bs.REQUESTED:
                         await self.submit(current)
@@ -401,6 +432,7 @@ class BookingFlow:
             if slot is None:
                 return
             start, end = slot
+            right_now = bookings.wants_now(data, tz_name=self.tz, now=now)
             if proposal is not None and proposal["proposed_starts_at"] == start:
                 await self.customer_action(proposal, "accept_proposal", via=VIA_CHAT)
                 return
@@ -418,7 +450,7 @@ class BookingFlow:
                 notes = ("Outcall. " + notes).strip()
             await self.request_time(chat_id, start, end, service=str(data.get("service") or ""), notes=notes,
                                     extras=" ".join(str(data.get("extras") or "").split())[:300],
-                                    request=request, confirmed=confirmed)
+                                    request=request, confirmed=confirmed, right_now=right_now)
         elif intent == "cancel":
             target = request or confirmed
             if target is not None:
@@ -443,11 +475,13 @@ class BookingFlow:
     async def request_time(
         self, chat_id: int, start: datetime, end: datetime, *, service: str, notes: str,
         request: Optional[dict[str, Any]], confirmed: Optional[dict[str, Any]], extras: str = "",
+        right_now: bool = False,
     ) -> None:
         """The customer asked for a concrete time: a new request, a changed
-        request, or a move of their confirmed booking."""
+        request, or a move of their confirmed booking. `right_now`: he wants
+        to come now (never too short notice)."""
         current = request or confirmed
-        result = await self.check(start, end, exclude_id=current["id"] if current else None)
+        result = await self.check(start, end, exclude_id=current["id"] if current else None, right_now=right_now)
         if not result.ok:
             await self.unavailable(chat_id, start, end, result.reason, exclude_id=current["id"] if current else None)
             return
@@ -466,8 +500,11 @@ class BookingFlow:
                 booking = await self.store.apply(confirmed, change, actor=bs.CUSTOMER)
                 await self.announce(booking, f"🔁 Booking #{booking['number']}: the customer asks to move it to "
                                              f"{bookings.describe_proposal(booking)}; asking the owner.")
-                await self.tell_owner(booking, bookings.format_move_request(booking, name=self.owner_name(), forms=not self.reads_her_words(),
-                                                                            t=self.texts()), remember=True)
+                overlap = await self.overlap(booking, booking["proposed_starts_at"], booking["proposed_ends_at"])
+                await self.tell_owner(booking, bookings.format_move_request(booking, name=self.owner_name(),
+                                                                            forms=not self.reads_her_words(),
+                                                                            t=self.texts(), overlap=overlap),
+                                      remember=True)
             else:
                 conversation = await self.rt.db.get_conversation(chat_id) or {}
                 booking = await self.store.create(
@@ -592,7 +629,8 @@ class BookingFlow:
             return False
         try:
             request = bookings.format_request(booking, changed=changed, name=self.owner_name(), t=self.texts(),
-                                              forms=not self.reads_her_words())
+                                              forms=not self.reads_her_words(),
+                                              overlap=await self.overlap(booking))
             row = await self.rt.send_as_me(provider, request, reason="booking request to the owner")
             self._remember(row, booking["number"])
         except Exception as exc:
@@ -963,8 +1001,12 @@ class BookingFlow:
             updated = await self.change(booking, change, actor=bs.OWNER, via=VIA_OWNER)
         except bs.IllegalTransition as exc:
             return OwnerOutcome(f"#{n}: {t.rule_error(str(exc))}.", booking)
-        except booking_store.SlotTaken:
-            return OwnerOutcome(t.say("slot_taken", n=n), booking)
+        except booking_store.SlotTaken as exc:
+            if exc.reason == "conflict":
+                return OwnerOutcome(t.say("slot_taken", n=n), booking)
+            what = bookings.proposal_for(booking, t) if booking.get("proposed_starts_at") else \
+                bookings.when_for(booking, t)
+            return OwnerOutcome(t.say("not_possible", n=n, what=what, why=bookings.why_for(t, exc.reason)), booking)
         except booking_store.StaleBooking:
             return OwnerOutcome(t.say("changed_meanwhile", n=n), booking)
         line = bookings.format_acknowledgement(updated, change.action, outcall_taxi=self.outcall_taxi(),
@@ -1014,19 +1056,23 @@ class BookingFlow:
             # The time he asked for (or the move he asked for), for the
             # length she gave when she gave one.
             moving = booking.get("proposed_by") == bs.CUSTOMER
-            start, asked_end = ((booking["proposed_starts_at"], booking["proposed_ends_at"]) if moving
-                                else (booking["starts_at"], booking["ends_at"]))
-            end = bookings.plus_minutes(start, cmd.minutes) if cmd.minutes else asked_end
-            if end > asked_end and (why := await self._no_room(booking, start, end)):
-                # Longer than he asked and not free: nothing is taken.
+            asked_start, asked_end = ((booking["proposed_starts_at"], booking["proposed_ends_at"]) if moving
+                                      else (booking["starts_at"], booking["ends_at"]))
+            end = bookings.plus_minutes(asked_start, cmd.minutes) if cmd.minutes else asked_end
+            # His time began while it waited for her ("now", and she answered
+            # a few minutes later): taken from the soonest start, for as long.
+            start, end = self.from_now(asked_start, end)
+            late = start != asked_start
+            if (late or end > asked_end) and (why := await self._no_room(booking, start, end)):
+                # Not free (longer than he asked, or from now on): nothing is taken.
                 return (self._not_possible(booking, start, end, why, t) + " "
                         + t.say("nothing_moved" if moving else "nothing_confirmed", n=n,
-                                when=bookings.span_for(t, start, asked_end, booking["tz"])))
+                                when=bookings.span_for(t, asked_start, asked_end, booking["tz"])))
             if moving:
-                return await self._accept(booking, bs.OWNER, end=end)
-            if cmd.minutes:
+                return await self._accept(booking, bs.OWNER, end=end, start=start)
+            if cmd.minutes or late:
                 return bs.confirm(booking, actor=bs.OWNER, now=now, ends_at=end,
-                                  blocked_until=end + self.buffer_of(booking))
+                                  blocked_until=end + self.buffer_of(booking), starts_at=start if late else None)
             return bs.confirm(booking, actor=bs.OWNER, now=now)
         if cmd.kind == "no":
             if booking.get("proposed_by") == bs.CUSTOMER:
@@ -1251,15 +1297,28 @@ class BookingFlow:
         log.info("[%s]   the owner's standing instruction is proposed rule %s.", rt.session_id, rule["id"])
         return bookings.format_standing_saved(text, t=self.texts())
 
-    async def _accept(self, booking: dict[str, Any], actor: str, end: Optional[datetime] = None) -> bs.Change:
+    async def _accept(self, booking: dict[str, Any], actor: str, end: Optional[datetime] = None,
+                      start: Optional[datetime] = None) -> bs.Change:
         """The time the other side put forward, taken; `end`: for the length
-        the owner gave."""
-        start, end = booking["proposed_starts_at"], end or booking["proposed_ends_at"]
+        the owner gave. Taken after it began: from the soonest start on."""
+        start, end = self.from_now(start or booking["proposed_starts_at"], end or booking["proposed_ends_at"])
         result = await self.check(start, end, exclude_id=booking["id"], hours=False)
         if not result.ok:
-            raise booking_store.SlotTaken(result.reason)
+            raise booking_store.SlotTaken(result.reason, reason=result.reason)
         return bs.accept_proposal(booking, actor=actor, now=self.now(), blocked_until=end + self.buffer_of(booking),
-                                  ends_at=end)
+                                  ends_at=end, starts_at=start)
+
+    async def _confirm_as_asked(self, booking: dict[str, Any], actor: str) -> bs.Change:
+        """Yes to the time he asked for; after it began, from the soonest start."""
+        start, end = self.from_now(booking["starts_at"], booking["ends_at"])
+        if start == booking["starts_at"]:
+            return bs.confirm(booking, actor=actor, now=self.now())
+        result = await self.check(start, end, exclude_id=booking["id"], hours=False)
+        if not result.ok:
+            raise booking_store.SlotTaken(f"{availability.describe(start, self.tz)} is not possible "
+                                          f"({result.reason.replace('_', ' ')})", reason=result.reason)
+        return bs.confirm(booking, actor=actor, now=self.now(), starts_at=start, ends_at=end,
+                          blocked_until=end + self.buffer_of(booking))
 
     # --------------------------------------------- customer / panel actions
 
@@ -1278,10 +1337,11 @@ class BookingFlow:
             else:
                 raise ValueError(f"unknown customer action {action!r}")
             return await self.change(booking, change, actor=bs.CUSTOMER, via=via)
-        except booking_store.SlotTaken:
+        except booking_store.SlotTaken as exc:
             if action == "accept_proposal":
-                self.add_line(booking["chat_id"], "NEWS TO PASS ON IN THIS REPLY: the proposed time has just been "
-                              "taken by someone else. Apologise and ask what other time would suit them.")
+                why = "has just been taken by someone else" if exc.reason == "conflict" else "is no longer possible"
+                self.add_line(booking["chat_id"], f"NEWS TO PASS ON IN THIS REPLY: the proposed time {why}. "
+                              "Apologise and ask what other time would suit them.")
             return None
         except (bs.IllegalTransition, booking_store.StaleBooking) as exc:
             log.info("[%s]   customer %s on #%s not applied: %s", self.rt.session_id, action, booking["number"], exc)
@@ -1310,7 +1370,7 @@ class BookingFlow:
             result = await self.check(start, end, exclude_id=booking["id"], hours=False)
             if not result.ok:
                 raise booking_store.SlotTaken(f"{availability.describe(start, self.tz)} is not possible "
-                                              f"({result.reason.replace('_', ' ')})")
+                                              f"({result.reason.replace('_', ' ')})", reason=result.reason)
             if action == "propose":
                 change = bs.propose(booking, actor=bs.ADMIN, starts_at=start, ends_at=end, now=now)
             else:
@@ -1318,7 +1378,7 @@ class BookingFlow:
                                        blocked_until=end + self.buffer_of(booking), now=now)
         elif action == "confirm":
             change = (await self._accept(booking, bs.ADMIN) if booking.get("proposed_by") == bs.CUSTOMER
-                      else bs.confirm(booking, actor=bs.ADMIN, now=now))
+                      else await self._confirm_as_asked(booking, bs.ADMIN))
         elif action == "decline":
             change = (bs.reject_proposal(booking, actor=bs.ADMIN, now=now) if booking.get("proposed_by") == bs.CUSTOMER
                       else bs.decline(booking, actor=bs.ADMIN, now=now))
@@ -2140,8 +2200,11 @@ class BookingFlow:
             except (bs.IllegalTransition, booking_store.StaleBooking):
                 pass
 
+        # Unanswered once the time it was for is over: until then her yes
+        # still takes it, from the soonest start (from_now), so a "now"
+        # she answers a few minutes later is not lost.
         for booking in await self.store.between(now - timedelta(days=7), now, states=[bs.REQUESTED, bs.PENDING]):
-            if booking["starts_at"] <= now:
+            if booking["ends_at"] <= now:
                 await guarded(f"expiring #{booking['number']}", lambda b=booking: expire(b))
 
         async def drop_stale_words(booking: dict[str, Any]) -> None:

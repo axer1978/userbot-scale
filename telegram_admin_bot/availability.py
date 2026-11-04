@@ -46,6 +46,9 @@ class Rule:
 class Busy:
     start: datetime  # aware
     end: datetime    # aware; already includes that booking's own buffer (its blocked_until)
+    # Whose time this is: a booking with a pending proposal holds two
+    # intervals, and counts once where they meet. None: each Busy is its own.
+    booking_id: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,9 @@ class Limits:
     min_notice_minutes: int = 0     # a booking must start at least this long after now
     max_days_ahead: int = 365       # and not later than this many days after now
     closed_dates: frozenset[date] = frozenset()   # local dates with no bookings at all
+    # How many bookings may run at the same moment, this one included:
+    # 1 = never two at once, 0 = no limit (only the person who confirms decides).
+    max_at_once: int = 1
 
 
 @dataclass(frozen=True)
@@ -156,10 +162,31 @@ def check_slot(
     # This booking blocks until end + its buffer; existing ones already carry
     # theirs in Busy.end. Half-open, so back-to-back bookings don't collide.
     blocked_until = end + timedelta(minutes=buffer_minutes)
-    for item in busy:
-        if start < _utc(item.end) and _utc(item.start) < blocked_until:
-            return SlotCheck(False, "conflict", buffer_minutes)
+    if limits.max_at_once and most_at_once(busy, start, blocked_until) >= limits.max_at_once:
+        return SlotCheck(False, "conflict", buffer_minutes)
     return SlotCheck(True, None, buffer_minutes)
+
+
+def most_at_once(busy: Sequence[Busy], start: datetime, end: datetime) -> int:
+    """The most bookings in `busy` running at one moment of [start, end):
+    two that only follow each other count as one at a time, and a booking's
+    own intervals (its time and a time it proposed) count once."""
+    edges: list[tuple[datetime, int, object]] = []
+    for index, item in enumerate(busy):
+        lo, hi = max(_utc(item.start), _utc(start)), min(_utc(item.end), _utc(end))
+        if lo < hi:
+            key = item.booking_id if item.booking_id is not None else ("busy", index)
+            edges += [(lo, 1, key), (hi, -1, key)]
+    # Ends before starts at the same moment: half-open, back to back is not at once.
+    edges.sort(key=lambda edge: (edge[0], edge[1]))
+    depth: dict[object, int] = {}
+    most = 0
+    for _, step, key in edges:
+        depth[key] = depth.get(key, 0) + step
+        if not depth[key]:
+            del depth[key]
+        most = max(most, len(depth))
+    return most
 
 
 def free_slots(

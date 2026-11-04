@@ -157,7 +157,8 @@ async def free_slots(session_id: str, start: Optional[str] = None, days: int = 7
         day_from=day, days=days, duration_minutes=minutes or cfg["default_duration_minutes"],
         rules=await store.rules(), busy=busy, tz=tz, now=now,
         limits=availability.Limits(cfg["min_notice_minutes"], cfg["max_days_ahead"],
-                                   frozenset(date.fromisoformat(d) for d in cfg["closed_dates"])),
+                                   frozenset(date.fromisoformat(d) for d in cfg["closed_dates"]),
+                                   max_at_once=cfg["max_at_once"]),
     )
     return {"timezone": tz, "slots": [s.isoformat() for s in slots]}
 

@@ -176,25 +176,44 @@ def _blanks(booking: Mapping[str, Any], t: booker_texts.Texts, *, name: str = ""
     }
 
 
-def format_request(booking: Mapping[str, Any], *, changed: bool = False, name: str = "", forms: bool = False,
+def format_overlap(others: Sequence[Mapping[str, Any]], *,
                    t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
+    """Her other live bookings at the same time as the one she is asked
+    about (booking.max_at_once lets them overlap), so she knows before she
+    answers. Empty when there are none."""
+    if not others:
+        return ""
+    items = [t.say("overlap_confirmed" if b["state"] == bs.CONFIRMED else "overlap_waiting",
+                   n=b["number"], customer=_customer(b, t), when=when_for(b, t)) for b in others]
+    return t.say("overlap", bookings="; ".join(items))
+
+
+def _with_overlap(commands: str, overlap: str) -> str:
+    # Right above how to answer, which every template keeps (its own too).
+    return f"{overlap}\n{commands}" if overlap else commands
+
+
+def format_request(booking: Mapping[str, Any], *, changed: bool = False, name: str = "", forms: bool = False,
+                   t: booker_texts.Texts = booker_texts.ENGLISH, overlap: str = "") -> str:
     """A new request, or one whose time the customer changed before you
     answered: who asks, for whom (her name, else the account's), the extras
-    he asked for, when."""
+    he asked for, when; `overlap`: format_overlap of that time."""
     n = booking["number"]
     return t.template(
         "request", **_blanks(booking, t, name=name),
         changed=t.say("request_new_time") if changed else "",
         extras=booking.get("extras") or t.say("request_no_extras"),
         service=booking.get("service") or "", notes=booking.get("notes") or "",
-        commands=t.say("answer_forms" if forms else "answer_help", n=n))
+        commands=_with_overlap(t.say("answer_forms" if forms else "answer_help", n=n), overlap))
 
 
 def format_move_request(booking: Mapping[str, Any], *, name: str = "", forms: bool = False,
-                        t: booker_texts.Texts = booker_texts.ENGLISH) -> str:
-    """The customer asks to move a confirmed booking."""
+                        t: booker_texts.Texts = booker_texts.ENGLISH, overlap: str = "") -> str:
+    """The customer asks to move a confirmed booking; `overlap`:
+    format_overlap of the time he wants."""
     return t.template("move_request", **_blanks(booking, t, name=name), to=proposal_for(booking, t),
-                      commands=t.say("move_forms" if forms else "move_commands", n=booking["number"]))
+                      commands=_with_overlap(t.say("move_forms" if forms else "move_commands",
+                                                   n=booking["number"]), overlap))
 
 
 def format_owner_update(booking: Mapping[str, Any], what: str, *, name: str = "",
@@ -1612,11 +1631,11 @@ EXTRACT_SYSTEM_PROMPT = (
     "fixed offset like 'in 2 hours'. Also when they ask to MOVE an existing "
     "booking to a concrete new time. Put that time in start.\n"
     "  RIGHT NOW is book too, with asap true and start null (the time is worked "
-    "out elsewhere): they want to meet now or as soon as possible — 'now', "
-    "'now?', 'rn', 'asap', 'can I come now', 'are you free now', 'available "
-    "now?', 'I'm close, can I come' — or they ask a bare 'free?', 'are you "
-    "free?', 'available?' without naming any day or time. asap is false for "
-    "everything else.\n"
+    "out elsewhere): they want to meet now or as soon as possible, in any "
+    "words or language — 'now', 'now?', 'rn', 'asap', 'atm', 'right away', "
+    "'can I come now', 'are you free now', 'available now?', 'free atm?', "
+    "'I'm close, can I come', 'I'm 5 min away', 'сейчас можно?', 'var tagad?', "
+    "'var tūlīt?', 'ahora?'. asap is false for everything else.\n"
     "- cancel: they clearly call off their booking.\n"
     "- accept_proposal / decline_proposal: the business proposed a different "
     "time (see 'Their bookings') and they say yes / no to it. If they answer "
@@ -1626,7 +1645,10 @@ EXTRACT_SYSTEM_PROMPT = (
     "would take in waitlist_from/waitlist_to.\n"
     "- none: anything else, including a day without a time ('are you free "
     "tomorrow?'), a vague window ('tonight', 'later'), or what they said "
-    "earlier and then moved away from. Also none when their latest message "
+    "earlier and then moved away from. Asking only whether she is free or "
+    "available, without any time and without wanting to come right away "
+    "('free?', 'are you free?', 'available?', 'you working?'), is none: they "
+    "are told yes and asked for their time. Also none when their latest message "
     "names no time of its own: a nudge while they wait ('??', 'so?', 'is it "
     "ok?', 'hello?'), thanks, a plain 'ok', or a question with no time in it. "
     "A length alone ('1 hour?', '30 min incall?') is not a time. A time "
@@ -1716,13 +1738,19 @@ def soonest_start(now: datetime) -> datetime:
     return at + timedelta(minutes=-at.minute % 5)
 
 
+def wants_now(data: Mapping[str, Any], *, tz_name: str, now: datetime) -> bool:
+    """He wants to come right now: asap, or a time that passed moments ago."""
+    start = parse_local(str(data.get("start") or ""), tz_name)
+    return data.get("asap") is True or (start is not None and now - JUST_PASSED < start <= now)
+
+
 def requested_slot(
     data: Mapping[str, Any], *, tz_name: str, default_duration: int, now: Optional[datetime] = None,
 ) -> Optional[tuple[datetime, datetime]]:
-    """The slot the customer asked for. With `now`, "right now" (asap, or a
-    time that passed moments ago) becomes soonest_start(now)."""
+    """The slot the customer asked for. With `now`, "right now" (wants_now)
+    becomes soonest_start(now)."""
     start = parse_local(str(data.get("start") or ""), tz_name)
-    if now is not None and (data.get("asap") is True or (start is not None and now - JUST_PASSED < start <= now)):
+    if now is not None and wants_now(data, tz_name=tz_name, now=now):
         start = soonest_start(now).astimezone(tzinfo_for(tz_name))
     if start is None:
         return None
@@ -1884,6 +1912,9 @@ ONLY_OWNER_CONFIRMS_RULE = (
     "any words: no 'ok', 'deal', 'see you then', 'come over', and "
     "no arrival steps such as 'text me before you come'. When they name a day and time, "
     "say nothing about it: no yes, no no, and never that you will check, ask or confirm it. "
+    "When they only ask whether you are free or available, or whether they can come, and name no time ('free?', "
+    "'available?', 'are you free tonight?', 'can I come?'), say yes and ask what time they want to come: that "
+    "is not agreeing to a time. "
     + PLAIN_WORDS
 )
 

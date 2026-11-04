@@ -178,6 +178,25 @@ def test_nothing_to_accept_without_a_proposal():
         bs.accept_proposal(booking(), actor=bs.CUSTOMER, now=NOW, blocked_until=LATER)
 
 
+def test_a_late_yes_takes_the_time_from_a_new_start():
+    began = booking(starts=NOW - timedelta(minutes=3))
+    with pytest.raises(bs.IllegalTransition, match="in the past"):
+        bs.confirm(began, actor=bs.OWNER, now=NOW)
+    soon = NOW + timedelta(minutes=5)
+    change = bs.confirm(began, actor=bs.OWNER, now=NOW, starts_at=soon, ends_at=soon + timedelta(hours=1))
+    assert change.to_state == bs.CONFIRMED
+    assert (change.fields["starts_at"], change.fields["ends_at"], change.fields["blocked_until"]) == (
+        soon, soon + timedelta(hours=1), soon + timedelta(hours=1))
+    with pytest.raises(bs.IllegalTransition, match="in the past"):
+        bs.confirm(began, actor=bs.OWNER, now=NOW, starts_at=NOW - timedelta(minutes=1), ends_at=soon)
+    with pytest.raises(bs.IllegalTransition, match="not after its start"):
+        bs.confirm(began, actor=bs.OWNER, now=NOW, starts_at=soon, ends_at=soon)
+    moving = booking(bs.CONFIRMED, proposed_by=bs.CUSTOMER, proposed=NOW - timedelta(minutes=3))
+    change = bs.accept_proposal(moving, actor=bs.OWNER, now=NOW, blocked_until=soon + timedelta(hours=1),
+                                starts_at=soon, ends_at=soon + timedelta(hours=1))
+    assert change.fields["starts_at"] == soon and change.action == "reschedule"
+
+
 def test_expire_only_after_the_start_and_only_unanswered():
     with pytest.raises(bs.IllegalTransition, match="not started"):
         bs.expire(booking(), now=NOW)

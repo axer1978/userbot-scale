@@ -674,6 +674,7 @@ class SessionRuntime:
             self.media_library = media.MediaLibrary(self.data_dir / "media")
             self.booking_store = booking_store.BookingStore(self.pool, self.tenant_id, self.session_id)
             self.booking_store.channel = self.transport.channel
+            self.booking_store.overlap_ok = lambda: self.config["booking"]["max_at_once"] != 1
             imported = await self.booking_store.import_legacy_file(self.data_dir / "bookings.json")
             if imported:
                 log.info("[%s] Imported %s bookings from bookings.json.", self.session_id, imported)

@@ -245,13 +245,16 @@ async def test_upgrading_a_populated_0005_database_keeps_the_data_and_adds_the_r
                              # 0020: his photo of the place (outcall proof)
                              "proof_at",
                              # 0022: the booker's own words
-                             "booker_news", "extras_ok", "extras_no", "booker_asked_at"}}
+                             "booker_news", "extras_ok", "extras_no", "booker_asked_at",
+                             # 0026: bookings at the same time
+                             "overlap_ok"}}
     for table, rows in before.items():
         added = new_cols.get(table, set())
         assert [{k: v for k, v in r.items() if k not in added} for r in after[table]] == rows, table
     assert all(r["wa_message_id"] is None for r in after["messages"])
     assert not any(r["sent_elsewhere"] for r in after["messages"])  # old rows count as before
     assert all(r["provider_wa_message_id"] is None for r in after["bookings"])
+    assert not any(r["overlap_ok"] for r in after["bookings"])  # old bookings keep "never two at once"
     assert {r["session_id"]: r["channel"] for r in after["telegram_sessions"]} == {"tg1": "telegram", "tg2": "telegram"}
     assert {r["name"]: r["channel"] for r in after["tenants"]} == {"Salon": "telegram", "Garage": "telegram", "Closed": "telegram"}
     assert await pg_module.current_version(pool) == pg_module.latest_version()
@@ -274,6 +277,13 @@ async def test_upgrading_a_populated_0005_database_keeps_the_data_and_adds_the_r
         with pytest.raises(asyncpg.RaiseError, match="does not own session"):
             await con.execute("INSERT INTO wa_auth_state (session_id, tenant_id, kind, key_id, value_enc) "
                               "VALUES ('wa1', $1, 'creds', '', '\\x00'::bytea)", salon)
+        # 0026: a booking may share a time only when written with overlap_ok.
+        overlapping = ("INSERT INTO bookings (session_id, number, chat_id, customer_ref, starts_at, ends_at, "
+                       "blocked_until, tz, state, overlap_ok) VALUES ('tg1', $1, 8, 'ref-8', '2026-10-01 10:30+00', "
+                       "'2026-10-01 11:30+00', '2026-10-01 11:30+00', 'Europe/Riga', 'requested', $2)")
+        with pytest.raises(asyncpg.ExclusionViolationError):
+            await con.execute(overlapping, 90, False)
+        await con.execute(overlapping, 91, True)
         # Telegram's own rules still hold too.
         assert await con.fetchval("SELECT status FROM sessions_health WHERE tenant_id = $1", salon) == "connected"
         with pytest.raises(asyncpg.UniqueViolationError):

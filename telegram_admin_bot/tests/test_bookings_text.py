@@ -239,6 +239,30 @@ def test_asap_and_a_time_that_just_passed_both_mean_now():
     assert bookings.requested_slot({"asap": True}, tz_name="Europe/Riga", default_duration=60) is None
 
 
+def test_wants_now_is_asap_or_a_time_that_just_passed():
+    now = datetime(2026, 10, 5, 19, 20, 40, tzinfo=timezone.utc)   # 22:20:40 in Riga
+    riga = {"tz_name": "Europe/Riga", "now": now}
+    assert bookings.wants_now({"asap": True, "start": None}, **riga)
+    assert bookings.wants_now({"start": "2026-10-05T22:15"}, **riga)
+    assert not bookings.wants_now({"start": "2026-10-05T22:40"}, **riga)
+    assert not bookings.wants_now({"start": "2026-10-05T21:00"}, **riga)
+    assert not bookings.wants_now({"asap": False}, **riga)
+
+
+def test_a_bare_free_or_available_is_no_request_but_now_is():
+    prompt = bookings.EXTRACT_SYSTEM_PROMPT
+    # "free?" alone: he is told yes and asked his time; nothing goes to her yet.
+    assert "or they ask a bare" not in prompt
+    assert "'available?', 'you working?'), is none: they are told yes and asked for their time." in prompt
+    assert "'are you free now', 'available now?'" in prompt
+    # "Now" is any wish to come right away, in any words or language.
+    assert "as soon as possible, in any words or language" in prompt
+    assert all(f"'{word}'" in prompt for word in ("free atm?", "I'm 5 min away", "сейчас можно?", "var tūlīt?"))
+    assert "without wanting to come right away" in prompt
+    rule = bookings.ONLY_OWNER_CONFIRMS_RULE
+    assert "say yes and ask what time they want to come: that is not agreeing to a time." in rule
+
+
 def test_only_a_bare_yes_answers_a_reminder_in_code():
     assert [bookings.reminder_answer(w) for w in ("yes", " Yes ", "jā", "да", "👍")] == ["confirm"] * 5
     # No numbers any more ("2" may be minutes), and a no or a later is read in his own words.

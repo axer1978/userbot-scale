@@ -126,15 +126,31 @@ def _length(booking: Mapping[str, Any], ends_at: Optional[datetime],
 
 
 def confirm(booking: Mapping[str, Any], *, actor: str, now: datetime, ends_at: Optional[datetime] = None,
-            blocked_until: Optional[datetime] = None) -> Change:
+            blocked_until: Optional[datetime] = None, starts_at: Optional[datetime] = None) -> Change:
     """The owner said yes to the time as it stands; with `ends_at`, for the
-    length she gave ("yes, but only 1 hour")."""
+    length she gave ("yes, but only 1 hour"). With `starts_at` (and
+    `ends_at`): her yes came after his time had begun ("now", answered a few
+    minutes later), so it starts then instead."""
     state = _require(booking, "confirm", (REQUESTED, PENDING), actor, DECIDERS)
-    _future(booking["starts_at"], now, "the booking time")
+    if starts_at is None:
+        _future(booking["starts_at"], now, "the booking time")
+        times = _length(booking, ends_at, blocked_until)
+    else:
+        times = _new_time(booking, starts_at, ends_at, blocked_until, now)
     return Change("confirm", state, CONFIRMED, {
-        **_NO_PROPOSAL, **_length(booking, ends_at, blocked_until),
+        **_NO_PROPOSAL, **times,
         "decided_by": actor, "decided_at": now, "customer_notice": NOTICE_CONFIRMED,
     })
+
+
+def _new_time(booking: Mapping[str, Any], starts_at: datetime, ends_at: Optional[datetime],
+              blocked_until: Optional[datetime], now: datetime) -> dict[str, Any]:
+    _future(starts_at, now, "the new time")
+    if ends_at is None or ends_at <= starts_at:
+        raise IllegalTransition(f"the new end of booking #{booking['number']} is not after its start")
+    if blocked_until is None:
+        blocked_until = ends_at + (booking["blocked_until"] - booking["ends_at"])
+    return {"starts_at": starts_at, "ends_at": ends_at, "blocked_until": blocked_until}
 
 
 def decline(booking: Mapping[str, Any], *, actor: str, now: datetime, reason: str = "") -> Change:
@@ -188,17 +204,18 @@ def propose(
 
 def accept_proposal(
     booking: Mapping[str, Any], *, actor: str, now: datetime, blocked_until: datetime,
-    ends_at: Optional[datetime] = None,
+    ends_at: Optional[datetime] = None, starts_at: Optional[datetime] = None,
 ) -> Change:
     """The other side takes the proposed time: the owner's proposal by the
     customer, the customer's by the owner (YES n) or an admin. `ends_at`:
-    the owner takes the customer's new time for the length she gives."""
+    the owner takes the customer's new time for the length she gives.
+    `starts_at`: it was taken after it had begun, so it starts then."""
     proposer = booking.get("proposed_by")
     if proposer is None or booking.get("proposed_starts_at") is None:
         raise IllegalTransition(f"booking #{booking['number']} has no proposed time")
     allowed = (CUSTOMER,) if proposer == OWNER else DECIDERS
     state = _require(booking, "accept the proposed time of", (REQUESTED, PENDING, CONFIRMED), actor, allowed)
-    starts_at, ends_at = booking["proposed_starts_at"], ends_at or booking["proposed_ends_at"]
+    starts_at, ends_at = starts_at or booking["proposed_starts_at"], ends_at or booking["proposed_ends_at"]
     _future(starts_at, now, "the proposed time")
     if ends_at <= starts_at:
         raise IllegalTransition(f"the new end of booking #{booking['number']} is not after its start")
@@ -270,15 +287,15 @@ def cancel(booking: Mapping[str, Any], *, actor: str, now: datetime, reason: str
 
 
 def expire(booking: Mapping[str, Any], *, now: datetime) -> Change:
-    """Nobody answered before the time came. Not a decision about anyone:
-    the slot is simply gone."""
+    """Nobody answered in time (booking_flow lets it lapse once the time it
+    was for is over). Not a decision about anyone: the slot is simply gone."""
     state = _require(booking, "expire", (REQUESTED, PENDING), SYSTEM, (SYSTEM,))
     if booking["starts_at"] > now:
         raise IllegalTransition(f"booking #{booking['number']} has not started yet")
     return Change("expire", state, CANCELLED, {
-        **_NO_PROPOSAL, "cancelled_by": SYSTEM, "cancel_reason": "not answered before the start time",
+        **_NO_PROPOSAL, "cancelled_by": SYSTEM, "cancel_reason": "not answered in time",
         "customer_notice": NOTICE_EXPIRED,
-    }, "not answered before the start time")
+    }, "not answered in time")
 
 
 def _after_start(booking: Mapping[str, Any], now: datetime, action: str) -> None:
